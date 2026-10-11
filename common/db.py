@@ -8,13 +8,18 @@ integer minor units (cents) to avoid floating-point rounding errors.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+def utcnow() -> datetime:
+    """Timezone-aware current UTC time (this SQLModel version rejects naive datetimes)."""
+    return datetime.now(timezone.utc)
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = REPO_ROOT / "var" / "runway.db"
@@ -51,7 +56,7 @@ class Payee(SQLModel, table=True):
     iban: str
     verified: bool = False
     created_by: str = "owner"  # "owner" | "accountant" | "seed"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 # --------------------------------------------------------------------------- #
@@ -104,7 +109,7 @@ class Payment(SQLModel, table=True):
     document_id: Optional[str] = Field(default=None, foreign_key="document.id")
     automatic: bool = False  # True when allowed at tier T2 without human approval
     created_by: str = "agent"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     created_sim_date: Optional[date] = None  # simulated 'today' when created (daily caps)
     transaction_id: Optional[str] = None  # set once executed
 
@@ -120,7 +125,7 @@ class Document(SQLModel, table=True):
     kind: str  # "invoice" | "email" | "other"
     sender: Optional[str] = None
     content_text: str = ""
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    received_at: datetime = Field(default_factory=utcnow)
     flagged: bool = False
     flag_reason: Optional[str] = None
     cleared: bool = False  # a human reviewed the flag and cleared it
@@ -137,7 +142,7 @@ class ApprovalRequest(SQLModel, table=True):
     status: str = "pending"  # "pending" | "approved" | "rejected" | "executed" | "failed"
     reason: str = ""
     result_json: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     decided_at: Optional[datetime] = None
 
 
@@ -150,7 +155,7 @@ class OutboxEmail(SQLModel, table=True):
     body: str
     invoice_id: Optional[str] = None
     kind: str = "reminder"  # "reminder" | "fraud_alert" | "notification"
-    sent_at: datetime = Field(default_factory=datetime.utcnow)
+    sent_at: datetime = Field(default_factory=utcnow)
 
 
 class FinancingApplication(SQLModel, table=True):
@@ -163,7 +168,7 @@ class FinancingApplication(SQLModel, table=True):
     needed_by: date
     pdf_path: str
     status: str = "prepared"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class AuditEntry(SQLModel, table=True):

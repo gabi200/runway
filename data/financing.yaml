@@ -1,0 +1,66 @@
+# Fictional financing catalogue (SPEC 5.7). Amounts in EUR cents; rates in percent.
+#
+# Cost model (all computed in code, integer cents, rounded half away from zero):
+#   interest = amount * rate_pct_per_period/100 * ceil(days / period_days)      (periodic products)
+#            | amount * annual_rate_pct/100 * billable_days / 365               (annual products)
+#   fees     = amount * fee_pct/100 + one_off_fee_cents
+#   billable_days = term_days when charge_full_term is true (no prepayment), else days actually needed.
+#
+# Assumptions (documented on purpose):
+#   - Time to cash is counted in CALENDAR days (arrival = today + time_to_cash_days).
+#   - Short-term loan: 6-month term (183 days), NO prepayment allowed, so interest is charged for the full term.
+#   - State-guaranteed loan: 12-month term (365 days), no prepayment, interest for the full term.
+#   - Invoice financing: advance of 80% of the largest open customer invoice; fee charged per started 30 days.
+#   - Supply-chain finance: only against open Brightfield invoices, advance 80%, fee per started 30 days,
+#     and Brightfield must confirm the invoice first.
+#   - Overdraft: limit 50,000; interest only for the days used; one-off fee 200.
+products:
+  - id: invoice_financing
+    name: Invoice financing
+    time_to_cash_days: 2
+    rate_pct_per_period: 1.5
+    period_days: 30
+    fee_pct: 0
+    one_off_fee_cents: 0
+    requires: open_ar_invoice
+    advance_pct: 80
+    notes: "Advance of 80% of an open customer invoice; fee 1.5% per started 30 days."
+  - id: overdraft
+    name: Overdraft
+    time_to_cash_days: 1
+    annual_rate_pct: 12
+    fee_pct: 0
+    one_off_fee_cents: 20000
+    max_amount_cents: 5000000
+    charge_full_term: false
+    notes: "Limit 50,000; 12% per year on the amount used; 200 one-off fee."
+  - id: short_term_loan
+    name: Short-term loan (6 months)
+    time_to_cash_days: 5
+    annual_rate_pct: 9
+    fee_pct: 1
+    one_off_fee_cents: 0
+    term_days: 183
+    charge_full_term: true
+    notes: "9% per year + 1% setup fee; 6-month term, no prepayment, interest charged for the full term."
+  - id: supply_chain_finance
+    name: Supply-chain finance (Brightfield programme)
+    time_to_cash_days: 4
+    rate_pct_per_period: 0.6
+    period_days: 30
+    fee_pct: 0
+    one_off_fee_cents: 0
+    requires: brightfield_invoice
+    eligible_counterparty_id: CUST-BRIGHTFIELD
+    advance_pct: 80
+    needs_confirmation: "Needs Brightfield confirmation"
+    notes: "0.6% per started 30 days; only against Brightfield invoices; Brightfield must confirm the invoice."
+  - id: state_guaranteed_loan
+    name: State-guaranteed SME loan
+    time_to_cash_days: 21
+    annual_rate_pct: 6
+    fee_pct: 1
+    one_off_fee_cents: 0
+    term_days: 365
+    charge_full_term: true
+    notes: "6% per year + 1% guarantee fee; 12-month term, interest for the full term; 21 days to cash."

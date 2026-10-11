@@ -61,6 +61,7 @@ class ForecastLine(BaseModel):
 class WeekBucket(BaseModel):
     index: int; start: date; end: date
     opening_cents: int; receipts_cents: int; payments_cents: int; closing_cents: int
+    # payments_cents is SIGNED (negative): closing = opening + receipts + payments
     lines: list[ForecastLine]
 class Forecast(BaseModel):
     start_date: date; currency: str; opening_balance_cents: int

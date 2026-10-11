@@ -2,7 +2,7 @@
 # The API key is NEVER stored here: it is read from the env var named below.
 provider: deepseek
 base_url: https://api.deepseek.com
-model: deepseek-chat
+model: deepseek-flash  # current id per api-docs.deepseek.com (Oct 2026); deepseek-v4-pro also available
 api_key_env: DEEPSEEK_API_KEY
 temperature: 0.2
 timeout_seconds: 60

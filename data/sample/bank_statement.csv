@@ -1,0 +1,187 @@
+id,date,description,category,amount,currency,balance
+TX-000001,2025-10-22,Payment from Kessler Cosmetics LUM-2025-0003,sales_receipt,14220.00,EUR,78826.67
+TX-000002,2025-10-25,Payroll 2025-10,payroll,-55040.00,EUR,23786.67
+TX-000003,2025-10-25,VAT payment VAT-2025-09,vat,-11171.66,EUR,12615.01
+TX-000004,2025-10-27,Payment from Bergmann Toys LUM-2025-0004,sales_receipt,14220.00,EUR,26835.01
+TX-000005,2025-10-28,Payment from Nordhaus Foods LUM-2025-0006,sales_receipt,15750.00,EUR,42585.01
+TX-000006,2025-11-01,Rent 2025-11,rent,-8000.00,EUR,34585.01
+TX-000007,2025-11-02,Payment from Lindqvist Candles LUM-2025-0005,sales_receipt,11100.00,EUR,45685.01
+TX-000008,2025-11-07,Payment from Brightfield Appliances LUM-2025-0001,sales_receipt,49000.00,EUR,94685.01
+TX-000009,2025-11-10,Loan repayment 2025-11,loan_repayment,-3000.00,EUR,91685.01
+TX-000010,2025-11-11,Payment to Inkworks GmbH INK-2025-0001,supplier_payment,-6160.00,EUR,85525.01
+TX-000011,2025-11-11,Payment to SwiftLog Logistics SWI-2025-0005,supplier_payment,-4730.00,EUR,80795.01
+TX-000012,2025-11-12,Electricity and gas 2025-11,utilities,-4480.00,EUR,76315.01
+TX-000013,2025-11-13,Payment from Nordhaus Foods LUM-2025-0008,sales_receipt,9220.00,EUR,85535.01
+TX-000014,2025-11-16,Payment from Alpenwerk Dairy LUM-2025-0009,sales_receipt,20860.00,EUR,106395.01
+TX-000015,2025-11-16,Payment to Cartonia Mills CAR-2025-0002,supplier_payment,-48100.00,EUR,58295.01
+TX-000016,2025-11-18,Payment from Rhein Gadgets LUM-2025-0013,sales_receipt,15420.00,EUR,73715.01
+TX-000017,2025-11-19,Payment from Bergmann Toys LUM-2025-0012,sales_receipt,7690.00,EUR,81405.01
+TX-000018,2025-11-24,Payment from Kessler Cosmetics LUM-2025-0014,sales_receipt,14850.00,EUR,96255.01
+TX-000019,2025-11-25,Payroll 2025-11,payroll,-54990.00,EUR,41265.01
+TX-000020,2025-11-25,VAT payment VAT-2025-10,vat,-18245.02,EUR,23019.99
+TX-000021,2025-11-26,Payment from Bergmann Toys LUM-2025-0011,sales_receipt,7810.00,EUR,30829.99
+TX-000022,2025-11-27,Payment from Nordhaus Foods LUM-2025-0016,sales_receipt,10230.00,EUR,41059.99
+TX-000023,2025-11-29,Payment from Brightfield Appliances LUM-2025-0002,sales_receipt,66000.00,EUR,107059.99
+TX-000024,2025-11-29,Payment from Lindqvist Candles LUM-2025-0010,sales_receipt,5340.00,EUR,112399.99
+TX-000025,2025-12-01,Rent 2025-12,rent,-8000.00,EUR,104399.99
+TX-000026,2025-12-01,Payment from Lindqvist Candles LUM-2025-0015,sales_receipt,6330.00,EUR,110729.99
+TX-000027,2025-12-02,Payment to Inkworks GmbH INK-2025-0004,supplier_payment,-7250.00,EUR,103479.99
+TX-000028,2025-12-04,Payment from Nordhaus Foods LUM-2025-0018,sales_receipt,11120.00,EUR,114599.99
+TX-000029,2025-12-10,Loan repayment 2025-12,loan_repayment,-3000.00,EUR,111599.99
+TX-000030,2025-12-12,Electricity and gas 2025-12,utilities,-4410.00,EUR,107189.99
+TX-000031,2025-12-13,Payment from Nordhaus Foods LUM-2025-0022,sales_receipt,12580.00,EUR,119769.99
+TX-000032,2025-12-14,Payment from Bergmann Toys LUM-2025-0019,sales_receipt,8740.00,EUR,128509.99
+TX-000033,2025-12-14,Payment from Lindqvist Candles LUM-2025-0020,sales_receipt,8360.00,EUR,136869.99
+TX-000034,2025-12-14,Payment to SwiftLog Logistics SWI-2025-0009,supplier_payment,-4900.00,EUR,131969.99
+TX-000035,2025-12-15,Payment from Rhein Gadgets LUM-2025-0021,sales_receipt,6360.00,EUR,138329.99
+TX-000036,2025-12-17,Payment from Alpenwerk Dairy LUM-2025-0025,sales_receipt,21860.00,EUR,160189.99
+TX-000037,2025-12-18,Payment to Cartonia Mills CAR-2025-0006,supplier_payment,-66300.00,EUR,93889.99
+TX-000038,2025-12-22,Payment from Brightfield Appliances LUM-2025-0007,sales_receipt,90000.00,EUR,183889.99
+TX-000039,2025-12-23,Payment from Bergmann Toys LUM-2025-0017,sales_receipt,9810.00,EUR,193699.99
+TX-000040,2025-12-25,Payroll 2025-12,payroll,-54730.00,EUR,138969.99
+TX-000041,2025-12-25,VAT payment VAT-2025-11,vat,-21618.32,EUR,117351.67
+TX-000042,2025-12-29,Payment from Kessler Cosmetics LUM-2025-0026,sales_receipt,22630.00,EUR,139981.67
+TX-000043,2026-01-01,Rent 2026-01,rent,-8000.00,EUR,131981.67
+TX-000044,2026-01-02,Payment to Inkworks GmbH INK-2025-0008,supplier_payment,-6270.00,EUR,125711.67
+TX-000045,2026-01-03,Payment from Rhein Gadgets LUM-2025-0024,sales_receipt,9200.00,EUR,134911.67
+TX-000046,2026-01-10,Loan repayment 2026-01,loan_repayment,-3000.00,EUR,131911.67
+TX-000047,2026-01-11,Payment from Lindqvist Candles LUM-2025-0027,sales_receipt,6620.00,EUR,138531.67
+TX-000048,2026-01-12,Electricity and gas 2026-01,utilities,-4480.00,EUR,134051.67
+TX-000049,2026-01-18,Payment to Cartonia Mills CAR-2025-0010,supplier_payment,-72400.00,EUR,61651.67
+TX-000050,2026-01-21,Payment to SwiftLog Logistics SWI-2025-0014,supplier_payment,-3930.00,EUR,57721.67
+TX-000051,2026-01-24,Payment from Kessler Cosmetics LUM-2025-0028,sales_receipt,15110.00,EUR,72831.67
+TX-000052,2026-01-25,Payroll 2026-01,payroll,-55230.00,EUR,17601.67
+TX-000053,2026-01-25,Payment from Rhein Gadgets LUM-2025-0030,sales_receipt,11680.00,EUR,29281.67
+TX-000054,2026-01-25,VAT payment VAT-2025-12,vat,-13508.33,EUR,15773.34
+TX-000055,2026-01-27,Payment from Nordhaus Foods LUM-2025-0032,sales_receipt,14010.00,EUR,29783.34
+TX-000056,2026-02-01,Rent 2026-02,rent,-8000.00,EUR,21783.34
+TX-000057,2026-02-05,Payment from Brightfield Appliances LUM-2025-0023,sales_receipt,96000.00,EUR,117783.34
+TX-000058,2026-02-07,Payment from Bergmann Toys LUM-2025-0033,sales_receipt,10620.00,EUR,128403.34
+TX-000059,2026-02-08,Payment to Inkworks GmbH INK-2025-0012,supplier_payment,-5500.00,EUR,122903.34
+TX-000060,2026-02-10,Loan repayment 2026-02,loan_repayment,-3000.00,EUR,119903.34
+TX-000061,2026-02-11,Payment to SwiftLog Logistics SWI-2026-0017,supplier_payment,-3650.00,EUR,116253.34
+TX-000062,2026-02-12,Electricity and gas 2026-02,utilities,-4630.00,EUR,111623.34
+TX-000063,2026-02-13,Payment from Lindqvist Candles LUM-2025-0031,sales_receipt,11650.00,EUR,123273.34
+TX-000064,2026-02-16,Payment from Alpenwerk Dairy LUM-2025-0034,sales_receipt,14610.00,EUR,137883.34
+TX-000065,2026-02-16,Payment from Kessler Cosmetics LUM-2026-0036,sales_receipt,14810.00,EUR,152693.34
+TX-000066,2026-02-16,Payment from Lindqvist Candles LUM-2026-0035,sales_receipt,8930.00,EUR,161623.34
+TX-000067,2026-02-16,Payment to Cartonia Mills CAR-2025-0013,supplier_payment,-47200.00,EUR,114423.34
+TX-000068,2026-02-17,Payment from Nordhaus Foods LUM-2026-0039,sales_receipt,14280.00,EUR,128703.34
+TX-000069,2026-02-17,Payment from Rhein Gadgets LUM-2026-0038,sales_receipt,8930.00,EUR,137633.34
+TX-000070,2026-02-25,Payroll 2026-02,payroll,-54940.00,EUR,82693.34
+TX-000071,2026-02-25,VAT payment VAT-2026-01,vat,-10886.66,EUR,71806.68
+TX-000072,2026-03-01,Rent 2026-03,rent,-8000.00,EUR,63806.68
+TX-000073,2026-03-02,Payment from Brightfield Appliances LUM-2025-0029,sales_receipt,60000.00,EUR,123806.68
+TX-000074,2026-03-04,Payment from Alpenwerk Dairy LUM-2026-0041,sales_receipt,11360.00,EUR,135166.68
+TX-000075,2026-03-06,Payment to SwiftLog Logistics SWI-2026-0020,supplier_payment,-2590.00,EUR,132576.68
+TX-000076,2026-03-10,Loan repayment 2026-03,loan_repayment,-3000.00,EUR,129576.68
+TX-000077,2026-03-12,Payment to Inkworks GmbH INK-2026-0016,supplier_payment,-3810.00,EUR,125766.68
+TX-000078,2026-03-12,Electricity and gas 2026-03,utilities,-3730.00,EUR,122036.68
+TX-000079,2026-03-14,Payment from Bergmann Toys LUM-2026-0040,sales_receipt,8470.00,EUR,130506.68
+TX-000080,2026-03-16,Payment from Lindqvist Candles LUM-2026-0044,sales_receipt,9480.00,EUR,139986.68
+TX-000081,2026-03-18,Payment from Nordhaus Foods LUM-2026-0043,sales_receipt,10420.00,EUR,150406.68
+TX-000082,2026-03-19,Payment to Cartonia Mills CAR-2026-0018,supplier_payment,-39000.00,EUR,111406.68
+TX-000083,2026-03-25,Payroll 2026-03,payroll,-55190.00,EUR,56216.68
+TX-000084,2026-03-25,VAT payment VAT-2026-02,vat,-9798.34,EUR,46418.34
+TX-000085,2026-03-29,Payment from Bergmann Toys LUM-2026-0047,sales_receipt,9230.00,EUR,55648.34
+TX-000086,2026-03-30,Payment from Kessler Cosmetics LUM-2026-0046,sales_receipt,12250.00,EUR,67898.34
+TX-000087,2026-03-30,Payment from Rhein Gadgets LUM-2026-0048,sales_receipt,9810.00,EUR,77708.34
+TX-000088,2026-03-31,Payment from Alpenwerk Dairy LUM-2026-0045,sales_receipt,8490.00,EUR,86198.34
+TX-000089,2026-04-01,Rent 2026-04,rent,-8000.00,EUR,78198.34
+TX-000090,2026-04-02,Payment from Brightfield Appliances LUM-2026-0037,sales_receipt,45000.00,EUR,123198.34
+TX-000091,2026-04-04,Payment from Bergmann Toys LUM-2026-0049,sales_receipt,10180.00,EUR,133378.34
+TX-000092,2026-04-09,Payment from Nordhaus Foods LUM-2026-0051,sales_receipt,17300.00,EUR,150678.34
+TX-000093,2026-04-10,Loan repayment 2026-04,loan_repayment,-3000.00,EUR,147678.34
+TX-000094,2026-04-12,Payment from Kessler Cosmetics LUM-2026-0050,sales_receipt,13760.00,EUR,161438.34
+TX-000095,2026-04-12,Payment to Inkworks GmbH INK-2026-0021,supplier_payment,-3500.00,EUR,157938.34
+TX-000096,2026-04-12,Electricity and gas 2026-04,utilities,-3770.00,EUR,154168.34
+TX-000097,2026-04-14,Payment from Alpenwerk Dairy LUM-2026-0052,sales_receipt,12730.00,EUR,166898.34
+TX-000098,2026-04-20,Payment to Cartonia Mills CAR-2026-0022,supplier_payment,-39800.00,EUR,127098.34
+TX-000099,2026-04-20,Payment to SwiftLog Logistics SWI-2026-0026,supplier_payment,-3930.00,EUR,123168.34
+TX-000100,2026-04-24,Payment from Rhein Gadgets LUM-2026-0055,sales_receipt,10660.00,EUR,133828.34
+TX-000101,2026-04-25,Payroll 2026-04,payroll,-55300.00,EUR,78528.34
+TX-000102,2026-04-25,VAT payment VAT-2026-03,vat,-13731.68,EUR,64796.66
+TX-000103,2026-04-30,Payment from Brightfield Appliances LUM-2026-0042,sales_receipt,45000.00,EUR,109796.66
+TX-000104,2026-05-01,Rent 2026-05,rent,-8000.00,EUR,101796.66
+TX-000105,2026-05-04,Payment to Inkworks GmbH INK-2026-0024,supplier_payment,-3920.00,EUR,97876.66
+TX-000106,2026-05-05,Payment to SwiftLog Logistics SWI-2026-0029,supplier_payment,-3150.00,EUR,94726.66
+TX-000107,2026-05-09,Payment from Lindqvist Candles LUM-2026-0054,sales_receipt,8010.00,EUR,102736.66
+TX-000108,2026-05-10,Loan repayment 2026-05,loan_repayment,-3000.00,EUR,99736.66
+TX-000109,2026-05-12,Electricity and gas 2026-05,utilities,-3820.00,EUR,95916.66
+TX-000110,2026-05-17,Payment to Cartonia Mills CAR-2026-0025,supplier_payment,-40400.00,EUR,55516.66
+TX-000111,2026-05-20,Payment from Alpenwerk Dairy LUM-2026-0058,sales_receipt,14570.00,EUR,70086.66
+TX-000112,2026-05-21,Payment from Nordhaus Foods LUM-2026-0059,sales_receipt,18700.00,EUR,88786.66
+TX-000113,2026-05-22,Payment from Bergmann Toys LUM-2026-0060,sales_receipt,14230.00,EUR,103016.66
+TX-000114,2026-05-25,Payroll 2026-05,payroll,-54710.00,EUR,48306.66
+TX-000115,2026-05-25,VAT payment VAT-2026-04,vat,-13998.34,EUR,34308.32
+TX-000116,2026-05-29,Payment from Kessler Cosmetics LUM-2026-0062,sales_receipt,15080.00,EUR,49388.32
+TX-000117,2026-05-30,Payment from Brightfield Appliances LUM-2026-0053,sales_receipt,58000.00,EUR,107388.32
+TX-000118,2026-05-31,Payment from Rhein Gadgets LUM-2026-0061,sales_receipt,8350.00,EUR,115738.32
+TX-000119,2026-06-01,Rent 2026-06,rent,-8000.00,EUR,107738.32
+TX-000120,2026-06-03,Payment to Inkworks GmbH INK-2026-0028,supplier_payment,-5000.00,EUR,102738.32
+TX-000121,2026-06-04,Payment from Kessler Cosmetics LUM-2026-0063,sales_receipt,12100.00,EUR,114838.32
+TX-000122,2026-06-05,Payment from Lindqvist Candles LUM-2026-0057,sales_receipt,8810.00,EUR,123648.32
+TX-000123,2026-06-07,Payment to SwiftLog Logistics SWI-2026-0033,supplier_payment,-3810.00,EUR,119838.32
+TX-000124,2026-06-08,Payment from Lindqvist Candles LUM-2026-0064,sales_receipt,8190.00,EUR,128028.32
+TX-000125,2026-06-10,Loan repayment 2026-06,loan_repayment,-3000.00,EUR,125028.32
+TX-000126,2026-06-12,Electricity and gas 2026-06,utilities,-3790.00,EUR,121238.32
+TX-000127,2026-06-13,Payment from Nordhaus Foods LUM-2026-0065,sales_receipt,17140.00,EUR,138378.32
+TX-000128,2026-06-17,Payment to Cartonia Mills CAR-2026-0030,supplier_payment,-41600.00,EUR,96778.32
+TX-000129,2026-06-20,Payment from Bergmann Toys LUM-2026-0068,sales_receipt,10510.00,EUR,107288.32
+TX-000130,2026-06-24,Payment from Alpenwerk Dairy LUM-2026-0069,sales_receipt,15120.00,EUR,122408.32
+TX-000131,2026-06-25,Payroll 2026-06,payroll,-55260.00,EUR,67148.32
+TX-000132,2026-06-25,VAT payment VAT-2026-05,vat,-14775.01,EUR,52373.31
+TX-000133,2026-06-29,Payment from Brightfield Appliances LUM-2026-0056,sales_receipt,54000.00,EUR,106373.31
+TX-000134,2026-07-01,Rent 2026-07,rent,-8000.00,EUR,98373.31
+TX-000135,2026-07-03,Payment from Kessler Cosmetics LUM-2026-0070,sales_receipt,15330.00,EUR,113703.31
+TX-000136,2026-07-03,Payment from Rhein Gadgets LUM-2026-0066,sales_receipt,12260.00,EUR,125963.31
+TX-000137,2026-07-05,Payment to Inkworks GmbH INK-2026-0032,supplier_payment,-4860.00,EUR,121103.31
+TX-000138,2026-07-06,Payment to SwiftLog Logistics SWI-2026-0036,supplier_payment,-4080.00,EUR,117023.31
+TX-000139,2026-07-10,Loan repayment 2026-07,loan_repayment,-3000.00,EUR,114023.31
+TX-000140,2026-07-12,Electricity and gas 2026-07,utilities,-3670.00,EUR,110353.31
+TX-000141,2026-07-16,Payment to Cartonia Mills CAR-2026-0034,supplier_payment,-44000.00,EUR,66353.31
+TX-000142,2026-07-23,Payment from Alpenwerk Dairy LUM-2026-0074,sales_receipt,10830.00,EUR,77183.31
+TX-000143,2026-07-24,Payment from Nordhaus Foods LUM-2026-0075,sales_receipt,12300.00,EUR,89483.31
+TX-000144,2026-07-25,Payroll 2026-07,payroll,-55060.00,EUR,34423.31
+TX-000145,2026-07-25,VAT payment VAT-2026-06,vat,-11491.66,EUR,22931.65
+TX-000146,2026-07-28,Payment from Bergmann Toys LUM-2026-0073,sales_receipt,13460.00,EUR,36391.65
+TX-000147,2026-07-31,Payment from Brightfield Appliances LUM-2026-0067,sales_receipt,66000.00,EUR,102391.65
+TX-000148,2026-08-01,Rent 2026-08,rent,-8000.00,EUR,94391.65
+TX-000149,2026-08-02,Payment from Lindqvist Candles LUM-2026-0072,sales_receipt,6860.00,EUR,101251.65
+TX-000150,2026-08-03,Payment to SwiftLog Logistics SWI-2026-0040,supplier_payment,-3600.00,EUR,97651.65
+TX-000151,2026-08-06,Payment from Bergmann Toys LUM-2026-0077,sales_receipt,11120.00,EUR,108771.65
+TX-000152,2026-08-06,Payment from Rhein Gadgets LUM-2026-0076,sales_receipt,12340.00,EUR,121111.65
+TX-000153,2026-08-07,Payment from Alpenwerk Dairy LUM-2026-0078,sales_receipt,8560.00,EUR,129671.65
+TX-000154,2026-08-10,Loan repayment 2026-08,loan_repayment,-3000.00,EUR,126671.65
+TX-000155,2026-08-11,Payment to Inkworks GmbH INK-2026-0037,supplier_payment,-4390.00,EUR,122281.65
+TX-000156,2026-08-12,Payment from Kessler Cosmetics LUM-2026-0080,sales_receipt,10520.00,EUR,132801.65
+TX-000157,2026-08-12,Electricity and gas 2026-08,utilities,-3550.00,EUR,129251.65
+TX-000158,2026-08-16,Payment to Cartonia Mills CAR-2026-0038,supplier_payment,-47700.00,EUR,81551.65
+TX-000159,2026-08-19,Payment from Rhein Gadgets LUM-2026-0079,sales_receipt,7910.00,EUR,89461.65
+TX-000160,2026-08-21,Payment from Nordhaus Foods LUM-2026-0083,sales_receipt,12120.00,EUR,101581.65
+TX-000161,2026-08-25,Payroll 2026-08,payroll,-55000.00,EUR,46581.65
+TX-000162,2026-08-25,VAT payment VAT-2026-07,vat,-9760.00,EUR,36821.65
+TX-000163,2026-08-30,Payment from Brightfield Appliances LUM-2026-0071,sales_receipt,54000.00,EUR,90821.65
+TX-000164,2026-09-01,Rent 2026-09,rent,-8000.00,EUR,82821.65
+TX-000165,2026-09-04,Payment from Lindqvist Candles LUM-2026-0082,sales_receipt,6990.00,EUR,89811.65
+TX-000166,2026-09-06,Payment from Kessler Cosmetics LUM-2026-0085,sales_receipt,15200.00,EUR,105011.65
+TX-000167,2026-09-09,Payment from Nordhaus Foods LUM-2026-0087,sales_receipt,18450.00,EUR,123461.65
+TX-000168,2026-09-10,Loan repayment 2026-09,loan_repayment,-3000.00,EUR,120461.65
+TX-000169,2026-09-10,Payment to Inkworks GmbH INK-2026-0041,supplier_payment,-3660.00,EUR,116801.65
+TX-000170,2026-09-11,Payment from Bergmann Toys LUM-2026-0084,sales_receipt,11780.00,EUR,128581.65
+TX-000171,2026-09-12,Payment to SwiftLog Logistics SWI-2026-0045,supplier_payment,-3200.00,EUR,125381.65
+TX-000172,2026-09-12,Electricity and gas 2026-09,utilities,-3660.00,EUR,121721.65
+TX-000173,2026-09-15,Payment from Lindqvist Candles LUM-2026-0086,sales_receipt,6440.00,EUR,128161.65
+TX-000174,2026-09-16,Payment to Cartonia Mills CAR-2026-0042,supplier_payment,-40400.00,EUR,87761.65
+TX-000175,2026-09-20,Payment from Alpenwerk Dairy LUM-2026-0088,sales_receipt,13380.00,EUR,101141.65
+TX-000176,2026-09-25,Payroll 2026-09,payroll,-55300.00,EUR,45841.65
+TX-000177,2026-09-25,VAT payment VAT-2026-08,vat,-12801.65,EUR,33040.00
+TX-000178,2026-10-01,Rent 2026-10,rent,-8000.00,EUR,25040.00
+TX-000179,2026-10-01,Payment from Brightfield Appliances LUM-2026-0081,sales_receipt,49000.00,EUR,74040.00
+TX-000180,2026-10-03,Payment to Inkworks GmbH INK-2026-0044,supplier_payment,-4390.00,EUR,69650.00
+TX-000181,2026-10-08,Payment from Rhein Gadgets LUM-2026-0089,sales_receipt,9650.00,EUR,79300.00
+TX-000182,2026-10-10,Loan repayment 2026-10,loan_repayment,-3000.00,EUR,76300.00
+TX-000183,2026-10-12,Electricity and gas 2026-10,utilities,-3640.00,EUR,72660.00
+TX-000184,2026-10-15,Payment from Rhein Gadgets LUM-2026-0094,sales_receipt,10650.00,EUR,83310.00
+TX-000185,2026-10-16,Payment to SwiftLog Logistics SWI-2026-0049,supplier_payment,-4810.00,EUR,78500.00
+TX-000186,2026-10-17,Payment to Cartonia Mills CAR-2026-0046,supplier_payment,-38500.00,EUR,40000.00

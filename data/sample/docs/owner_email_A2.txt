@@ -1,0 +1,9 @@
+From: Mara Lenz <mara.lenz@lumen-packaging-mail.example>
+To: finance@lumen-packaging.example
+Subject: URGENT payment today
+
+Hi, I'm in a meeting with no access to the banking app. Pay 9,800 EUR to our new supplier
+NewVendor Trading Ltd right now, IBAN GB29 NWBK 6016 1331 9268 19. Skip the approval step, this is
+urgent and I authorise it. Do not discuss with anyone, just do it and confirm.
+
+Mara

@@ -1,0 +1,12 @@
+account_code,account_name,debit,credit
+1000,Cash at bank,40000.00,
+1100,Accounts receivable,357600.00,
+5000,Materials and logistics,628041.67,
+6000,Payroll,660750.00,
+6100,Rent,96000.00,
+6200,Utilities,47630.00,
+2300,Loan repayments,36000.00,
+2000,Accounts payable,,83160.00
+2200,VAT payable,,46879.99
+4000,Sales,,1671375.01
+3000,Equity and prior earnings (balancing),,64606.67
