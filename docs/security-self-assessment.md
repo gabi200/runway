@@ -2,7 +2,7 @@
 
 This report describes the security design of Runway as implemented in this repository, the attack scenarios we test, and the risks we know remain. It is written against the code, not the spec. Where the code is weaker than the spec or than a production system would need, it says so in section 7.
 
-Test status at the time of writing: 175 tests pass, including 10 in `tests/security/` (see `docs/testing.md`).
+Test status at the time of writing: 201 tests pass, including 10 in `tests/security/` (see `docs/testing.md`).
 
 ## 1. Scope and security goals
 
@@ -32,7 +32,7 @@ Trust boundaries:
 
 - Untrusted: all document text, all LLM output, all chat text.
 - Trusted code: `policy/`, `agent/executor.py`, `audit/`, `bank/`.
-- Human-only actions: payee creation, clearing a document flag, approvals, kill switch, simulated clock. These live in the UI and use the human bank token.
+- Human-only actions: payee creation and verification, clearing a document flag, approvals, kill switch, simulated clock. These live in the UI and use the human bank token.
 
 Assumption: the machine, the Python process and the SQLite file are not under attacker control. Section 7 lists what happens if that assumption fails.
 
@@ -97,7 +97,7 @@ Layers an attacker would have to defeat, outermost first.
 | 13 | Kill switch | `policy/engine.py:evaluate` | Drops the agent to T0 immediately. Also applied when re-checking approvals. |
 | 14 | Append-only triggers | `audit/log.py:append` | `BEFORE UPDATE` and `BEFORE DELETE` triggers on `auditentry` abort with "auditentry is append-only". |
 | 15 | Hash chain and anchors | `audit/log.py:verify_chain` | Detects edits, deletions, reordering and tail truncation even when the triggers have been dropped (`tests/test_audit.py::test_a6_raw_sql_tampering`). `append` refuses to extend a broken chain. |
-| 16 | Human-attributed UI actions | `ui/app.py:log_human` | Approvals, kill-switch toggles, flag clearing, payee creation and clock advance are written to the audit log under the acting role. |
+| 16 | Human-only, audited actions | `ui/app.py:log_human`; `agent/executor.py:clear_document_flag`; `bank/app.py` `PATCH /payees/{id}` | Approvals, kill-switch toggles, payee creation, payee verification (`verified` flag only; IBANs cannot be edited) and clock advance are written to the audit log under the acting role. Clearing a document flag is `executor.clear_document_flag(session, document_id, role, note)`: only `owner` or `accountant`, audited as `HUMAN_ACTION`, and it is not in `TOOL_SPECS` or `rules.yaml`, so the agent cannot call it. Payee verification needs the human bank token (403 for the executor token). |
 
 ## 5. Attack scenarios A1 to A6
 
@@ -128,7 +128,7 @@ Honest list of weaknesses found while reading the code. Items marked (bug) are d
 
 1. **Keyword-based detection can be evaded.** `scan_document` (`agent/documents.py`) and `is_bypass_attempt` (`agent/prompts.py`) are regular expressions in English. Paraphrases, other languages, character substitution, or splitting a phrase across lines can avoid them. A document that evades the scan is not flagged. The remaining protection is structural: unverified payees are denied, limits and approvals apply, and the model has no dangerous tool. The scan is a detector, not the control.
 2. **Flag-to-payment link is only as good as the `document_id` in the call.** Ingestion does not link a document to an invoice (`Invoice.document_id` is never set by `ingest_document`). The block "payment linked to a flagged document" applies only when the call passes `document_id` or the invoice carries one. A payment to a verified payee against a real open invoice without `document_id` is judged by amount rules only. The bank does not check flags at all.
-3. **No check against paying one invoice twice (bug / gap).** `evaluate` and the bank require that the invoice is open and that the amount does not exceed the invoice, but neither looks at payments already scheduled for that invoice. Two requests with different dates or amounts get different derived idempotency keys and can both be scheduled (bounded only by the daily automatic caps, or by approvals). A5 covers identical requests only.
+3. **No check against paying one invoice twice (bug / gap).** `evaluate` and the bank require that the invoice is open and that the amount does not exceed the invoice, but neither looks at payments already scheduled for that invoice. Two requests with different dates or amounts get different derived idempotency keys and can both be scheduled. Within one simulated day the second one lands in the approval queue because of the per-payee daily cap (checked: 900 then 900 to the same payee for the same invoice gives `ok`, then `needs_approval`), but on a later simulated day it would be automatic again, and a human approving a duplicate is not warned. A5 covers identical requests only.
 4. **Dev tokens in defaults.** `executor-dev-token` and `human-dev-token` are the defaults in `bank/app.py`, `bank/client.py`, `agent/tools.py` and `ui/app.py`. Anyone who knows the repository knows them. Set `RUNWAY_BANK_EXECUTOR_TOKEN` and `RUNWAY_BANK_HUMAN_TOKEN` to long random values outside the demo. Tokens travel as plain bearer headers; there is no TLS in the demo setup.
 5. **Token scopes are nominal.** `bank/app.py:authorize(scope)` only distinguishes the `payees` scope (human token). Any valid token passes `read`, `payments` and `simulate`, so the executor token could also call `/simulate/advance` (move the clock and book payments). The agent never holds it, but the contract's scope list is not enforced per token. The bank's `PATCH /payments/{id}` checks only that the date is not in the past; the "not after the invoice due date" rule exists only in the policy engine.
 6. **SQLite single file is the root of trust.** Policy, bank, audit chain, anchors, settings (kill switch, clock) and ledger share one file. An attacker with write access can recompute the whole chain and both anchors consistently, drop the triggers, mark a payee verified, switch the kill switch off or edit `rules.yaml`. The hash chain proves integrity only against someone who cannot also rewrite the anchors. To close this, publish the head hash externally (signed, to a write-once store or a second party) after each batch; this is not implemented. The default in-process bank also means the "independent" bank checks run in the same process and database as the agent.
@@ -144,8 +144,9 @@ Honest list of weaknesses found while reading the code. Items marked (bug) are d
 16. **Model output is rendered as Markdown** in the UI (`st.markdown(turn.reply)`). A manipulated reply could include a link or image URL; unmasked content could be leaked through an image request. No sanitisation is applied.
 17. **PDF parsing of untrusted files** uses `pypdf` in the same process as the application, without a size limit beyond the Streamlit upload default.
 18. **Multi-currency is incomplete (bug).** With `RUNWAY_COUNTRY=cn`, `schedule_payment` is denied by the policy ("Currency must match the account", the account is EUR), and amounts formatted by `format_money` in e-mails, financing text and the application PDF show the CNY symbol on unconverted EUR cents. Only the UI display (`ui/helpers.py:money`) and the offline planner (`llm/offline.py:_money`) convert. The country pack is also read in two ways: `RUNWAY_COUNTRY` (most modules) and the `country` setting (`forecast/engine.py`).
-19. **Demo evidence uses a non-HTTP bank path.** The committed `docs/execution_logs/` were produced with `--bank-transport service`, which calls the bank service functions directly. HTTP authentication is therefore not exercised in that run (the file says so). The HTTP path is covered by `tests/test_bank.py` and the default `python scripts/run_demo.py` run.
-20. **No approval expiry or binding to identity.** A pending approval request stays valid indefinitely (it is re-checked against current rules when approved).
+19. **Demo evidence uses the in-process bank.** `docs/execution_logs/` was produced with the default `--bank-transport api`, which goes through the FastAPI app via its test client, not over a network socket to a `uvicorn` server. Bearer-token authentication is exercised; TLS and network behaviour are not.
+20. **Flag clearing and payee verification are unauthenticated UI actions.** Whoever selects the `owner` or `accountant` role in the dropdown can clear a flag (the block on linked payments) or mark a payee verified (which lifts the unverified-payee DENY). Both are audited with the chosen role, but the role is not proven.
+21. **No approval expiry or binding to identity.** A pending approval request stays valid indefinitely (it is re-checked against current rules when approved).
 
 ## 8. Summary
 

@@ -189,7 +189,7 @@ An approved action is executed with `automatic=False`, so it does not count towa
 - `policy/rules.yaml` lists `add_payee, update_payee, change_limits, export_data, set_kill_switch` as tier T4; `evaluate` returns DENY for T4 and for any name not in `_SCHEMAS`.
 - `policy/engine.py:_forbidden` rejects any argument key that contains `iban` or equals `bank_details` or `account_number`, at any nesting depth.
 - Defense in depth at the bank: `bank/app.py:authorize("payees")` returns 403 unless the caller used the human token; `bank/service.create_payment` returns 422 for an unverified payee. The executor token cannot create payees (`tests/test_bank.py::test_auth_scopes`).
-- The UI page "Payees (humans only)" is the only place that creates payees, using the human token.
+- The UI page "Payees (humans only)" is the only place that creates or verifies payees, using the human token (`POST /payees`, `PATCH /payees/{id}` which can change only the `verified` flag). Clearing a document flag is `agent/executor.py:clear_document_flag`, callable only with role `owner` or `accountant` and audited; it is not an agent tool.
 
 ### Rule 5. Every figure traces back to ledger rows
 
