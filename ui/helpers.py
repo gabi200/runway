@@ -12,12 +12,11 @@ from common.db import REPO_ROOT
 SAMPLE_DIR = Path(os.environ.get("RUNWAY_SAMPLE_DIR", REPO_ROOT / "data" / "sample"))
 ROLES = ("owner", "accountant")
 
-BADGE_COLORS = {
-    "ALLOW": "#1b7f3b", "ok": "#1b7f3b", "EXECUTED": "#1b7f3b", "APPROVED": "#1b7f3b",
-    "executed": "#1b7f3b", "approved": "#1b7f3b",
-    "NEEDS_APPROVAL": "#b7791f", "needs_approval": "#b7791f", "pending": "#b7791f",
-    "DENY": "#c62828", "denied": "#c62828", "error": "#c62828", "rejected": "#c62828",
-    "REJECTED": "#c62828", "FAILED": "#c62828", "failed": "#c62828",
+BADGE_LEVELS = {
+    "ALLOW": "ok", "ok": "ok", "EXECUTED": "ok", "APPROVED": "ok", "executed": "ok", "approved": "ok",
+    "NEEDS_APPROVAL": "attention", "needs_approval": "attention", "pending": "attention",
+    "DENY": "danger", "denied": "danger", "error": "danger", "rejected": "danger",
+    "REJECTED": "danger", "FAILED": "danger", "failed": "danger",
 }
 
 
@@ -34,10 +33,9 @@ def money(pack: CountryPack, ledger_cents: int | None) -> str:
 
 
 def badge(text: str) -> str:
-    """Colored badge as inline HTML (render with unsafe_allow_html)."""
-    color = BADGE_COLORS.get(text, "#555555")
-    return (f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:10px;'
-            f'font-size:0.8em;font-weight:600">{html.escape(str(text))}</span>')
+    """Status pill as inline HTML (render with unsafe_allow_html; styled by ui/style.css)."""
+    level = BADGE_LEVELS.get(text, "")
+    return f'<span class="pill {level}">{html.escape(str(text).replace("_", " "))}</span>'
 
 
 def company_name(account_name: str | None) -> str:

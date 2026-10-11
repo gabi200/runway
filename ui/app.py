@@ -8,6 +8,7 @@ Agent actions go through agent.executor (rules engine + audit); human actions
 from __future__ import annotations
 
 import csv
+from html import escape as esc
 import io
 import json
 import os
@@ -38,7 +39,7 @@ from data.generate import generate  # noqa: E402
 from forecast.engine import build_forecast, explain_figure  # noqa: E402
 from data.importer import ImportErrorReport, import_files  # noqa: E402
 from ui import auth  # noqa: E402
-from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
+from ui.helpers import BADGE_LEVELS, SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
 from ui.render import describe_approval, safe_text  # noqa: E402
 
 SECTIONS = ["Onboarding", "Monday brief & chat", "Forecast", "Approval queue", "Documents",
@@ -127,7 +128,7 @@ def sign_in_box(col) -> None:
             else:
                 st.rerun()
         return
-    col.markdown(f"Signed in: **{auth.identity()}**")
+    col.markdown(f'<span class="pill ok">{esc(auth.identity())}</span>', unsafe_allow_html=True)
     other = [r for r in auth.ROLES if r != st.session_state.role]
     with col.expander("Switch role / sign out"):
         st.selectbox("Switch to", other, key="sw_role")
@@ -144,36 +145,45 @@ def sign_in_box(col) -> None:
 
 
 def header() -> None:
+    """Page title row in the main area; session controls live in the sidebar."""
     with session_scope() as s:
         acc = s.get(Account, "ACC-MAIN")
         today = db.get_today(s)
-    c1, c2, c3, c4, c5 = st.columns([2.2, 1.4, 1.2, 1.4, 1.6])
-    c1.markdown(f"### {company_name(acc.name if acc else None)}")
-    c1.caption(f"Simulated today: **{today:%A %d %b %Y}**")
-    sign_in_box(c2)
-    c3.radio("Display currency", ["eu", "cn"], key="pack", horizontal=True,
-             format_func=lambda c: pack_for(c).currency,
-             help="Display conversion only. Stored data stays in EUR.")
-    c4.toggle("KILL SWITCH", key="kill", on_change=on_kill_toggle,
+    st.markdown(f'<div class="page-top"><span class="company">{esc(company_name(acc.name if acc else None))}</span>'
+                f'<span class="tag">Simulated today · {today:%a %d %b %Y}</span></div>', unsafe_allow_html=True)
+
+
+def controls() -> None:
+    """Sidebar: sign-in, display currency, kill switch, reset."""
+    sb = st.sidebar
+    sb.markdown('<div class="panel-label">Session</div>', unsafe_allow_html=True)
+    sign_in_box(sb)
+    sb.markdown('<div class="panel-label">Agent</div>', unsafe_allow_html=True)
+    sb.toggle("Kill switch", key="kill", on_change=on_kill_toggle,
               help="ON = the agent may only run read-only (T0) tools. Every toggle is audited.")
-    if st.session_state.kill:
-        c4.error("KILL SWITCH ON: agent is read-only")
-    else:
-        c4.caption("Kill switch off: agent runs within rules.")
+    agent_on = not st.session_state.kill
+    sb.markdown(f'<span class="live {"" if agent_on else "off"}"><span class="led"></span>'
+                f'{"Agent active within rules" if agent_on else "Agent read-only"}</span>',
+                unsafe_allow_html=True)
     if st.session_state.pop("flash", None):
-        c4.warning("Sign in to change the kill switch.")
-    if c5.button("Reset demo data") and auth.require_login("reset the demo"):
+        sb.warning("Sign in to change the kill switch.")
+    sb.markdown('<div class="panel-label">Display</div>', unsafe_allow_html=True)
+    sb.radio("Display currency", ["eu", "cn"], key="pack", horizontal=True,
+             format_func=lambda c: pack_for(c).currency, label_visibility="collapsed",
+             help="Display conversion only. Stored data stays in EUR.")
+    sb.divider()
+    if sb.button("Reset demo data", width="stretch") and auth.require_login("reset the demo"):
         st.session_state.confirm_reset = True
     if st.session_state.confirm_reset and auth.signed_in():
-        c5.warning("This wipes the database (incl. audit log) and regenerates sample data.")
-        if c5.button("Confirm reset", type="primary"):
+        sb.warning("This wipes the database (incl. audit log) and regenerates sample data.")
+        a, b = sb.columns(2)
+        if a.button("Confirm reset", type="primary"):
             reset_demo()
             st.rerun()
-        if c5.button("Cancel"):
+        if b.button("Cancel"):
             st.session_state.confirm_reset = False
             st.rerun()
-    st.divider()
-
+    sb.caption("The agent proposes; rules and humans decide.")
 
 # --------------------------------------------------------------------------- #
 # 1. Onboarding
@@ -271,7 +281,7 @@ def page_onboarding() -> None:
                   "balance": money(pack_for(st.session_state.pack), db.account_balance_cents(s, as_of=db.get_today(s)))}
     cols = st.columns(len(counts))
     for col, (k, v) in zip(cols, counts.items()):
-        col.metric(k, v)
+        col.metric(k, v, border=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -457,9 +467,9 @@ def scenario_panel(fc, pack) -> None:
         st.error(f"Scenario could not be applied: {exc}")
         return
     m1, m2 = st.columns(2)
-    m1.metric("Lowest balance before", money(pack, fc.min_closing_cents), f"week {fc.min_week}", delta_color="off")
+    m1.metric("Lowest balance before", money(pack, fc.min_closing_cents), f"week {fc.min_week}", delta_color="off", border=True)
     m2.metric("Lowest balance after", money(pack, fc2.min_closing_cents),
-              money(pack, fc2.min_closing_cents - fc.min_closing_cents))
+              money(pack, fc2.min_closing_cents - fc.min_closing_cents), border=True)
     st.altair_chart(closing_chart(fc, pack, fc2), width="stretch")
     st.dataframe(pd.DataFrame({
         "Week": [w.index for w in fc.weeks],
@@ -542,8 +552,15 @@ def page_documents() -> None:
             else:
                 doc = docs_mod.ingest_text(s, data.decode("utf-8", errors="replace"), up.name, kind,
                                            sender or None)
-            (st.error if doc.flagged else st.success)(
-                f"{doc.id} ingested" + (f" and FLAGGED: {safe_text(doc.flag_reason)}" if doc.flagged else ", no indicators found."))
+            st.session_state.doc_result = (doc.id, doc.flagged, doc.flag_reason)
+        st.rerun()
+    result = st.session_state.pop("doc_result", None)
+    if result:  # shown full width after the rerun, so the banner count is already updated
+        did, flagged, reason = result
+        if flagged:
+            st.error(f"**{did} flagged.** {safe_text(reason)}. Linked payments are blocked until a human clears it.")
+        else:
+            st.success(f"**{did}** ingested, no indicators found.")
     st.subheader("Demo documents")
     sample_dir = SAMPLE_DIR / "docs"
     if sample_dir.is_dir():
@@ -553,8 +570,8 @@ def page_documents() -> None:
                 with session_scope() as s:
                     k = "email" if f.suffix in (".txt", ".eml") else "invoice"
                     doc = docs_mod.ingest_file(s, f, k, None, sample_dir)
-                    (col.error if doc.flagged else col.success)(
-                        f"{doc.id}: " + (f"FLAGGED - {safe_text(doc.flag_reason)}" if doc.flagged else "clean"))
+                    st.session_state.doc_result = (doc.id, doc.flagged, doc.flag_reason)
+                st.rerun()
     else:
         st.caption("No sample documents found. Use 'Reset demo data'.")
     st.subheader("Stored documents")
@@ -565,8 +582,9 @@ def page_documents() -> None:
     if not view:
         st.caption("No documents yet.")
     for did, fn, k, snd, flagged, cleared, reason, text in view:
-        status = "CLEARED by human" if (flagged and cleared) else ("FLAGGED" if flagged else "clean")
-        with st.expander(safe_text(f"{did} - {fn} - {status}")):
+        status = ":blue-badge[Cleared by human]" if (flagged and cleared) else (
+            ":red-badge[Flagged]" if flagged else ":green-badge[Clean]")
+        with st.expander(f"{status} {safe_text(f'{did} - {fn}')}"):
             if flagged:
                 st.warning(f"Reasons: {safe_text(reason)}")
             st.caption(safe_text(f"Kind: {k}  |  Sender: {snd or 'unknown'}"))
@@ -598,7 +616,10 @@ def page_payees() -> None:
     except BankError as exc:
         st.error(f"Bank error: {exc.detail}")
         return
-    st.dataframe(pd.DataFrame(payees), width="stretch", hide_index=True)
+    st.dataframe(pd.DataFrame(payees), width="stretch", hide_index=True,
+                 column_order=["name", "verified", "iban", "id", "created_by"],
+                 column_config={"name": "Name", "verified": "Verified", "iban": "IBAN", "id": "ID",
+                                "created_by": "Created by"})
     if st.session_state.role != "owner":
         st.caption("Sign in as the owner to add or verify payees.")
         return
@@ -651,14 +672,21 @@ def page_bank() -> None:
         st.error(f"Bank error: {exc.detail}")
         return
     for a in accounts:
-        st.metric(f"{a['name']} ({a['id']})", money(pack, a["balance_cents"]))
+        st.metric(f"{a['name']} ({a['id']})", money(pack, a["balance_cents"]), border=True)
     for status in ("scheduled", "executed", "cancelled"):
         rows = [p for p in payments if p["status"] == status]
         st.subheader(f"{status.capitalize()} payments ({len(rows)})")
         if rows:
             df = pd.DataFrame(rows)
             df["amount"] = [money(pack, v) for v in df["amount_cents"]]
-            st.dataframe(df, width="stretch", hide_index=True)
+            # Key columns first with readable names; raw fields stay below the fold of the table
+            st.dataframe(df, width="stretch", hide_index=True,
+                         column_order=["id", "payee_id", "amount", "execute_date", "invoice_id",
+                                       "automatic", "created_by", "idempotency_key"],
+                         column_config={"id": "Payment", "payee_id": "Payee", "amount": "Amount",
+                                        "execute_date": "Executes on", "invoice_id": "Invoice",
+                                        "automatic": "Auto (T2)", "created_by": "Created by",
+                                        "idempotency_key": "Idempotency key"})
     st.subheader("Advance the simulated clock")
     st.caption("Moves 'today' forward and executes scheduled payments that fall due.")
     days = st.number_input("Days", 1, 120, 7)
@@ -728,7 +756,13 @@ def page_audit() -> None:
                  "decision": e.decision, "reason": e.reason, "hash": e.hash[:12], "args": e.args_json}
                 for e in entries]
     st.write(f"{len(rows)} entries (newest first)")
-    st.dataframe(pd.DataFrame(rows[::-1]), width="stretch", hide_index=True)
+    df = pd.DataFrame(rows[::-1])
+    if not df.empty:
+        df["time"] = pd.to_datetime(df["time"], utc=True, format="mixed").dt.strftime("%Y-%m-%d %H:%M:%S")
+    colors = {"ok": "#2ea043", "attention": "#d29922", "danger": "#f85149"}
+    st.dataframe(df.style.map(lambda d: f"color: {colors[BADGE_LEVELS[d]]}; font-weight: 700"
+                              if d in BADGE_LEVELS else "", subset=["decision"]) if not df.empty else df,
+                 width="stretch", hide_index=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -740,12 +774,52 @@ PAGES = {"Onboarding": page_onboarding, "Monday brief & chat": page_chat, "Forec
          "Audit log": page_audit}
 
 
+def status_banner() -> None:
+    """Canary-style headline: is cash safe over the next 13 weeks, and what waits on a human."""
+    pack = pack_for(st.session_state.pack)
+    with session_scope() as s:
+        fc = build_forecast(s)
+        balance = db.account_balance_cents(s, as_of=db.get_today(s))
+        pending = len(executor.pending_approvals(s))
+        flagged = len(s.exec(select(Document).where(Document.flagged == True, Document.cleared == False)).all())  # noqa: E712
+    if fc.shortfall_weeks:
+        level, status = "danger", "Cash shortfall ahead"
+        headline = f"Cash goes below zero in week {', '.join(map(str, fc.shortfall_weeks))}"
+    elif pending or flagged:
+        level, status, headline = "attention", "Action needed", "Cash stays positive for 13 weeks"
+    else:
+        level, status, headline = "ok", "All clear", "Cash stays positive for 13 weeks"
+    sub = f"Lowest point: week {fc.min_week} at {money(pack, fc.min_closing_cents)}"
+    low = "danger" if fc.min_closing_cents < 0 else ""
+
+    def metric(n, label, cls=""):
+        return f'<div><div class="n {cls}">{esc(str(n))}</div><div class="l">{label}</div></div>'
+
+    st.markdown(
+        f'<div class="banner {level}"><div class="grow"><div class="status">{status}</div>'
+        f'<div class="headline">{esc(headline)}</div><div class="sub">{esc(sub)}</div></div>'
+        + metric(money(pack, balance), "Bank balance")
+        + metric(money(pack, fc.min_closing_cents), "13-week low", low)
+        + metric(pending, "Awaiting approval", "attention" if pending else "")
+        + metric(flagged, "Flagged documents", "danger" if flagged else "")
+        + "</div>", unsafe_allow_html=True)
+
+
+def sidebar() -> str:
+    st.sidebar.markdown('<div class="brand">Runway<span class="dot">.</span></div>', unsafe_allow_html=True)
+    st.sidebar.caption("AI finance copilot for SMEs")
+    page = st.sidebar.radio("Navigation", SECTIONS, key="page", label_visibility="collapsed")
+    controls()
+    return page
+
+
 def main() -> None:
+    st.markdown(f"<style>{(Path(__file__).parent / 'style.css').read_text()}</style>", unsafe_allow_html=True)
     ensure_data()
     init_state()
+    page = sidebar()
     header()
-    page = st.sidebar.radio("Navigation", SECTIONS, key="page")
-    st.sidebar.caption("Runway: AI finance copilot for SMEs. The agent proposes; rules and humans decide.")
+    status_banner()
     PAGES[page]()
 
 

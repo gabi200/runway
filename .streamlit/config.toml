@@ -1,0 +1,9 @@
+# Dark theme matching the Canary dashboard palette
+[theme]
+base = "dark"
+primaryColor = "#2f81f7"
+backgroundColor = "#0f1419"
+secondaryBackgroundColor = "#1a212b"
+textColor = "#e6edf3"
+borderColor = "#2c3846"
+font = "sans serif"

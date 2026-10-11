@@ -115,7 +115,10 @@ def test_ingest_file_outside_root_rejected(session, fake_executor, tmp_path):
         ingest_file(session, secret, "other", None, allowed_root=root)
     with pytest.raises(ValueError):
         ingest_file(session, root / ".." / "secret.txt", "other", None, allowed_root=root)
-    (root / "link.txt").symlink_to(secret)
+    try:
+        (root / "link.txt").symlink_to(secret)
+    except OSError:  # Windows without Developer Mode cannot create symlinks
+        pytest.skip("symlinks not permitted on this machine")
     with pytest.raises(ValueError):
         ingest_file(session, root / "link.txt", "other", None, allowed_root=root)
 
