@@ -215,3 +215,21 @@ def scan_document(text: str) -> list[str]   # deterministic injection/BEC indica
   instructions", urgency + payment) it calls `run_tool(..., "flag_document", ...)`.
 - `OfflinePlanner` is a deterministic stand-in that emits the demo tool calls so
   the whole demo and tests run without network.
+
+---
+
+## 8. Fix-round interface additions (after Opus verification)
+- **Currency rule:** the ledger and every bank operation use the account currency
+  (`Account.currency`, EUR in the demo). The country pack is display-only for
+  amounts: format ledger cents with `CountryPack.display(cents)` (converts and
+  formats). VAT rate/day and default terms still come from the pack.
+- `forecast.engine.financing_need(session, scenario: list[dict] | None = None) -> dict`:
+  computed in code: `{"amount_cents", "needed_by", "days_needed", "shortfall_weeks",
+  "worst_week", "worst_closing_cents", "recovery_week", "recovery_refs", "explanation"}`.
+  Exposed as T1 tool `get_financing_need` (optional arg `scenario`), so the LLM never
+  computes financing amounts or durations.
+- `agent.executor.approve(session, approval_id, role, approver_id: str | None = None)`:
+  the same `approver_id` can never fill two roles on one request.
+- `agent.documents.ingest_text(session, text, filename, kind, sender)` and
+  `ingest_file(session, path, kind, sender, allowed_root)`; a string is never treated
+  as a path. `ingest_document` remains for bytes/text only.

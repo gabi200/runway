@@ -39,6 +39,14 @@ class CountryPack:
         """Convert stored EUR cents into this pack's currency for display."""
         return round(cents * self.fx_from_eur)
 
+    def display(self, ledger_cents: int) -> str:
+        """Format a ledger amount (stored in EUR cents) in this pack's display currency.
+
+        The ledger and all bank operations stay in the account currency; switching
+        the pack only changes how amounts are shown to people.
+        """
+        return self.format_money(self.convert_from_eur_cents(ledger_cents))
+
 
 def load_yaml(name: str) -> dict[str, Any]:
     with open(CONFIG_DIR / name, encoding="utf-8") as f:
