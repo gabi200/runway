@@ -1,0 +1,9 @@
+# China demo pack. Illustrative values only.
+name: China (demo)
+currency: CNY
+currency_symbol: "¥"
+vat_rate: 0.13
+vat_day_of_month: 15
+default_customer_terms_days: 30
+default_supplier_terms_days: 60
+fx_from_eur: 7.8  # display conversion for the live currency switch

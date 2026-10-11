@@ -1,0 +1,9 @@
+# EU demo pack. Illustrative values only.
+name: European Union (demo)
+currency: EUR
+currency_symbol: "€"
+vat_rate: 0.20
+vat_day_of_month: 25
+default_customer_terms_days: 30
+default_supplier_terms_days: 60
+fx_from_eur: 1.0

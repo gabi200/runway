@@ -1,0 +1,10 @@
+# LLM provider. Any OpenAI-compatible API works; switching = change this file.
+# The API key is NEVER stored here: it is read from the env var named below.
+provider: deepseek
+base_url: https://api.deepseek.com
+model: deepseek-chat
+api_key_env: DEEPSEEK_API_KEY
+temperature: 0.2
+timeout_seconds: 60
+# When no API key is present, Runway uses the deterministic offline planner
+# (llm/offline.py) so the demo and tests run without network access.
