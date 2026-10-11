@@ -79,7 +79,7 @@ def test_environment_tokens(monkeypatch):
 
 
 def test_idempotency_survives_rescheduling_and_execution():
-    with BankClient() as client:
+    with BankClient(token="human-dev-token") as client:
         args = ("once", "PAYEE-TEST", 1200, "EUR", TODAY + timedelta(days=2))
         first = client.create_payment(*args, invoice_id="AP-TEST", automatic=True)
         assert first["id"] == "PAY-0001"
@@ -121,9 +121,9 @@ def test_rescheduling_rules():
         assert client.patch(path, json={}).status_code == 422
         assert client.patch("/payments/MISSING", json={"execute_date": TODAY.isoformat()}).status_code == 404
         changed = client.patch(path, json={"execute_date": TODAY.isoformat()})
-        assert changed.status_code == 200
-        assert changed.json()["amount_cents"] == 1200
-        assert client.post("/simulate/advance?days=0").json()["executed_count"] == 1
+        assert changed.status_code == 422
+        assert client.patch(path, json={"execute_date": "2026-10-22"}).status_code == 200
+        assert client.post("/simulate/advance?days=3", headers={"Authorization": "Bearer human-dev-token"}).json()["executed_count"] == 1
         assert client.patch(path, json={"execute_date": "2026-10-22"}).status_code == 409
     with session_scope() as session:
         row = session.get(Payment, payment["id"])
@@ -137,7 +137,7 @@ def test_rescheduling_rules():
 
 
 def test_advance_books_due_payments_once():
-    with BankClient() as client:
+    with BankClient(token="human-dev-token") as client:
         due = client.create_payment("due", "PAYEE-TEST", 1200, "EUR", TODAY + timedelta(days=2), invoice_id="AP-TEST")
         future = client.create_payment("future", "PAYEE-TEST", 500, "EUR", TODAY + timedelta(days=10))
         assert client.advance(1)["executed_count"] == 0
@@ -209,7 +209,7 @@ def test_advance_matching_category_and_cancelled_payment():
         party.kind = "tax"
         session.add(party)
         session.commit()
-    with BankClient() as client:
+    with BankClient(token="human-dev-token") as client:
         client.create_payment("tax", "PAYEE-TEST", 100, "EUR", TODAY)
         cancelled = client.create_payment("cancelled", "PAYEE-TEST", 200, "EUR", TODAY)
     with session_scope() as session:
@@ -218,13 +218,13 @@ def test_advance_matching_category_and_cancelled_payment():
         session.add(payment)
         session.commit()
     def advance(_):
-        with BankClient() as client:
+        with BankClient(token="human-dev-token") as client:
             return client.advance(0)
     with ThreadPoolExecutor(max_workers=2) as pool:
         summaries = list(pool.map(advance, range(2)))
     assert sum(row["executed_count"] for row in summaries) == 1
-    with BankClient() as client:
-        assert client.list_transactions("ACC-MAIN")[0]["category"] == "vat"
+    with BankClient(token="human-dev-token") as client:
+        assert client.list_transactions("ACC-MAIN")[0]["category"] == "other"
         assert len(client.list_payments("cancelled")) == 1
 
 
@@ -258,3 +258,137 @@ def test_verify_payee_only_accepts_verified_boolean(body):
         before = client.get("/payees").json()
         assert client.patch("/payees/PAYEE-TEST", json=body).status_code == 422
         assert client.get("/payees").json() == before
+
+
+@pytest.mark.parametrize("amount", [100000001, 2**62, 10**30])
+def test_huge_payment_rejected(amount):
+    with TestClient(app, headers=AUTH) as client:
+        assert client.post("/payments", json=payload(amount_cents=amount)).status_code == 422
+
+
+def test_invoice_cumulative_limit():
+    with TestClient(app, headers=AUTH) as client:
+        assert client.post("/payments", json=payload(amount_cents=1000)).status_code == 200
+        assert client.post("/payments", json=payload(idempotency_key="second", amount_cents=201)).status_code == 422
+        assert client.post("/payments", json=payload(idempotency_key="third", amount_cents=200)).status_code == 200
+
+
+def test_executor_cannot_advance():
+    with TestClient(app, headers=AUTH) as client:
+        assert client.post("/simulate/advance?days=0").status_code == 403
+
+
+def test_patch_cannot_pull_forward_or_exceed_invoice_due():
+    with TestClient(app, headers=AUTH) as client:
+        row = client.post("/payments", json=payload()).json()
+        for day in (TODAY, TODAY + timedelta(days=11)):
+            assert client.patch(f"/payments/{row['id']}", json={"execute_date": day.isoformat()}).status_code == 422
+
+
+def test_unlinked_payment_is_other_and_identifiable():
+    with BankClient(token="human-dev-token") as client:
+        row = client.create_payment("unlinked", "PAYEE-TEST", 100, "EUR", TODAY)
+        client.advance(0)
+        tx = client.list_transactions("ACC-MAIN")[0]
+        assert tx["category"] == "other"
+        assert client.list_payments()[0]["transaction_id"] == tx["id"]
+
+
+@pytest.mark.parametrize("amount", [100000001, 2**62, 10**30])
+def test_service_and_model_enforce_amount_bound(amount):
+    from bank import service
+    from bank.app import PaymentCreate
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PaymentCreate(**payload(amount_cents=amount))
+    with session_scope() as session:
+        body = payload(amount_cents=amount)
+        body["execute_date"] = TODAY + timedelta(days=2)
+        with pytest.raises(service.BankServiceError) as error:
+            service.create_payment(session, body)
+        assert error.value.status_code == 422
+
+
+def test_service_invoice_limit_cancellation_and_paid_status():
+    from bank import service
+
+    def create(key, amount):
+        with session_scope() as session:
+            body = payload(idempotency_key=key, amount_cents=amount)
+            body["execute_date"] = TODAY + timedelta(days=2)
+            return service.create_payment(session, body)
+
+    first = create("first", 1000)
+    with pytest.raises(service.BankServiceError) as error:
+        create("too-much", 201)
+    assert error.value.status_code == 422
+    with session_scope() as session:
+        row = session.get(Payment, first["id"])
+        row.status = "cancelled"
+        session.add(row)
+        session.commit()
+    create("replacement", 1200)
+    with session_scope() as session:
+        invoice = session.get(Invoice, "AP-TEST")
+        invoice.status = "paid"
+        session.add(invoice)
+        session.commit()
+    with pytest.raises(service.BankServiceError) as error:
+        create("paid", 1)
+    assert error.value.status_code == 422
+
+
+def test_service_reschedule_bounds_and_unlinked_booking():
+    from bank import service
+
+    with session_scope() as session:
+        body = payload()
+        body["execute_date"] = TODAY + timedelta(days=2)
+        linked = service.create_payment(session, body)
+    for day in (TODAY, TODAY + timedelta(days=11)):
+        with session_scope() as session:
+            with pytest.raises(service.BankServiceError) as error:
+                service.reschedule_payment(session, linked["id"], day)
+            assert error.value.status_code == 422
+    with session_scope() as session:
+        party = session.get(Counterparty, "SUP-TEST")
+        party.kind = "landlord"
+        session.add(party)
+        session.commit()
+    with session_scope() as session:
+        body = payload(idempotency_key="unlinked", invoice_id=None)
+        body["execute_date"] = TODAY
+        unlinked = service.create_payment(session, body)
+    with session_scope() as session:
+        service.advance(session, 0)
+    with session_scope() as session:
+        payment = session.get(Payment, unlinked["id"])
+        assert session.get(Transaction, payment.transaction_id).category == "other"
+
+
+@pytest.mark.parametrize("scope", ["read", "payments", "payees", "simulate"])
+def test_scope_dependency(scope):
+    from bank.app import authorize
+    from fastapi import HTTPException
+
+    dependency = authorize(scope)
+    assert dependency("Bearer human-dev-token") == "owner"
+    if scope in {"read", "payments"}:
+        assert dependency("Bearer executor-dev-token") == "agent"
+    else:
+        with pytest.raises(HTTPException) as error:
+            dependency("Bearer executor-dev-token")
+        assert error.value.status_code == 403
+
+
+def test_service_maximum_payment_boundary_and_replay():
+    from bank import service
+
+    body = payload(amount_cents=100000000, invoice_id=None)
+    body["execute_date"] = TODAY
+    with session_scope() as session:
+        first = service.create_payment(session, body)
+    with session_scope() as session:
+        replay = service.create_payment(session, body)
+    assert replay["id"] == first["id"] and replay["idempotent_replay"]

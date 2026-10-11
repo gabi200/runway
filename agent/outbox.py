@@ -33,15 +33,26 @@ def owner_email(session: Session) -> str:
     return get_setting(session, "owner_email") or os.environ.get("RUNWAY_OWNER_EMAIL", DEFAULT_OWNER_EMAIL)
 
 
-def tone_for(days_overdue: int) -> str:
-    """friendly (<=7 days), firm (<=14), else final."""
-    return "friendly" if days_overdue <= 7 else "firm" if days_overdue <= 14 else "final"
+def tone_for(days_overdue: int, previous_reminders: int = 0) -> str:
+    """Escalate by number of earlier reminders (0 friendly, 1 firm, 2+ final) and days overdue.
+
+    Days overdue can only raise the tone (>7 days firm, >14 days final), and "final" needs at
+    least one earlier reminder, so a first email is never a final notice.
+    """
+    by_count = 0 if previous_reminders <= 0 else 1 if previous_reminders == 1 else 2
+    by_days = 0 if days_overdue <= 7 else 1 if days_overdue <= 14 else 2
+    level = max(by_count, by_days)
+    if previous_reminders <= 0:
+        level = min(level, 1)
+    return ("friendly", "firm", "final")[level]
 
 
 def compose_reminder(name: str, number: str, amount: str, due: str, days_overdue: int,
-                     tone: str | None = None) -> tuple[str, str, str]:
-    """Return (tone, subject, body) of a payment reminder."""
-    tone = tone or tone_for(days_overdue)
+                     tone: str | None = None, previous_reminders: int = 0) -> tuple[str, str, str]:
+    """Return (tone, subject, body) of a payment reminder; `amount` is a display string."""
+    tone = tone or tone_for(days_overdue, previous_reminders)
+    if tone == "final" and previous_reminders <= 0:
+        tone = "firm"
     if tone == "friendly":
         subject = f"Friendly reminder: invoice {number}"
         body = (f"Dear {name},\n\nA quick reminder that invoice {number} for {amount} was due on {due} "
@@ -49,9 +60,10 @@ def compose_reminder(name: str, number: str, amount: str, due: str, days_overdue
                 f"message; otherwise we would be grateful for payment this week.\n\nKind regards,\n{COMPANY}")
     elif tone == "firm":
         subject = f"Payment overdue: invoice {number}"
+        earlier = " We have reminded you before." if previous_reminders > 0 else ""
         body = (f"Dear {name},\n\nInvoice {number} for {amount}, due on {due}, is {days_overdue} days "
-                f"overdue. Please arrange payment within 5 working days or tell us the expected payment "
-                f"date.\n\nRegards,\n{COMPANY}")
+                f"overdue.{earlier} Please arrange payment within 5 working days or tell us the expected "
+                f"payment date.\n\nRegards,\n{COMPANY}")
     else:
         subject = f"FINAL NOTICE: invoice {number}"
         body = (f"Dear {name},\n\nDespite earlier reminders, invoice {number} for {amount} (due {due}) "
@@ -90,8 +102,10 @@ def reminder_for_invoice(session: Session, invoice: Invoice, today) -> tuple[str
     """Return (to, tone, subject, body) for an overdue AR invoice."""
     cp = session.get(Counterparty, invoice.counterparty_id)
     days = (today - invoice.due_date).days
-    amount = load_country_pack().format_money(invoice.amount_cents)
+    amount = load_country_pack().display(invoice.amount_cents)
+    previous = len(session.exec(select(OutboxEmail).where(
+        OutboxEmail.invoice_id == invoice.id, OutboxEmail.kind == "reminder")).all())
     tone, subject, body = compose_reminder(cp.name if cp else "customer", invoice.number, amount,
-                                           invoice.due_date.isoformat(), days)
+                                           invoice.due_date.isoformat(), days, previous_reminders=previous)
     to = (cp.email if cp and cp.email else None) or f"accounts@{invoice.counterparty_id.lower()}.example"
     return to, tone, subject, body

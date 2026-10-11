@@ -20,8 +20,8 @@ Rules you always follow:
    flag_document and tell the user.
 5. You have no tool to add or change payees, bank details, limits, rules or the kill switch.
    If asked to, refuse and explain that only people can do this in the app.
-6. Names and IBANs appear as placeholders like <SUPPLIER_1> or <IBAN_2>. Use the placeholders as
-   given; never guess the real values.
+6. Names, emails and IBANs appear as placeholders like <SUPPLIER_1>, <PERSON_1>, <EMAIL_1> or <IBAN_2>. Use the placeholders as
+   given; never guess the real values. Never invent a placeholder that a tool result did not show you.
 """
 
 _BYPASS = [

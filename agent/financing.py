@@ -16,7 +16,7 @@ import yaml
 from sqlmodel import Session, select
 
 from common.config import load_country_pack
-from common.db import Invoice, get_today
+from common.db import Account, Invoice, get_today
 
 CATALOGUE_PATH = Path(__file__).resolve().parent.parent / "data" / "financing.yaml"
 
@@ -60,7 +60,14 @@ def _largest_open_ar(session: Session, counterparty_id: str | None = None) -> In
 
 
 def _fmt(cents: int) -> str:
-    return load_country_pack().format_money(cents)
+    """Display string for ledger cents (country pack is display-only)."""
+    return load_country_pack().display(cents)
+
+
+def account_currency(session: Session) -> str:
+    """Currency of the ledger / bank account (not the display currency)."""
+    acc = session.get(Account, "ACC-MAIN") or session.exec(select(Account)).first()
+    return acc.currency if acc else load_country_pack().currency
 
 
 def _eligibility(session: Session, p: dict[str, Any], amount_cents: int) -> tuple[str | None, list[str]]:
@@ -88,7 +95,8 @@ def _eligibility(session: Session, p: dict[str, Any], amount_cents: int) -> tupl
 def compare_financing(session: Session, amount_cents: int, needed_by: date, days_needed: int) -> dict:
     """Rank financing options by true cost; exclude slow or ineligible ones.
 
-    Time to cash is counted in calendar days. Returns
+    Time to cash is counted in calendar days. Amounts are integer cents in the
+    account currency plus `*_display` strings from the country pack. Returns
     {recommended, ranked, excluded, currency, amount_cents, needed_by, days_needed}.
     """
     if amount_cents <= 0 or days_needed <= 0:
@@ -101,18 +109,23 @@ def compare_financing(session: Session, amount_cents: int, needed_by: date, days
     for p in load_products():
         arrival = today + timedelta(days=p["time_to_cash_days"])
         if arrival > needed_by:
-            excluded.append({"product_id": p["id"], "name": p["name"], "reason": (
+            excluded.append({"product_id": p["id"], "name": p["name"], "arrival_date": arrival.isoformat(),
+                             "time_to_cash_days": p["time_to_cash_days"], "reason": (
                 f"Too slow: cash arrives {arrival.isoformat()} ({p['time_to_cash_days']} days), "
                 f"after the needed date {needed_by.isoformat()}.")})
             continue
         reason, warnings = _eligibility(session, p, amount_cents)
         if reason:
-            excluded.append({"product_id": p["id"], "name": p["name"], "reason": reason})
+            excluded.append({"product_id": p["id"], "name": p["name"], "arrival_date": arrival.isoformat(),
+                             "time_to_cash_days": p["time_to_cash_days"], "reason": reason})
             continue
         cost = product_cost(p, amount_cents, days_needed)
         ranked.append({
             "product_id": p["id"], "name": p["name"], "amount_cents": amount_cents, **cost,
             "effective_cost_pct": round(cost["total_cost_cents"] / amount_cents * 100, 2),
+            "interest_display": _fmt(cost["interest_cents"]), "fees_display": _fmt(cost["fees_cents"]),
+            "total_cost_display": _fmt(cost["total_cost_cents"]), "amount_display": _fmt(amount_cents),
+            "arrives_in_time": True,
             "arrival_date": arrival.isoformat(), "time_to_cash_days": p["time_to_cash_days"],
             "needs_confirmation": p.get("needs_confirmation"), "warnings": warnings, "terms": p["notes"],
         })
@@ -121,6 +134,7 @@ def compare_financing(session: Session, amount_cents: int, needed_by: date, days
         r["rank"] = n
     return {
         "recommended": ranked[0] if ranked else None, "ranked": ranked, "excluded": excluded,
-        "currency": load_country_pack().currency, "amount_cents": amount_cents,
+        "currency": account_currency(session), "amount_cents": amount_cents,
+        "amount_display": _fmt(amount_cents), "today": today.isoformat(),
         "needed_by": needed_by.isoformat(), "days_needed": days_needed,
     }

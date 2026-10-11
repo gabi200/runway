@@ -9,9 +9,7 @@ real model; placeholders in its output are unmasked by the orchestrator.
 from __future__ import annotations
 
 import json
-import math
 import re
-from datetime import date
 from typing import Any
 
 from agent.documents import scan_document
@@ -25,8 +23,7 @@ HELP = ("I can explain your cash forecast, send reminders on overdue invoices, s
 
 
 def _money(cents: int) -> str:
-    pack = load_country_pack()
-    return pack.format_money(pack.convert_from_eur_cents(int(cents)))
+    return load_country_pack().display(int(cents))
 
 
 class OfflinePlanner:
@@ -146,31 +143,59 @@ class OfflinePlanner:
         cand = self._reschedule_candidate(fc, first("list_payables")) if (short and "reschedule" in wants) else None
         if cand and "reschedule_payment" not in by:
             stage2.append(self._call(2, "reschedule_payment", cand["args"]))
-        fin_args = self._financing_args(fc) if (short and "financing" in wants) else None
-        if fin_args and "compare_financing" not in by:
-            stage2.append(self._call(2, "compare_financing", fin_args))
+        if short and "financing" in wants and "get_financing_need" not in by:
+            # the amount/date/duration come from the tool, never from this planner; the proposed
+            # reschedule is applied as a scenario because it moves cash out of the trough
+            if cand:
+                stage2.append(self._call(2, "get_financing_need", {"scenario": [self._move(cand)]}))
+            stage2.append(self._call(3, "get_financing_need", {}))
         if stage2:
             return {"content": None, "tool_calls": stage2}
+
+        need = self._need(by)
+        fin_args = ({k: need[k] for k in ("amount_cents", "needed_by", "days_needed")}
+                    if need and need.get("amount_cents") else None)
+        if fin_args and "compare_financing" not in by:
+            return {"content": None, "tool_calls": [self._call(4, "compare_financing", fin_args)]}
 
         cmp_res = first("compare_financing")
         rec = ((cmp_res or {}).get("data") or {}).get("recommended") if cmp_res else None
         if "application" in wants and rec and fin_args and "prepare_financing_application" not in by:
-            return {"content": None, "tool_calls": [self._call(3, "prepare_financing_application", {
-                "product_id": rec["product_id"], "amount_cents": fin_args["amount_cents"],
-                "needed_by": fin_args["needed_by"], "days_needed": fin_args["days_needed"]})]}
-        return self._say(self._reply(wants, fc, short, by, cand, rec))
+            return {"content": None, "tool_calls": [self._call(5, "prepare_financing_application", {
+                "product_id": rec["product_id"], **fin_args})]}
+        return self._say(self._reply(wants, fc, short, by, cand, rec, need))
 
     @staticmethod
-    def _financing_args(fc: dict | None) -> dict | None:
-        if not fc:
-            return None
+    def _move(cand: dict) -> dict:
+        return {"type": "move_payment", "payment_id": cand["args"]["payment_id"],
+                "new_date": cand["args"]["new_date"]}
+
+    @staticmethod
+    def _need(by: dict) -> dict | None:
+        """The financing need to use: the one computed with the reschedule scenario if present."""
+        results = [(a, r) for a, r in by.get("get_financing_need", []) if r.get("status") == "ok"]
+        scen = [r for a, r in results if a.get("scenario")]
+        pick = scen[0] if scen else (results[0][1] if results else None)
+        return pick.get("data") if pick else None
+
+    @staticmethod
+    def _recoveries(fc: dict) -> list[tuple[dict, dict | None, dict | None]]:
+        """For each shortfall week: (week, first later receipt that brings the balance back to >= 0, its week)."""
+        out = []
         weeks = fc["weeks"]
-        low = next(w for w in weeks if w["index"] == fc["min_week"])
-        recover = next((w for w in weeks if w["index"] > low["index"] and w["closing_cents"] >= 0), None)
-        end = date.fromisoformat(recover["start"]) if recover else date.fromisoformat(weeks[-1]["end"])
-        days = max(30, (end - date.fromisoformat(low["start"])).days + 7)
-        amount = math.ceil(-fc["min_closing_cents"] / 100_000) * 100_000  # round up to a whole 1,000
-        return {"amount_cents": amount, "needed_by": low["start"], "days_needed": days}
+        for wi in fc["shortfall_weeks"]:
+            w = weeks[wi - 1]
+            bal, hit = w["closing_cents"], None
+            for nw in weeks[wi:]:
+                for ln in sorted(nw.get("lines") or [], key=lambda ln: (ln["expected_date"], -ln["amount_cents"])):
+                    bal += ln["amount_cents"]
+                    if ln["kind"] == "receipt" and bal >= 0:
+                        hit = (ln, nw)
+                        break
+                if hit:
+                    break
+            out.append((w, hit[0] if hit else None, hit[1] if hit else None))
+        return out
 
     @staticmethod
     def _reschedule_candidate(fc: dict | None, payables: dict | None) -> dict | None:
@@ -195,27 +220,29 @@ class OfflinePlanner:
         return best
 
     @staticmethod
-    def _reply(wants, fc, short, by, cand, rec) -> str:
+    def _reply(wants, fc, short, by, cand, rec, need=None) -> str:
         out: list[str] = []
         if fc:
             weeks = {w["index"]: w for w in fc["weeks"]}
             low = weeks[fc["min_week"]]
             if short:
-                out.append(f"Heads up: your cash gets tight in week {low['index']} ({low['start']} to {low['end']}). "
-                           f"The forecast balance falls to {_money(low['closing_cents'])}, "
-                           f"below zero. The forecast starts from {_money(fc['opening_balance_cents'])} today.")
-                outs = sorted((ln for ln in low.get("lines") or [] if ln["kind"] == "payment"),
-                              key=lambda ln: ln["amount_cents"])[:3]
-                if outs:
-                    out.append("Biggest payments that week: " + "; ".join(
-                        f"{ln['label']} ({_money(-ln['amount_cents'])})" for ln in outs) + ".")
-                later = [(w["index"], ln) for w in fc["weeks"] if w["index"] > low["index"]
-                         for ln in w.get("lines") or [] if ln["kind"] == "receipt"]
-                if later:
-                    wi, ln = max(later, key=lambda t: t[1]["amount_cents"])
-                    out.append(f"The cash that fixes it arrives too late: {ln['label']} ({_money(ln['amount_cents'])}) "
-                               f"is only expected in week {wi}, around {ln['expected_date']}"
-                               + (f" ({ln['note']})." if ln.get("note") else "."))
+                rec_info = OfflinePlanner._recoveries(fc)
+                sw = ", ".join(f"week {w['index']} ({w['start']} to {w['end']}) at {_money(w['closing_cents'])}"
+                               for w, _, _ in rec_info)
+                out.append(f"Heads up: your cash goes below zero in {sw}. "
+                           f"The forecast starts from {_money(fc['opening_balance_cents'])} today.")
+                for w, ln, nw in rec_info:
+                    outs = sorted((x for x in w.get("lines") or [] if x["kind"] == "payment"),
+                                  key=lambda x: x["amount_cents"])[:3]
+                    if outs:
+                        out.append(f"Biggest payments in week {w['index']}: " + "; ".join(
+                            f"{x['label']} ({_money(-x['amount_cents'])})" for x in outs) + ".")
+                    if ln:
+                        out.append(f"Week {w['index']} is restored by {ln['label']} ({_money(ln['amount_cents'])}, "
+                                   f"{', '.join(ln['source_refs'])}), expected {ln['expected_date']} in week {nw['index']}"
+                                   + (f" ({ln['note']})." if ln.get("note") else "."))
+                    else:
+                        out.append(f"No receipt in the forecast horizon restores week {w['index']}.")
             else:
                 out.append(f"No shortfall in the forecast: the lowest balance is {_money(fc['min_closing_cents'])} "
                            f"in week {fc['min_week']}.")
@@ -233,18 +260,43 @@ class OfflinePlanner:
             out.append(what + ": " + OfflinePlanner._status(r))
         elif short and "reschedule" in wants:
             out.append("I found no non-critical scheduled payment that can be moved later.")
+        if need and need.get("amount_cents"):
+            scen = bool(need.get("scenario"))
+            out.append(f"Financing need (computed by the system{', with the proposed reschedule applied' if scen else ''}): "
+                       f"{_money(need['amount_cents'])} needed by {need['needed_by']} for {need['days_needed']} days. "
+                       f"{need['explanation']}")
+            if scen:
+                base = next((r["data"] for a, r in by.get("get_financing_need", [])
+                             if not a.get("scenario") and r.get("status") == "ok"), None)
+                if base and base.get("amount_cents"):
+                    out.append(f"If the reschedule is not approved, the need is {_money(base['amount_cents'])} "
+                               f"(worst week {base['worst_week']}).")
+        elif short and "financing" in wants and "get_financing_need" in by:
+            out.append("I could not determine the financing need from the forecast.")
+        cmpd = ((by.get("compare_financing") or [(0, {})])[0][1] or {}).get("data") or {}
         if rec:
-            cr = (by.get("compare_financing") or [(0, {})])[0][1]["data"]
-            out.append(f"Financing: for {_money(cr['amount_cents'])} for about {cr['days_needed']} days, the cheapest option "
+            out.append(f"Financing: for {_money(cmpd['amount_cents'])} for {cmpd['days_needed']} days, the cheapest option "
                        f"that arrives in time is {rec['name']}, true cost {_money(rec['total_cost_cents'])} "
-                       f"({rec['effective_cost_pct']}%), cash by {rec['arrival_date']}.")
-            if cr.get("excluded"):
-                out.append("Ruled out: " + "; ".join(f"{e['name']} ({e['reason']})" for e in cr["excluded"]))
+                       f"({rec['effective_cost_pct']}%), cash by {rec['arrival_date']} (needed by {cmpd['needed_by']}).")
+            out.append("All options that arrive in time: " + "; ".join(
+                f"{o['name']} {_money(o['total_cost_cents'])}, cash {o['arrival_date']}" for o in cmpd["ranked"]) + ".")
+            if cmpd.get("excluded"):
+                out.append("Excluded: " + "; ".join(f"{e['name']} ({e['reason']})" for e in cmpd["excluded"]))
+            else:
+                state = next((o for o in cmpd["ranked"] if o["product_id"] == "state_guaranteed_loan"), None)
+                if state:
+                    out.append(f"Nothing was excluded for speed: the {state['name']} arrives in time "
+                               f"({state['arrival_date']}, before {cmpd['needed_by']}) but is the most expensive "
+                               f"at {_money(state['total_cost_cents'])}, because its interest runs for the full term.")
+                else:
+                    out.append("Nothing was excluded.")
             ap = by.get("prepare_financing_application")
             if ap:
                 out.append("Application: " + OfflinePlanner._status(ap[0][1]))
         elif short and "financing" in wants and by.get("compare_financing"):
             out.append("No financing option can deliver in time and fit the amount.")
+            for e in cmpd.get("excluded", []):
+                out.append(f"Excluded: {e['name']} ({e['reason']})")
         if not out:
             out.append(HELP)
         return "\n".join(out)

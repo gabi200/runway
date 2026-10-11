@@ -13,6 +13,7 @@ from sqlmodel import Session
 
 from bank import service
 from common.db import iter_session
+from policy.engine import load_rules
 
 app = FastAPI(title="Runway mock bank")
 DB = Annotated[Session, Depends(iter_session)]
@@ -33,8 +34,9 @@ def authorize(scope: str):
             actor = "owner"
         else:
             raise HTTPException(401, "Invalid token", headers={"WWW-Authenticate": "Bearer"})
-        if scope == "payees" and actor != "owner":
-            raise HTTPException(403, "Human token required")
+        scopes = {"read", "payments"} if actor == "agent" else {"read", "payments", "payees", "simulate"}
+        if scope not in scopes:
+            raise HTTPException(403, "Token lacks required scope")
         return actor
     return dependency
 
@@ -56,7 +58,7 @@ class PaymentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     idempotency_key: str = Field(min_length=1)
     payee_id: str
-    amount_cents: int = Field(gt=0, strict=True)
+    amount_cents: int = Field(gt=0, le=load_rules()["payment"]["max_payment_cents"], strict=True)
     currency: str
     execute_date: date
     invoice_id: str | None = None

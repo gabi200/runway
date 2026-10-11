@@ -99,3 +99,40 @@ def test_explain_figure(s):
     assert all(ln["amount_cents"] < 0 for ln in pay["lines"])
     with pytest.raises(ValueError):
         explain_figure(s, 99)
+
+
+def test_payment_originated_transactions_do_not_change_estimates(db):
+    """Regression (H2): small automatic payments booked as payroll/rent must not move the forecast."""
+    from datetime import datetime, timezone
+    from common.db import Payee
+    with Session(get_engine(db)) as s:
+        before = [w.closing_cents for w in build_forecast(s).weeks]
+        s.add(Payee(id="PAYEE-PROBE", name="Probe", counterparty_id="LANDLORD", iban="DE00", verified=True,
+                    created_at=datetime.now(timezone.utc)))
+        for n, (cat, cp) in enumerate([("rent", "LANDLORD"), ("payroll", "PAYROLL")], 1):
+            s.add(Transaction(id=f"TX-PROBE{n}", account_id="ACC-MAIN", booking_date=date(2026, 10, 18),
+                              amount_cents=-95_000, currency="EUR", description="auto", category=cat,
+                              counterparty_id=cp))
+            s.add(Payment(id=f"PAY-PROBE{n}", idempotency_key=f"probe-{n}", payee_id="PAYEE-PROBE",
+                          amount_cents=95_000, currency="EUR", execute_date=date(2026, 10, 18),
+                          status="executed", automatic=True, transaction_id=f"TX-PROBE{n}"))
+        s.commit()
+        after = build_forecast(s)
+        # opening balance drops by the two real payments; recurring estimates stay the same
+        shift = -190_000
+        assert [w.closing_cents for w in after.weeks] == [c + shift for c in before]
+        refs = {r for w in after.weeks for ln in w.lines for r in ln.source_refs}
+        assert not refs & {"TX-PROBE1", "TX-PROBE2"}
+        s.rollback()
+        for model, ids in ((Payment, ["PAY-PROBE1", "PAY-PROBE2"]), (Transaction, ["TX-PROBE1", "TX-PROBE2"]),
+                           (Payee, ["PAYEE-PROBE"])):
+            for i in ids:
+                s.delete(s.get(model, i))
+        s.commit()
+
+
+def test_explain_opening_balance_has_sources(s):
+    ex = explain_figure(s, 1, "opening_cents")
+    summ = ex["transactions_summary"]
+    assert summ["count"] == len(summ["transaction_ids"]) > 0
+    assert ex["account"]["opening_balance_cents"] + summ["sum_cents"] == ex["value_cents"]

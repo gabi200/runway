@@ -20,7 +20,7 @@ def test_jailbreak_and_kill_switch(stack, pay_args):
                        ("list_receivables", {}), ("list_payables", {}),
                        ("list_documents", {}), ("flag_document", {"document_id": "DOC-0001", "reason": "test"})]:
         assert evaluate(s, name, args).outcome == "ALLOW"
-    for name, args in [("get_forecast", {}),
+    for name, args in [("get_forecast", {}), ("get_financing_need", {}),
                        ("run_scenario", {"changes": [{"type": "inflow", "amount_cents": 100, "week": 1, "label": "test"}]}),
                        ("compare_financing", {"amount_cents": 100, "needed_by": "2026-11-20", "days_needed": 30}),
                        ("draft_email", {"purpose": "general"}), ("explain_figure", {"week": 6}),

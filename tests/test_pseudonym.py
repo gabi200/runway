@@ -59,3 +59,33 @@ def test_unmask_unknown_placeholder_untouched(session):
 def test_does_not_mask_substrings_of_other_words(session):
     p = Pseudonymizer(session)
     assert p.mask("Cartoniaville") == "Cartoniaville"
+
+
+def test_plain_word_ids_not_masked_and_ids_case_sensitive(session):
+    session.add(db.Counterparty(id="PAYROLL", name="Lumen staff salaries", kind="payroll"))
+    session.add(db.Counterparty(id="LANDLORD", name="Hafenstrasse Properties", kind="landlord"))
+    session.commit()
+    p = Pseudonymizer(session)
+    assert p.mask("payroll landlord") == "payroll landlord"
+    assert p.mask("PAYROLL") == "PAYROLL"
+    assert p.unmask(p.mask("Payroll (estimate)")) == "Payroll (estimate)"
+    assert p.mask("CUST-BRIGHTFIELD") == "<CUSTOMER_1_ID>"
+    assert "<CUSTOMER_1_ID>" not in p.mask("cust-brightfield")
+
+
+def test_all_emails_masked_and_people_learned(session):
+    p = Pseudonymizer(session)
+    text = ("From: Mara Lenz <mara.lenz@lumen-packaging-mail.example>\nTo: finance@x.example\n\n"
+            "Pay now.\n\nMara")
+    p.learn(text)
+    masked = p.mask(text)
+    for secret in ("Mara", "Lenz", "lumen", "finance@", "@"):
+        assert secret not in masked
+
+
+def test_counterparty_email_local_part_registers_person(session):
+    session.add(db.Counterparty(id="CUST-X", name="Xylo Corp", kind="customer", email="anna.berger@xylo.example"))
+    session.commit()
+    p = Pseudonymizer(session)
+    masked = p.mask("Ask Anna Berger or berger about it")
+    assert "Anna" not in masked and "Berger" not in masked.replace("berger", "")

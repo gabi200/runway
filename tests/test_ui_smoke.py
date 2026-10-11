@@ -22,6 +22,14 @@ def at(tmp_path, monkeypatch):
     db.reset_engines()
 
 
+def sign_in(at, role="owner", pin=None):
+    pin = pin or {"owner": "1111", "accountant": "2222"}[role]
+    at.selectbox(key="login_role").set_value(role)
+    at.text_input(key="login_pin").set_value(pin)
+    at.button(key="login_btn").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+
+
 def goto(at, page):
     at.radio(key="page").set_value(page).run()
     assert not at.exception, [e.value for e in at.exception]
@@ -44,6 +52,10 @@ def test_brief_approvals_kill_switch_and_audit(at):
     next(b for b in at.button if b.label == "Verify chain").click().run()
     assert any("intact" in s.value for s in at.success)
     at.toggle(key="kill").set_value(True).run()
+    with db.session_scope() as s:
+        assert not db.kill_switch_on(s)  # not signed in: refused
+    sign_in(at)
+    at.toggle(key="kill").set_value(True).run()
     assert not at.exception
     with db.session_scope() as s:
         assert db.kill_switch_on(s)
@@ -64,6 +76,7 @@ def test_documents_sample_ingest(at):
 
 
 def test_approve_clear_flag_payee_advance_scenario(at):
+    sign_in(at)
     goto(at, "Monday brief & chat")
     next(b for b in at.button if b.label == "Run Monday brief").click().run()
     goto(at, "Approval queue")
@@ -98,6 +111,7 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
     from sqlmodel import select
     from audit.log import verify_chain
 
+    sign_in(at)
     goto(at, "Payees (humans only)")
     key = "verify_PAYEE-NEWVENDOR"
     assert at.button(key=key).label == "Verify"
@@ -113,6 +127,63 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
     assert not at.exception
     with db.session_scope() as s:
         assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
-    at.selectbox(key="role").set_value("accountant").run()
+    at.selectbox(key="sw_role").set_value("accountant")
+    at.text_input(key="sw_pin").set_value("2222")
+    at.button(key="sw_btn").click().run()
     assert not at.exception
     assert not [button for button in at.button if button.label in ("Verify", "Unverify")]
+
+
+def test_human_actions_need_sign_in_and_wrong_pin_rejected(at):
+    goto(at, "Payees (humans only)")
+    assert not [b for b in at.button if b.label in ("Verify", "Unverify")]
+    at.selectbox(key="login_role").set_value("owner")
+    at.text_input(key="login_pin").set_value("9999")
+    at.button(key="login_btn").click().run()
+    assert any("Wrong PIN" in e.value for e in at.error)
+    assert at.session_state["role"] is None
+    goto(at, "Mock bank")
+    next(b for b in at.button if b.label == "Advance").click().run()
+    with db.session_scope() as s:
+        assert db.get_today(s).isoformat() == "2026-10-19"
+
+
+def test_role_switch_needs_pin(at):
+    sign_in(at, "owner")
+    at.selectbox(key="sw_role").set_value("accountant")
+    at.text_input(key="sw_pin").set_value("1111")
+    at.button(key="sw_btn").click().run()
+    assert at.session_state["role"] == "owner"
+    at.text_input(key="sw_pin").set_value("2222")
+    at.button(key="sw_btn").click().run()
+    assert at.session_state["role"] == "accountant"
+
+
+def test_one_session_cannot_fill_both_roles(at):
+    from sqlmodel import select
+    from agent.executor import run_tool
+    with db.session_scope() as s:
+        res = run_tool(s, "prepare_financing_application",
+                       {"product_id": "invoice_financing", "amount_cents": 2_000_000,
+                        "needed_by": "2026-11-23", "days_needed": 30}, actor="agent")
+        assert res.status == "needs_approval", res
+        rid = res.approval_id
+        assert len(__import__("json").loads(s.get(db.ApprovalRequest, rid).required_roles_json)) == 2
+    sign_in(at, "owner")
+    goto(at, "Approval queue")
+    at.button(key=f"ap_{rid}").click().run()
+    at.selectbox(key="sw_role").set_value("accountant")
+    at.text_input(key="sw_pin").set_value("2222")
+    at.button(key="sw_btn").click().run()
+    goto(at, "Approval queue")
+    at.button(key=f"ap_{rid}").click().run()
+    assert any("Not approved" in e.value for e in at.error)
+    with db.session_scope() as s:
+        assert s.get(db.ApprovalRequest, rid).status == "pending"
+
+
+def test_model_markdown_is_neutralised():
+    from ui.render import safe_text
+    out = safe_text("see [click](http://evil.example/x) ![p](http://evil.example/p.png) http://a.example <b>x</b>")
+    assert "](" not in out.replace("\\](", "") and "![" not in out and "<b>" not in out
+    assert "`http://a.example`" in out

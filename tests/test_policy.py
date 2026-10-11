@@ -162,7 +162,7 @@ def test_reschedule(session):
 
 @pytest.mark.parametrize('amount,roles', [(500000,('owner',)),(500001,('owner','accountant'))])
 def test_financing(session, amount, roles):
-    a = dict(product_id='loan', amount_cents=amount, needed_by='2026-11-01')
+    a = dict(product_id='short_term_loan', amount_cents=amount, needed_by='2026-11-01')
     assert evaluate(session, 'prepare_financing_application', a).roles == roles
     assert evaluate(session, 'prepare_financing_application', a, approvals=roles).outcome == 'ALLOW'
 
@@ -253,5 +253,71 @@ def test_kill_switch_refreshes_external_change(session):
 def test_malformed_policy_fails_closed(session, monkeypatch):
     from io import StringIO
     from pathlib import Path
+    from policy.engine import load_rules
+    load_rules.cache_clear()
     monkeypatch.setattr(Path, 'open', lambda *a, **kw: StringIO('tiers: ['))
     assert evaluate(session, 'get_balances', {}).outcome == 'DENY'
+    load_rules.cache_clear()
+
+
+@pytest.mark.parametrize("status", ["scheduled", "executed"])
+def test_invoice_total_prevents_double_payment(session, status):
+    payment(session, "existing", amount=950000, invoice_id="AP", status=status)
+    assert evaluate(session, "schedule_payment", args(50001, invoice_id="AP")).outcome == "DENY"
+    assert evaluate(session, "schedule_payment", args(50000, invoice_id="AP")).outcome != "DENY"
+
+
+@pytest.mark.parametrize("amount", [100000001, 2**62, 10**30])
+def test_payment_upper_bound(session, amount):
+    assert evaluate(session, "schedule_payment", args(amount)).outcome == "DENY"
+
+
+@pytest.mark.parametrize("product,amount,needed", [("missing", 100, "2026-11-01"),
+    ("overdraft", 5000001, "2026-11-01"), ("invoice_financing", 800001, "2026-11-01"),
+    ("supply_chain_finance", 100, "2026-11-01"), ("overdraft", 100, "2026-10-18"),
+    ("invoice_financing", 100, "2026-10-20")])
+def test_financing_hard_denials(session, product, amount, needed):
+    assert evaluate(session, "prepare_financing_application", dict(product_id=product,
+        amount_cents=amount, needed_by=needed), approvals=["owner", "accountant"]).outcome == "DENY"
+
+
+def test_reschedule_cannot_pull_payment_forward(session):
+    row = payment(session, "later", invoice_id="AP")
+    row.execute_date = get_today(session) + timedelta(days=3)
+    session.add(row)
+    session.commit()
+    assert evaluate(session, "reschedule_payment", dict(payment_id=row.id,
+        new_date=get_today(session).isoformat()), approvals=["owner"]).outcome == "DENY"
+
+
+def test_financing_need_tier(session):
+    assert evaluate(session, "get_financing_need", {"scenario": []}).tier == "T1"
+    assert evaluate(session, "get_financing_need", {"scenario": []}).outcome == "ALLOW"
+
+
+def test_cancelled_invoice_payment_does_not_consume_amount(session):
+    payment(session, "cancelled-invoice", amount=1000000, invoice_id="AP", status="cancelled")
+    assert evaluate(session, "schedule_payment", args(1000000, invoice_id="AP")).outcome == "NEEDS_APPROVAL"
+
+
+def test_rules_cached_and_explicitly_reloadable(session, monkeypatch):
+    from io import StringIO
+    from pathlib import Path
+    from policy.engine import load_rules, reload_rules
+    import yaml
+
+    load_rules.cache_clear()
+    assert evaluate(session, "get_balances", {}).outcome == "ALLOW"
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", lambda *a, **kw: StringIO("tiers: ["))
+        assert evaluate(session, "get_balances", {}).outcome == "ALLOW"
+        with pytest.raises(yaml.YAMLError):
+            reload_rules()
+        assert evaluate(session, "get_balances", {}).outcome == "DENY"
+    reload_rules()
+    assert evaluate(session, "get_balances", {}).outcome == "ALLOW"
+
+
+def test_maximum_payment_boundary(session):
+    assert evaluate(session, "schedule_payment", args(100000000),
+                    approvals=["owner", "accountant"]).outcome == "ALLOW"

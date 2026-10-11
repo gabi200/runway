@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import date
 import json
 import os
 from pathlib import Path
@@ -12,55 +10,24 @@ import shutil
 import sqlite3
 import sys
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import text
 from sqlmodel import select
-from agent.documents import ingest_document
+from agent.documents import ingest_file, ingest_text
 from agent.executor import approve, pending_approvals, run_tool
 from agent.orchestrator import Agent
 from audit import log as audit
-from bank.client import BankClient, BankError
+from bank.client import BankClient
 from common import db
-from common.config import load_country_pack
 from common.db import FinancingApplication, OutboxEmail, Payment
 from data.generate import generate
 
 
-@contextmanager
-def service_transport():
-    """Explicit sandbox fallback: real bank service, without TestClient's thread portal."""
-    from bank import service
-    from bank.app import PaymentCreate
-
-    def request(self, method, path, **kwargs):
-        with db.session_scope() as session:
-            try:
-                if method == "POST" and path == "/payments":
-                    body = PaymentCreate.model_validate(kwargs["json"]).model_dump()
-                    return service.create_payment(session, body)
-                if method == "PATCH" and path.startswith("/payments/"):
-                    return service.reschedule_payment(session, path.rsplit("/", 1)[1],
-                                                      date.fromisoformat(kwargs["json"]["execute_date"]))
-                if path == "/simulate/advance":
-                    return service.advance(session, kwargs["params"]["days"])
-                if method == "GET" and path == "/payments":
-                    return service.list_payments(session, kwargs.get("params", {}).get("status"))
-                raise ValueError(f"Unsupported service transport route: {method} {path}")
-            except service.BankServiceError as exc:
-                raise BankError(exc.status_code, exc.detail) from exc
-    with patch.object(BankClient, "_request", request):
-        yield
-
-
-def run(out: Path, seed: int, transport: str = "api") -> dict:
+def run(out: Path, seed: int) -> dict:
     out.mkdir(parents=True, exist_ok=True)
-    lines = ["# Runway offline execution evidence", "", f"Seed: {seed}. Bank transport: {transport}.", ""]
-    if transport == "service":
-        lines += ["TestClient/AnyIO hangs in this sandbox. This run uses the real bank service and request models directly; HTTP authentication/transport is not exercised.", ""]
+    lines = ["# Runway offline execution evidence", "", f"Seed: {seed}. Bank calls go through the real HTTP API via BankClient.", ""]
 
     def record(label, result):
         payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
@@ -87,10 +54,10 @@ def run(out: Path, seed: int, transport: str = "api") -> dict:
                 assert {r.tool_name for r in requests} == {"reschedule_payment", "prepare_financing_application"}
                 for req in requests:
                     record(f"4. Pending {req.tool_name}", req)
-                    owner = record(f"4. Owner approval: {req.tool_name}", approve(s, req.id, "owner"))
+                    owner = record(f"4. Owner approval: {req.tool_name}", approve(s, req.id, "owner", "owner@demo"))
                     if req.tool_name == "prepare_financing_application":
                         assert owner.status == "needs_approval"
-                        assert record("4. Accountant approval: financing", approve(s, req.id, "accountant")).status == "ok"
+                        assert record("4. Accountant approval: financing", approve(s, req.id, "accountant", "accountant@demo")).status == "ok"
                     else:
                         assert owner.status == "ok"
                 payment = s.get(Payment, summary["inkworks_payment_id"])
@@ -104,18 +71,18 @@ def run(out: Path, seed: int, transport: str = "api") -> dict:
                     record("5. Financing PDF generated", {"file": f"{application.id}.pdf", "amount_cents": application.amount_cents})
                 # Run attacks while still on the original simulated day.
                 docs = root / "sample" / "docs"
-                malicious = ingest_document(s, docs / "cartonia_invoice_A1.pdf", "cartonia_invoice_A1.pdf", "invoice")
+                malicious = ingest_file(s, docs / "cartonia_invoice_A1.pdf", "invoice", None, allowed_root=root / "sample")
                 record("6. A1 malicious hidden-text invoice", malicious)
                 args = {"payee_id": "PAYEE-CARTONIA", "amount_cents": 95_000, "execute_date": db.get_today(s).isoformat()}
                 assert record("6. A1 linked payment blocked", run_tool(s, "schedule_payment", {**args, "document_id": malicious.id})).status == "denied"
                 assert record("6. A1 unverified payee blocked", run_tool(s, "schedule_payment", {**args, "payee_id": "PAYEE-NEWVENDOR"})).status == "denied"
                 email = (docs / "owner_email_A2.txt").read_text()
-                assert ingest_document(s, email, "owner_email_A2.txt", "email").flagged
+                assert ingest_text(s, email, "owner_email_A2.txt", "email", None).flagged
                 req = record("A2: EUR 9,800 requires both roles", run_tool(s, "schedule_payment", {**args, "amount_cents": 980_000}))
                 assert req.status == "needs_approval" and req.data["required_roles"] == ["owner", "accountant"]
                 assert record("A2: agent cannot approve", approve(s, req.approval_id, "agent")).status == "denied"
                 s.commit()
-                record("A2: email content in chat", agent.chat(email, actor="agent"))
+                record("A2: email content in chat", agent.chat(email, actor="owner"))
                 split = [record(f"A3: split payment {i + 1}, EUR 950", run_tool(s, "schedule_payment", {**args, "idempotency_key": f"split-{i}"})) for i in range(4)]
                 assert [r.status for r in split] == ["ok", "needs_approval", "needs_approval", "needs_approval"]
                 s.commit()
@@ -126,7 +93,7 @@ def run(out: Path, seed: int, transport: str = "api") -> dict:
                 assert first.status == replay.status == "ok" and replay.data["idempotent_replay"]
                 assert first.data["id"] == replay.data["id"]
                 s.commit()
-                with BankClient() as bank:
+                with BankClient(token=os.environ.get("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token")) as bank:
                     advance = record("5. Advance simulated clock to rescheduled due date", bank.advance((new_date - db.get_today(s)).days))
                 s.expire_all()
                 assert summary["inkworks_payment_id"] in advance["executed_payment_ids"]
@@ -148,7 +115,7 @@ def run(out: Path, seed: int, transport: str = "api") -> dict:
             with db.session_scope(root / "tampered.db") as s:
                 tamper = record("7. A6 tamper on a database COPY", asdict(audit.verify_chain(s)))
                 assert not tamper["ok"] and tamper["first_bad_id"] == 2
-            result = {"audit_entries": len(entries), "pdf": "FIN-0001.pdf", "rescheduled_execution_date": new_date.isoformat(), "audit_verified": True, "tamper_detected": True, "transport": transport}
+            result = {"audit_entries": len(entries), "pdf": "FIN-0001.pdf", "rescheduled_execution_date": new_date.isoformat(), "audit_verified": True, "tamper_detected": True}
             record("Run summary", result)
             (out / "demo_run.md").write_text("\n".join(lines))
             return result
@@ -165,14 +132,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=Path("docs/execution_logs"))
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--bank-transport", choices=["api", "service"], default="api",
-                        help="Use service only when the sandbox blocks TestClient/AnyIO")
     args = parser.parse_args()
-    if args.bank_transport == "service":
-        with service_transport():
-            result = run(args.out, args.seed, args.bank_transport)
-    else:
-        result = run(args.out, args.seed)
+    result = run(args.out, args.seed)
     print(json.dumps(result, indent=2))
 
 

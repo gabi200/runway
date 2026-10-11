@@ -95,6 +95,9 @@ class Agent:
     def _loop(self, session, user_message: str) -> AgentTurn:
         pseudo = Pseudonymizer(session)
         full_user = self._with_documents(session, user_message)
+        for m in self.history:
+            pseudo.learn(m["content"])
+        pseudo.learn(full_user)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages += [{"role": m["role"], "content": pseudo.mask(m["content"])} for m in self.history]
         messages.append({"role": "user", "content": pseudo.mask(full_user)})
@@ -115,14 +118,18 @@ class Agent:
             for c in calls:
                 args = pseudo.unmask_obj(c["arguments"])
                 try:
+                    if pseudo.has_unknown_placeholder(args):
+                        raise ValueError("tool arguments reference an unknown placeholder; use only placeholders from tool results")
                     result = self._run(session, c["name"], args)
                     payload = result.model_dump(mode="json")
                 except Exception as exc:  # tool crashed: report, never crash the loop
                     payload = {"status": "error", "tool": c["name"], "reason": f"{type(exc).__name__}: {exc}"}
                 steps.append({"tool": c["name"], "args": args, "status": payload["status"],
                               "reason": payload.get("reason", ""), "approval_id": payload.get("approval_id")})
+                safe = json.loads(json.dumps(payload, default=str))
+                pseudo.learn_obj(safe)
                 messages.append({"role": "tool", "tool_call_id": c["id"],
-                                 "content": json.dumps(pseudo.mask_obj(payload), default=str)})
+                                 "content": json.dumps(pseudo.mask_obj(safe), default=str)})
         else:
             reply = ("I stopped after reaching the step limit. Here is what was done so far: "
                      + (", ".join(f"{s['tool']} ({s['status']})" for s in steps) or "nothing"))

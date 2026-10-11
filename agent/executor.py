@@ -16,8 +16,7 @@ from agent.financing import compare_financing  # noqa: F401  (re-exported per CO
 from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
-from common.config import load_country_pack
-from common.db import ApprovalRequest, Document, Payment, Setting, utcnow
+from common.db import Account, ApprovalRequest, Document, Payment, Setting, get_setting, utcnow
 from policy import engine as policy
 
 VALID_ROLES = ("owner", "accountant")
@@ -65,9 +64,32 @@ def _execute(session: Session, tool: str, args: dict, actor: str, automatic: boo
 def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent") -> ToolResult:
     """Evaluate policy, audit the decision, then execute, park for approval, or deny."""
     args = dict(args or {})
+    if tool_name in {"compare_financing", "prepare_financing_application"}:
+        from forecast import engine as forecast
+
+        financing_need = getattr(forecast, "financing_need", None)
+        missing = [key for key in ("amount_cents", "needed_by", "days_needed") if args.get(key) is None]
+        if missing and financing_need is not None:
+            try:
+                need = financing_need(session)
+                args.update({key: need[key] for key in missing})
+            except Exception as exc:
+                reason = f"Financing defaults unavailable: {type(exc).__name__}"
+                audit.append(session, actor, tool_name, args, "DENY", reason)
+                return ToolResult(status="denied", tool=tool_name, reason=reason)
+    # Runtime controls must apply even to exact idempotent replays.
+    session.exec(select(Setting).where(Setting.key == "kill_switch")
+                 .execution_options(populate_existing=True)).all()
+    if get_setting(session, "kill_switch", "off") != "off":
+        decision = policy.evaluate(session, tool_name, args, actor)
+        if decision.outcome == "DENY":
+            audit.append(session, actor, tool_name, args, "DENY", decision.reason)
+            return ToolResult(status="denied", tool=tool_name, reason=decision.reason)
     if tool_name == "schedule_payment":
         try:
             policy._validate(args, *policy._SCHEMAS[tool_name])
+            if args["amount_cents"] > policy.load_rules()["payment"]["max_payment_cents"]:
+                raise ValueError("Payment exceeds maximum amount")
         except (ValueError, TypeError, KeyError) as exc:
             audit.append(session, actor, tool_name, args, "DENY", str(exc))
             return ToolResult(status="denied", tool=tool_name, reason=str(exc))
@@ -80,9 +102,12 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
                     raise ValueError("Unknown actor")
                 stored = session.get(Setting, f"bank.request.{existing.id}")
                 original = json.loads(stored.value) if stored else existing.model_dump(mode="json")
+                account = session.get(Account, "ACC-MAIN", populate_existing=True)
+                if account is None:
+                    raise ValueError("Main account not found")
                 body = {"idempotency_key": key, "payee_id": args["payee_id"],
                         "amount_cents": args["amount_cents"],
-                        "currency": args.get("currency", load_country_pack().currency),
+                        "currency": args.get("currency", account.currency),
                         "execute_date": str(args["execute_date"]),
                         "invoice_id": args.get("invoice_id"), "document_id": args.get("document_id")}
                 if _canon(body) != _canon({k: original.get(k) for k in body}):
@@ -124,27 +149,42 @@ def _get_pending(session: Session, approval_id: str, tool: str = "approval") -> 
     return req
 
 
-def approve(session: Session, approval_id: str, role: str) -> ToolResult:
-    """Record `role`'s approval; execute once all required roles approved and policy re-allows."""
+def approve(session: Session, approval_id: str, role: str, approver_id: str | None = None) -> ToolResult:
+    """Record distinct human approvers and re-evaluate every denial before executing.
+
+    Calls without an identity retain legacy role identities. Old string lists
+    are migrated when recording the next approval.
+    """
     req = _get_pending(session, approval_id)
     if isinstance(req, ToolResult):
         return req
     required = json.loads(req.required_roles_json)
     args = json.loads(req.args_json)
-    if role not in required:
+    if role not in VALID_ROLES or role not in required:
         audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name},
                      "DENY", f"role {role!r} is not an approver for this request (needs {required})")
         return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id,
                           reason=f"role {role!r} cannot approve this request; required: {required}")
-    given = json.loads(req.approvals_json)
-    if role not in given:
-        given.append(role)
-        req.approvals_json = json.dumps(given)
-        session.add(req)
-        session.commit()
-    audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name},
+    stored = json.loads(req.approvals_json)
+    given = [{"role": entry, "approver_id": entry} if isinstance(entry, str) else entry
+             for entry in stored]
+    identity = approver_id if approver_id is not None else role
+    if not isinstance(identity, str) or not identity.strip():
+        return ToolResult(status="denied", tool=req.tool_name, reason="Invalid approver identity")
+    if any(entry["approver_id"] == identity and entry["role"] != role for entry in given):
+        audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity},
+                     "DENY", "Same approver cannot fill two roles")
+        return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id,
+                          reason="Same approver cannot fill two roles")
+    if role not in [entry["role"] for entry in given]:
+        given.append({"role": role, "approver_id": identity})
+    req.approvals_json = json.dumps(given)
+    session.add(req)
+    session.commit()
+    approved_roles = [entry["role"] for entry in given]
+    audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity},
                  "APPROVED", f"approvals so far: {given}")
-    decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(given))
+    decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
     if decision.outcome == "DENY":
         req.status, req.decided_at, req.result_json = "rejected", utcnow(), _canon({"denied": decision.reason})
         session.add(req)
@@ -152,10 +192,10 @@ def approve(session: Session, approval_id: str, role: str) -> ToolResult:
         audit.append(session, role, req.tool_name, args, "DENY", f"re-check at approval: {decision.reason}")
         return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id, reason=decision.reason)
     if decision.outcome == "NEEDS_APPROVAL":
-        missing = [r for r in required if r not in given]
+        missing = [r for r in required if r not in approved_roles]
         return ToolResult(status="needs_approval", tool=req.tool_name, approval_id=req.id,
                           reason=f"waiting for: {', '.join(missing) or decision.reason}",
-                          data={"required_roles": required, "approved_roles": given})
+                          data={"required_roles": required, "approved_roles": approved_roles})
     result = _execute(session, req.tool_name, args, role, automatic=False)
     req.status = "executed" if result.status == "ok" else "failed"
     req.decided_at = utcnow()
@@ -168,6 +208,10 @@ def approve(session: Session, approval_id: str, role: str) -> ToolResult:
 
 def reject(session: Session, approval_id: str, role: str, reason: str = "") -> ToolResult:
     """Reject a pending approval request."""
+    if role not in VALID_ROLES:
+        audit.append(session, role, "reject", {"approval_id": approval_id}, "DENY",
+                     "Only owner or accountant can reject")
+        return ToolResult(status="denied", tool="reject", reason="Only owner or accountant can reject")
     req = _get_pending(session, approval_id, "reject")
     if isinstance(req, ToolResult):
         return req

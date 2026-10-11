@@ -1,7 +1,7 @@
 import json
 import pytest
 from sqlmodel import select
-from agent.documents import ingest_document
+from agent.documents import ingest_file
 from agent.executor import run_tool
 from agent.tools import TOOL_SPECS
 from bank.client import BankClient, BankError
@@ -11,7 +11,7 @@ from common.config import load_country_pack
 
 def test_hidden_invoice(stack, pay_args):
     s, docs, _ = stack
-    doc = ingest_document(s, docs / "cartonia_invoice_A1.pdf", "A1.pdf", "invoice")
+    doc = ingest_file(s, docs / "cartonia_invoice_A1.pdf", "invoice", None, docs)
     assert doc.flagged and "Ignore previous instructions" in doc.content_text
     mail = s.exec(select(OutboxEmail).where(OutboxEmail.kind == "fraud_alert")).one()
     assert doc.id in mail.subject and mail.to == "owner@lumen-packaging.example"

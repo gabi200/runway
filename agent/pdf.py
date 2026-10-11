@@ -11,7 +11,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlmodel import Session, select
 
-from agent.financing import get_product, product_cost
+from agent.financing import account_currency, get_product, product_cost
 from agent.outbox import COMPANY, next_id, var_dir
 from common.config import load_country_pack
 from common.db import (Account, FinancingApplication, Invoice, account_balance_cents, get_today)
@@ -42,7 +42,7 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{app_id}.pdf"
     st = getSampleStyleSheet()
-    m = pack.format_money
+    m = pack.display
     shortfall = ("none" if not fc.shortfall_weeks else
                  f"lowest balance {m(fc.min_closing_cents)} in week {fc.min_week}; "
                  f"weeks below minimum: {', '.join(map(str, fc.shortfall_weeks))}")
@@ -73,7 +73,7 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
                ("Total cost", m(cost["total_cost_cents"]))]),
     ])
     row = FinancingApplication(id=app_id, product_id=product_id, amount_cents=amount_cents,
-                               currency=pack.currency, needed_by=needed_by, pdf_path=str(path))
+                               currency=account_currency(session), needed_by=needed_by, pdf_path=str(path))
     session.add(row)
     session.commit()
     session.refresh(row)

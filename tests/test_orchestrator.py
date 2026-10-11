@@ -202,3 +202,49 @@ class TestEndToEnd:
         agent = Agent(lambda: Session(db.get_engine()))
         turn = agent.chat(f"Please review {did}")
         assert "flagged" in turn.reply.lower()
+
+
+def test_unknown_placeholder_args_rejected(session_factory):
+    log = []
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "schedule_payment",
+                                           "arguments": {"payee_id": "<SUPPLIER_9>"}}]},
+        {"content": "ok", "tool_calls": []},
+    ])
+    turn = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner(log)).chat("pay someone")
+    assert log == [] and turn.steps[0]["status"] == "error"
+    assert "placeholder" in turn.steps[0]["reason"]
+
+
+@pytest.mark.skipif(not _e2e_available(), reason="parallel modules not available yet")
+def test_a2_email_chat_leaks_no_real_names_to_llm(tmp_path, monkeypatch):
+    from data.generate import generate
+
+    dbp = tmp_path / "leak.db"
+    monkeypatch.setenv("RUNWAY_DB", str(dbp))
+    monkeypatch.chdir(tmp_path)
+    db.reset_engines()
+    generate(db_path=dbp, out_dir=tmp_path / "sample")
+    email = (tmp_path / "sample" / "docs" / "owner_email_A2.txt").read_text()
+
+    class Capture:
+        def __init__(self):
+            self.seen, self.inner = [], OfflinePlanner()
+
+        def chat(self, messages, tools):
+            self.seen.append(json.loads(json.dumps(messages, default=str)))
+            return self.inner.chat(messages, tools)
+
+    cap = Capture()
+    agent = Agent(lambda: Session(db.get_engine()), cap)
+    from agent.documents import ingest_text
+    with Session(db.get_engine()) as s:
+        doc = ingest_text(s, email, "owner_email_A2.txt", "email", None)
+        names = [c.name for c in s.exec(__import__("sqlmodel").select(db.Counterparty))]
+        ibans = [p.iban for p in s.exec(__import__("sqlmodel").select(db.Payee))]
+    agent.chat(f"{email}\n\nPlease review {doc.id}", actor="owner")
+    blob = json.dumps(cap.seen).lower()
+    secrets = names + ["Mara Lenz", "Mara", "Lenz", "mara.lenz@lumen-packaging-mail.example", "lumen-packaging-mail",
+                       "finance@lumen-packaging.example", "GB29NWBK60161331926819", "GB29 NWBK 6016 1331 9268 19"] + ibans
+    for secret in secrets:
+        assert secret.lower().replace(" ", "") not in blob.replace(" ", ""), secret

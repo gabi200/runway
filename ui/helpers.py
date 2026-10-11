@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 from pathlib import Path
 
@@ -25,18 +26,18 @@ def pack_for(code: str) -> CountryPack:
     return load_country_pack(code)
 
 
-def money(pack: CountryPack, eur_cents: int | None) -> str:
-    """Format stored EUR cents in the selected display currency."""
-    if eur_cents is None:
+def money(pack: CountryPack, ledger_cents: int | None) -> str:
+    """Format ledger cents in the selected display currency (CountryPack.display)."""
+    if ledger_cents is None:
         return ""
-    return pack.format_money(pack.convert_from_eur_cents(int(eur_cents)))
+    return pack.display(int(ledger_cents))
 
 
 def badge(text: str) -> str:
     """Colored badge as inline HTML (render with unsafe_allow_html)."""
     color = BADGE_COLORS.get(text, "#555555")
     return (f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:10px;'
-            f'font-size:0.8em;font-weight:600">{text}</span>')
+            f'font-size:0.8em;font-weight:600">{html.escape(str(text))}</span>')
 
 
 def company_name(account_name: str | None) -> str:

@@ -8,6 +8,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session, select
 
+from policy.engine import load_rules
+
 from common.db import (Account, Counterparty, Document, Invoice, Payee, Payment,
                        Setting, Transaction, account_balance_cents, get_today, set_setting)
 
@@ -102,24 +104,28 @@ def create_payment(session: Session, body: dict, actor: str = "agent") -> dict:
         if canonical != original:
             raise BankServiceError(409, "Idempotency key already used with a different body")
         return dict(existing.model_dump(mode="json"), idempotent_replay=True)
-    payee = session.get(Payee, body["payee_id"])
+    payee = session.get(Payee, body["payee_id"], populate_existing=True)
     if payee is None or not payee.verified:
         raise BankServiceError(422, "Payee must exist and be verified")
     account = session.get(Account, "ACC-MAIN")
     if account is None:
         raise BankServiceError(422, "Main account not found")
-    if type(body["amount_cents"]) is not int or body["amount_cents"] <= 0:
-        raise BankServiceError(422, "amount_cents must be a positive integer")
+    if type(body["amount_cents"]) is not int or not 0 < body["amount_cents"] <= load_rules()["payment"]["max_payment_cents"]:
+        raise BankServiceError(422, "amount_cents must be a positive integer within the payment maximum")
     if body["currency"] != account.currency:
         raise BankServiceError(422, "Currency must match account currency")
     if body["execute_date"] < get_today(session):
         raise BankServiceError(422, "execute_date must not be before today")
     if body.get("invoice_id"):
-        invoice = session.get(Invoice, body["invoice_id"])
+        invoice = session.get(Invoice, body["invoice_id"], populate_existing=True)
         if (invoice is None or invoice.direction != "AP" or invoice.status != "open"
                 or invoice.counterparty_id != payee.counterparty_id
                 or invoice.currency != account.currency):
             raise BankServiceError(422, "Invoice must be an open AP invoice for this payee and currency")
+        committed = session.exec(select(Payment).where(Payment.invoice_id == invoice.id,
+            Payment.status != "cancelled")).all()
+        if sum(p.amount_cents for p in committed) + body["amount_cents"] > invoice.amount_cents:
+            raise BankServiceError(422, "Payments exceed invoice amount")
     if body.get("document_id") and session.get(Document, body["document_id"]) is None:
         raise BankServiceError(422, "Unknown document")
     payment = Payment(id=_next_id(session, Payment, "PAY-"), **body,
@@ -143,13 +149,19 @@ def list_payments(session: Session, status: str | None = None) -> list[dict]:
 def reschedule_payment(session: Session, payment_id: str, execute_date: date) -> dict:
     """Move a scheduled payment to today or a later date."""
     _lock(session)
-    row = session.get(Payment, payment_id)
+    row = session.get(Payment, payment_id, populate_existing=True)
     if row is None:
         raise BankServiceError(404, "Payment not found")
     if row.status != "scheduled":
         raise BankServiceError(409, "Only scheduled payments can be rescheduled")
     if execute_date < get_today(session):
         raise BankServiceError(422, "execute_date must not be before today")
+    if execute_date < row.execute_date:
+        raise BankServiceError(422, "Cannot move a payment earlier")
+    if row.invoice_id:
+        invoice = session.get(Invoice, row.invoice_id, populate_existing=True)
+        if invoice is None or execute_date > invoice.due_date:
+            raise BankServiceError(422, "Payment must remain within invoice due date")
     row.execute_date = execute_date
     session.add(row)
     session.commit()
@@ -177,6 +189,8 @@ def advance(session: Session, days: int) -> dict:
         category = {"payroll": "payroll", "landlord": "rent", "utility": "utilities",
                     "tax": "vat", "lender": "loan_repayment"}.get(
                         counterparty.kind if counterparty else "", "supplier_payment")
+        if payment.invoice_id is None:
+            category = "other"
         transaction = Transaction(id=_next_id(session, Transaction, "TX-", 6),
             account_id=payment.account_id, booking_date=payment.execute_date,
             amount_cents=-payment.amount_cents, currency=payment.currency,

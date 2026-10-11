@@ -36,7 +36,10 @@ from common.db import (  # noqa: E402
 )
 from data.generate import generate  # noqa: E402
 from forecast.engine import build_forecast, explain_figure  # noqa: E402
-from ui.helpers import ROLES, SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
+from data.importer import ImportErrorReport, import_files  # noqa: E402
+from ui import auth  # noqa: E402
+from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
+from ui.render import describe_approval, safe_text  # noqa: E402
 
 SECTIONS = ["Onboarding", "Monday brief & chat", "Forecast", "Approval queue", "Documents",
             "Payees (humans only)", "Mock bank", "Test inbox", "Audit log"]
@@ -63,7 +66,8 @@ def human_bank() -> BankClient:
 
 def log_human(session, action: str, args: dict, decision: str, reason: str = "") -> None:
     """Audit a human action performed in the UI, attributed to the current role."""
-    audit.append(session, st.session_state.role, action, args, decision, reason)
+    audit.append(session, st.session_state.role, action,
+                 {**args, "session": st.session_state.sid}, decision, reason)
 
 
 def get_agent() -> Agent:
@@ -73,7 +77,7 @@ def get_agent() -> Agent:
 
 
 def init_state() -> None:
-    st.session_state.setdefault("role", "owner")
+    auth.init()
     st.session_state.setdefault("pack", "eu")
     st.session_state.setdefault("chat", [])
     st.session_state.setdefault("brief", None)
@@ -86,6 +90,11 @@ def init_state() -> None:
 def on_kill_toggle() -> None:
     """Persist the kill switch and audit it with the acting human role."""
     on = bool(st.session_state.kill)
+    if not auth.signed_in():  # human actions need a signed-in role
+        with session_scope() as s:
+            st.session_state.kill = db.kill_switch_on(s)
+        st.session_state.flash = "Sign in to change the kill switch."
+        return
     with session_scope() as s:
         db.set_setting(s, "kill_switch", "on" if on else "off")
         log_human(s, "set_kill_switch", {"state": "on" if on else "off"}, "INFO",
@@ -102,6 +111,35 @@ def reset_demo() -> None:
 # --------------------------------------------------------------------------- #
 # Header
 # --------------------------------------------------------------------------- #
+def sign_in_box(col) -> None:
+    """Demo-only PIN sign-in; switching role needs the other role's PIN."""
+    if not auth.signed_in():
+        col.selectbox("Sign in as", auth.ROLES, key="login_role")
+        col.text_input("PIN (demo only)", type="password", key="login_pin",
+                       help="Demo PINs from RUNWAY_OWNER_PIN / RUNWAY_ACCOUNTANT_PIN (defaults 1111 / 2222).")
+        if col.button("Sign in", key="login_btn"):
+            err = auth.sign_in(st.session_state.login_role, st.session_state.login_pin)
+            if err:
+                col.error(err)
+            else:
+                st.rerun()
+        return
+    col.markdown(f"Signed in: **{auth.identity()}**")
+    other = [r for r in auth.ROLES if r != st.session_state.role]
+    with col.expander("Switch role / sign out"):
+        st.selectbox("Switch to", other, key="sw_role")
+        st.text_input("PIN of that role", type="password", key="sw_pin")
+        if st.button("Switch role", key="sw_btn"):
+            err = auth.sign_in(st.session_state.sw_role, st.session_state.sw_pin)
+            if err:
+                st.error(err)
+            else:
+                st.rerun()
+        if st.button("Sign out", key="signout_btn"):
+            auth.sign_out()
+            st.rerun()
+
+
 def header() -> None:
     with session_scope() as s:
         acc = s.get(Account, "ACC-MAIN")
@@ -109,8 +147,7 @@ def header() -> None:
     c1, c2, c3, c4, c5 = st.columns([2.2, 1.4, 1.2, 1.4, 1.6])
     c1.markdown(f"### {company_name(acc.name if acc else None)}")
     c1.caption(f"Simulated today: **{today:%A %d %b %Y}**")
-    c2.selectbox("Acting as (human)", ROLES, key="role",
-                 help="Approvals and human-only actions are recorded under this role.")
+    sign_in_box(c2)
     c3.radio("Display currency", ["eu", "cn"], key="pack", horizontal=True,
              format_func=lambda c: pack_for(c).currency,
              help="Display conversion only. Stored data stays in EUR.")
@@ -120,9 +157,11 @@ def header() -> None:
         c4.error("KILL SWITCH ON: agent is read-only")
     else:
         c4.caption("Kill switch off: agent runs within rules.")
-    if c5.button("Reset demo data"):
+    if st.session_state.pop("flash", None):
+        c4.warning("Sign in to change the kill switch.")
+    if c5.button("Reset demo data") and auth.require_login("reset the demo"):
         st.session_state.confirm_reset = True
-    if st.session_state.confirm_reset:
+    if st.session_state.confirm_reset and auth.signed_in():
         c5.warning("This wipes the database (incl. audit log) and regenerates sample data.")
         if c5.button("Confirm reset", type="primary"):
             reset_demo()
@@ -153,6 +192,8 @@ def page_onboarding() -> None:
                "credits. The **bank statement** is the list of real money movements.")
     tb = st.file_uploader("Trial balance CSV", type="csv", key="up_tb")
     bs = st.file_uploader("Bank statement CSV", type="csv", key="up_bs")
+    ar = st.file_uploader("Open receivables CSV (optional)", type="csv", key="up_ar")
+    ap = st.file_uploader("Open payables CSV (optional)", type="csv", key="up_ap")
     if st.button("Use generated sample data"):
         with st.spinner("Generating 12 months of sample data..."):
             summary = generate(out_dir=SAMPLE_DIR)
@@ -175,9 +216,29 @@ def page_onboarding() -> None:
         st.subheader("Bank statement summary")
         st.dataframe(pd.DataFrame(rows).tail(20), width="stretch", hide_index=True)
         st.info(f"{len(rows)} transactions. Money in {total_in:,.2f}, money out {abs(total_out):,.2f}.")
-    if tb is not None or bs is not None:
-        st.caption("Uploaded files are previewed and checked here. The demo database is filled by "
-                   "the sample-data generator, which writes the same CSV format.")
+    if tb is not None and bs is not None:
+        st.caption("Importing REPLACES the database (including the audit log) with the uploaded company. "
+                   "Payees created by an import are unverified until a human verifies them.")
+        if st.button("Import uploaded files", type="primary") and auth.require_login("import data"):
+            try:
+                summary = import_files(
+                    None, tb.getvalue(), bs.getvalue(),
+                    ar.getvalue() if ar is not None else None, ap.getvalue() if ap is not None else None)
+            except ImportErrorReport as exc:
+                st.error(f"Import rejected, nothing was changed: {exc}")
+            else:
+                st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
+                                        kill=False)
+                st.session_state.pop("scenario", None)
+                with session_scope() as s:
+                    log_human(s, "import_files", {k: v for k, v in summary.items() if k != "warnings"},
+                              "HUMAN_ACTION", "Company data imported from uploaded CSV files")
+                st.success("Imported. The forecast now uses the uploaded data.")
+                for w in summary["warnings"]:
+                    st.warning(w)
+                st.json(summary, expanded=False)
+    elif tb is not None or bs is not None:
+        st.caption("Upload both the trial balance and the bank statement to enable the import.")
     st.subheader("Current database")
     with session_scope() as s:
         counts = {"invoices": len(s.exec(select(Invoice)).all()),
@@ -202,11 +263,11 @@ def render_steps(steps: list[dict]) -> None:
         return
     for i, step in enumerate(steps, 1):
         st.markdown(
-            f"{i}. `{step['tool']}` {badge(step['status'])}"
-            + (f" approval **{step['approval_id']}**" if step.get("approval_id") else ""),
+            f"{i}. `{str(step['tool']).replace(chr(96), '')}` {badge(step['status'])}"
+            + (f" approval **{safe_text(step['approval_id'])}**" if step.get("approval_id") else ""),
             unsafe_allow_html=True)
         if step.get("reason"):
-            st.caption(f"Reason: {step['reason']}")
+            st.caption(f"Reason: {safe_text(step['reason'])}")
         with st.expander("arguments", expanded=False):
             st.json(step.get("args") or {})
 
@@ -214,7 +275,7 @@ def render_steps(steps: list[dict]) -> None:
 def render_turn(turn) -> None:
     if turn.refused:
         st.warning("The agent refused this request (logged in the audit trail).")
-    st.markdown(turn.reply)
+    st.markdown(safe_text(turn.reply))
     with st.expander(f"Tool trace ({len(turn.steps)} steps)", expanded=True):
         st.caption("Every tool call is checked by the rules engine first: ALLOW runs, NEEDS_APPROVAL "
                    "waits for a human, DENY is blocked.")
@@ -235,14 +296,14 @@ def page_chat() -> None:
     for role, content, turn in st.session_state.chat:
         with st.chat_message(role):
             if turn is None:
-                st.markdown(content)
+                st.markdown(safe_text(content))
             else:
                 render_turn(turn)
     msg = st.chat_input("Ask about cash, invoices, financing...")
     if msg:
         st.session_state.chat.append(("user", msg, None))
         with st.spinner("Thinking..."):
-            turn = get_agent().chat(msg, actor=st.session_state.role)
+            turn = get_agent().chat(msg, actor=st.session_state.role or "guest")
         st.session_state.chat.append(("assistant", turn.reply, turn))
         st.rerun()
 
@@ -297,16 +358,20 @@ def page_forecast() -> None:
     else:
         st.success(f"No shortfall. Lowest point: week {fc.min_week} at {money(pack, fc.min_closing_cents)}.")
     st.altair_chart(closing_chart(fc, pack), width="stretch")
-    st.dataframe(weeks_frame(fc, pack), width="stretch", hide_index=True)
+    st.caption("Click a row (checkbox on the left) to choose the week to trace. "
+               f"Default: the lowest week ({fc.min_week}).")
+    sel = st.dataframe(weeks_frame(fc, pack), width="stretch", hide_index=True, key="fc_table",
+                       on_select="rerun", selection_mode="single-row")
+    rows = list(sel.selection.rows) if sel is not None and sel.selection else []
+    selected_week = rows[0] + 1 if rows else (fc.min_week or 1)
 
     st.subheader("Where does a number come from?")
-    c1, c2 = st.columns(2)
-    default_week = fc.min_week if fc.min_week else 1
-    week = c1.selectbox("Week", list(range(1, len(fc.weeks) + 1)), index=default_week - 1)
-    field = c2.selectbox("Figure", ["closing_cents", "receipts_cents", "payments_cents", "opening_cents"])
+    field = st.radio("Figure", ["closing_cents", "receipts_cents", "payments_cents", "opening_cents"],
+                     horizontal=True, key="fc_field")
+    week = selected_week
     with session_scope() as s:
         ex = explain_figure(s, week, field)
-    st.markdown(f"**Week {week}** ({ex['start']} to {ex['end']}) - `{field}` = "
+    st.markdown(f"**Selected: week {week}** ({ex['start']} to {ex['end']}) - `{field}` = "
                 f"**{money(pack, ex['value_cents'])}**")
     if ex.get("note"):
         st.caption(ex["note"])
@@ -329,7 +394,8 @@ def scenario_panel(fc, pack) -> None:
     st.session_state.setdefault("scenario", [])
     with session_scope() as s:
         customers = [(c.id, c.name) for c in s.exec(select(Counterparty).where(Counterparty.kind == "customer"))]
-        pays = [(p.id, f"{p.id} - {p.payee_id} - {p.amount_cents / 100:,.2f} EUR on {p.execute_date}")
+        ledger_cur = (s.get(Account, "ACC-MAIN").currency if s.get(Account, "ACC-MAIN") else "")
+        pays = [(p.id, f"{p.id} - {p.payee_id} - {pack.display(p.amount_cents)} on {p.execute_date}")
                 for p in s.exec(select(Payment).where(Payment.status == "scheduled"))]
         today = db.get_today(s)
     t1, t2, t3 = st.tabs(["Delay a customer", "Add an inflow", "Move a payment"])
@@ -339,7 +405,7 @@ def scenario_panel(fc, pack) -> None:
         if st.button("Add delay") and cid:
             st.session_state.scenario.append({"type": "delay_customer", "counterparty_id": cid[0], "days": int(days)})
     with t2:
-        amt = st.number_input("Amount (EUR)", 0.0, 10_000_000.0, 20_000.0, step=1000.0, key="sc_amt")
+        amt = st.number_input(f"Amount ({ledger_cur}, ledger currency)", 0.0, 10_000_000.0, 20_000.0, step=1000.0, key="sc_amt")
         wk = st.number_input("Week", 1, 13, 5, key="sc_wk")
         lbl = st.text_input("Label", "financing", key="sc_lbl")
         if st.button("Add inflow"):
@@ -386,30 +452,42 @@ def scenario_panel(fc, pack) -> None:
 def page_approvals() -> None:
     st.header("Approval queue")
     role = st.session_state.role
-    st.caption(f"Acting as **{role}**. Risky agent actions wait here. Large amounts need two roles "
-               "(four-eyes principle: two different people must agree).")
+    pack = pack_for(st.session_state.pack)
+    can_act = auth.signed_in()
+    st.caption((f"Signed in as **{auth.identity()}**. " if can_act else "Not signed in: sign in to approve or reject. ")
+               + "Risky agent actions wait here. Large amounts need two roles "
+               "(four-eyes principle: two different people must agree; one browser session cannot fill both roles).")
     with session_scope() as s:
         pending = executor.pending_approvals(s)
         history = list(s.exec(select(ApprovalRequest).where(ApprovalRequest.status != "pending")
                               .order_by(ApprovalRequest.created_at.desc())))
         pending_view = [(r.id, r.tool_name, json.loads(r.args_json), json.loads(r.required_roles_json),
-                         json.loads(r.approvals_json), r.reason) for r in pending]
+                         [g['role'] if isinstance(g, dict) else g for g in json.loads(r.approvals_json)], r.reason,
+                         describe_approval(s, r.tool_name, json.loads(r.args_json), pack)) for r in pending]
     if not pending_view:
         st.info("Nothing waiting for approval.")
-    for rid, tool, args, required, given, reason in pending_view:
+    for rid, tool, args, required, given, reason, summary in pending_view:
         with st.container(border=True):
             st.markdown(f"**{rid}** `{tool}` {badge('NEEDS_APPROVAL')}", unsafe_allow_html=True)
-            st.caption(f"Why: {reason}")
+            for line in summary:
+                st.markdown(safe_text(line))
+            st.caption(f"Why: {safe_text(reason)}")
             st.write(f"Required roles: {', '.join(required)}  |  Approved so far: {', '.join(given) or 'nobody'}")
-            st.json(args, expanded=False)
+            with st.expander("Raw arguments"):
+                st.json(args, expanded=True)
             a, b, _ = st.columns([1, 1, 4])
-            if a.button("Approve", key=f"ap_{rid}"):
+            if a.button("Approve", key=f"ap_{rid}", disabled=not can_act):
                 with session_scope() as s:
-                    res = executor.approve(s, rid, role)
-                (st.success if res.status in ("ok", "needs_approval") else st.error)(
-                    f"{res.status}: {res.reason or 'executed'}")
-                st.rerun() if res.status == "ok" else None
-            if b.button("Reject", key=f"rj_{rid}"):
+                    res = executor.approve(s, rid, role, approver_id=auth.approver_id())
+                if res.status == "ok":
+                    st.rerun()
+                elif res.status == "needs_approval":
+                    st.success("Your approval is recorded. Waiting for the other role "
+                               "(it must be signed in from a different browser session).")
+                else:
+                    st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
+                             "of a four-eyes request.")
+            if b.button("Reject", key=f"rj_{rid}", disabled=not can_act):
                 with session_scope() as s:
                     executor.reject(s, rid, role, "rejected in UI")
                 st.rerun()
@@ -437,10 +515,13 @@ def page_documents() -> None:
     if up is not None and st.button("Ingest uploaded document"):
         with session_scope() as s:
             data = up.getvalue()
-            payload = data if up.name.lower().endswith(".pdf") else data.decode("utf-8", errors="replace")
-            doc = docs_mod.ingest_document(s, payload, up.name, kind, sender or None)
+            if data[:5] == b"%PDF-":
+                doc = docs_mod.ingest_document(s, data, up.name, kind, sender or None)
+            else:
+                doc = docs_mod.ingest_text(s, data.decode("utf-8", errors="replace"), up.name, kind,
+                                           sender or None)
             (st.error if doc.flagged else st.success)(
-                f"{doc.id} ingested" + (f" and FLAGGED: {doc.flag_reason}" if doc.flagged else ", no indicators found."))
+                f"{doc.id} ingested" + (f" and FLAGGED: {safe_text(doc.flag_reason)}" if doc.flagged else ", no indicators found."))
     st.subheader("Demo documents")
     sample_dir = SAMPLE_DIR / "docs"
     if sample_dir.is_dir():
@@ -449,9 +530,9 @@ def page_documents() -> None:
             if col.button(f"Ingest {f.name}", key=f"samp_{f.name}"):
                 with session_scope() as s:
                     k = "email" if f.suffix in (".txt", ".eml") else "invoice"
-                    doc = docs_mod.ingest_document(s, f, f.name, k, None)
+                    doc = docs_mod.ingest_file(s, f, k, None, sample_dir)
                     (col.error if doc.flagged else col.success)(
-                        f"{doc.id}: " + (f"FLAGGED - {doc.flag_reason}" if doc.flagged else "clean"))
+                        f"{doc.id}: " + (f"FLAGGED - {safe_text(doc.flag_reason)}" if doc.flagged else "clean"))
     else:
         st.caption("No sample documents found. Use 'Reset demo data'.")
     st.subheader("Stored documents")
@@ -463,13 +544,13 @@ def page_documents() -> None:
         st.caption("No documents yet.")
     for did, fn, k, snd, flagged, cleared, reason, text in view:
         status = "CLEARED by human" if (flagged and cleared) else ("FLAGGED" if flagged else "clean")
-        with st.expander(f"{did} - {fn} - {status}"):
+        with st.expander(safe_text(f"{did} - {fn} - {status}")):
             if flagged:
-                st.warning(f"Reasons: {reason}")
-            st.caption(f"Kind: {k}  |  Sender: {snd or 'unknown'}")
+                st.warning(f"Reasons: {safe_text(reason)}")
+            st.caption(safe_text(f"Kind: {k}  |  Sender: {snd or 'unknown'}"))
             st.text(text[:3000])
             if flagged and not cleared:
-                if st.session_state.role in executor.VALID_ROLES:
+                if auth.signed_in():
                     if st.button("Clear flag (I reviewed this document)", key=f"clr_{did}"):
                         with session_scope() as s:
                             result = executor.clear_document_flag(
@@ -478,7 +559,7 @@ def page_documents() -> None:
                             st.rerun()
                         st.error(result.reason)
                 else:
-                    st.caption("Only the owner or accountant can clear a flag.")
+                    st.caption("Sign in as owner or accountant to clear a flag.")
 
 
 # --------------------------------------------------------------------------- #
@@ -497,7 +578,7 @@ def page_payees() -> None:
         return
     st.dataframe(pd.DataFrame(payees), width="stretch", hide_index=True)
     if st.session_state.role != "owner":
-        st.caption("Switch to the owner role to add or verify payees.")
+        st.caption("Sign in as the owner to add or verify payees.")
         return
     for payee in payees:
         details, action = st.columns([4, 1])
@@ -521,7 +602,7 @@ def page_payees() -> None:
         iban = st.text_input("IBAN")
         cp = st.selectbox("Counterparty", cps, format_func=lambda c: c[1])
         verified = st.checkbox("Verified (I confirmed these bank details by phone / in person)")
-        if st.form_submit_button("Add payee") and name and iban:
+        if st.form_submit_button("Add payee") and name and iban and auth.require_login("add a payee"):
             try:
                 with human_bank() as bank:
                     row = bank.create_payee(name, iban, cp[0], verified)
@@ -559,12 +640,12 @@ def page_bank() -> None:
     st.subheader("Advance the simulated clock")
     st.caption("Moves 'today' forward and executes scheduled payments that fall due.")
     days = st.number_input("Days", 1, 120, 7)
-    if st.button("Advance"):
+    if st.button("Advance") and auth.require_login("advance the clock"):
         try:
             with human_bank() as bank:
                 res = bank.advance(int(days))
             with session_scope() as s:
-                log_human(s, "simulate_advance", {"days": int(days)}, "INFO", "Simulated clock advanced")
+                log_human(s, "simulate_advance", {"days": int(days)}, "HUMAN_ACTION", "Simulated clock advanced")
             st.success("Clock advanced.")
             st.json(res, expanded=False)
         except BankError as exc:
@@ -587,7 +668,7 @@ def page_inbox() -> None:
     if not mview:
         st.caption("No emails yet. Run the Monday brief to create reminders.")
     for mid, kind, to, subj, body, inv, sent in mview:
-        with st.expander(f"[{kind}] {subj}  ->  {to}"):
+        with st.expander(safe_text(f"[{kind}] {subj}  ->  {to}")):
             st.caption(f"{mid} | invoice: {inv or '-'} | {sent}")
             st.text(body)
     st.subheader(f"Financing applications ({len(aview)})")

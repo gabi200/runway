@@ -41,7 +41,7 @@ def _decisions(s) -> list[str]:
 
 def test_tool_specs_expose_no_forbidden_capability():
     names = {t["function"]["name"] for t in TOOL_SPECS}
-    assert len(names) == 15 and {"schedule_payment", "compare_financing", "flag_document"} <= names
+    assert len(names) == 16 and {"schedule_payment", "compare_financing", "flag_document"} <= names
     for bad in ("payee", "limit", "export", "kill"):
         assert not [n for n in names if bad in n]
     assert "iban" not in json.dumps(TOOL_SPECS).lower()
@@ -132,7 +132,8 @@ def test_reminder_writes_outbox_and_eml(session, tmp_path):
     r = run_tool(session, "send_payment_reminder", {"invoice_id": inv.id})
     assert r.status == "ok", r
     days = (today - inv.due_date).days
-    assert r.data["tone"] == ("friendly" if days <= 7 else "firm" if days <= 14 else "final")
+    # First reminder for this invoice: never a final notice, whatever the days overdue.
+    assert r.data["tone"] == ("friendly" if days <= 7 else "firm")
     assert (tmp_path / "var" / "outbox" / f"{r.data['email_id']}.eml").exists()
     assert session.get(OutboxEmail, r.data["email_id"]).invoice_id == inv.id
     assert run_tool(session, "send_payment_reminder", {"invoice_id": inv.id}).status == "denied"  # 1 per 7 days
@@ -223,7 +224,7 @@ def test_replay_after_execution_uses_original_request(session):
     first = run_tool(session, "schedule_payment", args)
     assert first.status == "ok"
     session.commit()
-    with BankClient() as bank:
+    with BankClient(token="human-dev-token") as bank:
         bank.advance(4)
     replay = run_tool(session, "schedule_payment", args)
     assert replay.status == "ok" and replay.data["idempotent_replay"]
@@ -318,3 +319,77 @@ def test_clear_document_flag_rolls_back_when_audit_fails(session):
     with pytest.raises(ValueError):
         executor.clear_document_flag(session, "DOC-CLEAR", "owner")
     assert session.get(Document, "DOC-CLEAR").cleared is False
+
+
+def test_agent_cannot_reject(session):
+    request = run_tool(session, "schedule_payment", _pay_args(980000))
+    assert reject(session, request.approval_id, "agent").status == "denied"
+    assert pending_approvals(session)[0].status == "pending"
+
+
+def test_same_person_cannot_supply_two_approval_roles(session):
+    request = run_tool(session, "schedule_payment", _pay_args(980000))
+    assert approve(session, request.approval_id, "owner", approver_id="alice").status == "needs_approval"
+    assert approve(session, request.approval_id, "accountant", approver_id="alice").status == "denied"
+    assert approve(session, request.approval_id, "accountant", approver_id="bob").status == "ok"
+
+
+def test_kill_switch_blocks_payment_replay(session):
+    args = _pay_args(95000)
+    assert run_tool(session, "schedule_payment", args).status == "ok"
+    db.set_setting(session, "kill_switch", "on")
+    assert run_tool(session, "schedule_payment", args).status == "denied"
+
+
+@pytest.mark.parametrize("optional", [{}, {"amount_cents": None, "needed_by": None, "days_needed": None}])
+def test_financing_defaults_evaluated_and_audited(session, optional):
+    from forecast.engine import financing_need
+    from common.db import ApprovalRequest
+
+    need = financing_need(session)
+    result = run_tool(session, "prepare_financing_application", {"product_id": "overdraft", **optional})
+    entry = session.exec(select(AuditEntry).order_by(AuditEntry.id.desc())).first()
+    effective = json.loads(entry.args_json)
+    assert {key: effective[key] for key in ("amount_cents", "needed_by", "days_needed")} == {
+        key: need[key] for key in ("amount_cents", "needed_by", "days_needed")}
+    if result.status == "needs_approval":
+        assert json.loads(session.get(ApprovalRequest, result.approval_id).args_json) == effective
+    else:
+        assert result.status == "denied"
+
+
+def test_legacy_approval_roles_are_read_and_upgraded(session):
+    from common.db import ApprovalRequest
+
+    request = run_tool(session, "prepare_financing_application", {
+        "product_id": "overdraft", "amount_cents": 600000, "needed_by": "2026-11-20"})
+    row = session.get(ApprovalRequest, request.approval_id)
+    row.approvals_json = json.dumps(["owner"])
+    session.add(row)
+    session.commit()
+    result = approve(session, row.id, "accountant", approver_id="bob")
+    assert result.status == "ok"
+    session.refresh(row)
+    assert json.loads(row.approvals_json) == [
+        {"role": "owner", "approver_id": "owner"}, {"role": "accountant", "approver_id": "bob"}]
+
+
+def test_same_approver_financing_roles(session):
+    request = run_tool(session, "prepare_financing_application", {
+        "product_id": "overdraft", "amount_cents": 600000, "needed_by": "2026-11-20"})
+    assert approve(session, request.approval_id, "owner", approver_id="alice").status == "needs_approval"
+    assert approve(session, request.approval_id, "accountant", approver_id="alice").status == "denied"
+    assert approve(session, request.approval_id, "accountant", approver_id="bob").status == "ok"
+
+
+def test_kill_switch_blocks_existing_replay_without_bank_call(session):
+    from agent.tools import idempotency_key
+
+    args = _pay_args(95000)
+    session.add(Payment(id="REPLAY", idempotency_key=idempotency_key(args),
+        payee_id=args["payee_id"], amount_cents=args["amount_cents"], currency="EUR",
+        execute_date=date.fromisoformat(args["execute_date"])))
+    session.commit()
+    db.set_setting(session, "kill_switch", "on")
+    assert run_tool(session, "schedule_payment", args).status == "denied"
+    assert _decisions(session)[-1] == "DENY"

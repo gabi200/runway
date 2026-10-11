@@ -1,10 +1,11 @@
 tiers:
   T0: [get_balances, list_transactions, list_receivables, list_payables, flag_document, list_documents]
-  T1: [get_forecast, run_scenario, compare_financing, draft_email, explain_figure]
+  T1: [get_financing_need, get_forecast, run_scenario, compare_financing, draft_email, explain_figure]
   T2: [send_payment_reminder, schedule_payment]
   T3: [reschedule_payment, prepare_financing_application]
   T4: [add_payee, update_payee, change_limits, export_data, set_kill_switch]
 payment:
+  max_payment_cents: 100000000
   approval_tier: T3
   automatic_amount_cents: 100000
   daily_payee_cents: 100000

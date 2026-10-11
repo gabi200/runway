@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 
 from common.config import load_country_pack
 from common.db import (
+    Account,
     Invoice,
     Payment,
     Transaction,
@@ -36,7 +37,7 @@ RECURRING = {  # ledger category -> label
     "loan_repayment": "Loan repayment",
     "vat": "VAT payment",
 }
-RECURRING_SAMPLE = 3  # number of recent transactions averaged per category
+RECURRING_SAMPLE = 3  # number of recent monthly totals whose median is used per category
 
 
 class ForecastLine(BaseModel):
@@ -98,24 +99,33 @@ def _month_iter(start: date, end: date):
 
 
 def _recurring_lines(session: Session, start: date, end: date, vat_day: int) -> list[ForecastLine]:
+    """Estimate each recurring item from the monthly totals of seeded/booked recurring rows.
+
+    Transactions created from a Payment (``Payment.transaction_id``) are excluded, so small
+    automatic payments booked under a recurring category can never change the estimate.
+    The estimate is the median of the last RECURRING_SAMPLE monthly totals.
+    """
+    from_payments = {t for t in session.exec(select(Payment.transaction_id)).all() if t}
     lines: list[ForecastLine] = []
     for cat, label in RECURRING.items():
-        txs = session.exec(
-            select(Transaction)
-            .where(
-                Transaction.account_id == ACCOUNT_ID,
-                Transaction.category == cat,
-                Transaction.amount_cents < 0,
-                Transaction.booking_date <= start,
-            )
-            .order_by(Transaction.booking_date.desc())  # type: ignore[attr-defined]
-            .limit(RECURRING_SAMPLE)
-        ).all()
-        if not txs:
+        txs = [
+            t for t in session.exec(
+                select(Transaction)
+                .where(Transaction.account_id == ACCOUNT_ID, Transaction.category == cat,
+                       Transaction.amount_cents < 0, Transaction.booking_date <= start)
+                .order_by(Transaction.booking_date.desc())  # type: ignore[attr-defined]
+            ).all() if t.id not in from_payments
+        ]
+        months: dict[tuple[int, int], list[Transaction]] = defaultdict(list)
+        for t in txs:
+            months[(t.booking_date.year, t.booking_date.month)].append(t)
+        recent = sorted(months, reverse=True)[:RECURRING_SAMPLE]
+        if not recent:
             continue
-        amount = round(sum(t.amount_cents for t in txs) / len(txs))
-        day = vat_day if cat == "vat" else round(median(t.booking_date.day for t in txs))
-        refs = [t.id for t in txs]
+        amount = round(median(sum(t.amount_cents for t in months[k]) for k in recent))
+        used = [t for k in recent for t in months[k]]
+        day = vat_day if cat == "vat" else round(median(t.booking_date.day for t in used))
+        refs = [t.id for t in used]
         for y, m in _month_iter(start, end):
             d = date(y, m, min(day, calendar.monthrange(y, m)[1]))
             if start <= d <= end:
@@ -126,7 +136,7 @@ def _recurring_lines(session: Session, start: date, end: date, vat_day: int) -> 
                         amount_cents=amount,
                         expected_date=d,
                         source_refs=refs,
-                        note=f"average of last {len(txs)} {cat} transactions",
+                        note=f"median of last {len(recent)} monthly {cat} totals (bank-executed payments excluded)",
                     )
                 )
     return lines
@@ -300,8 +310,78 @@ def explain_figure(session: Session, week: int, field: str = "closing_cents",
         "lines": [ln.model_dump(mode="json") for ln in lines], "sources": sources,
     }
     if field == "opening_cents":
-        out["note"] = (
-            "Week 1 opening = account balance (opening balance + all booked transactions)."
-            if week == 1 else f"Equals closing balance of week {week - 1}."
-        )
+        if week == 1:
+            acc = session.get(Account, ACCOUNT_ID)
+            txs = session.exec(
+                select(Transaction).where(Transaction.account_id == ACCOUNT_ID,
+                                          Transaction.booking_date <= fc.start_date)
+                .order_by(Transaction.booking_date, Transaction.id)  # type: ignore[arg-type]
+            ).all()
+            out["account"] = {"id": ACCOUNT_ID, "opening_balance_cents": acc.opening_balance_cents if acc else 0,
+                              "as_of": fc.start_date.isoformat()}
+            out["transactions_summary"] = {
+                "count": len(txs), "sum_cents": sum(t.amount_cents for t in txs),
+                "transaction_ids": [t.id for t in txs],
+                "first_booking_date": txs[0].booking_date.isoformat() if txs else None,
+                "last_booking_date": txs[-1].booking_date.isoformat() if txs else None,
+            }
+            out["note"] = ("Week 1 opening = account opening balance + the sum of all booked transactions "
+                           f"up to {fc.start_date.isoformat()} (ids listed in transactions_summary).")
+        else:
+            out["note"] = f"Equals closing balance of week {week - 1}."
     return out
+
+
+FINANCING_ROUNDING_CENTS = 100_000  # financing amounts are rounded UP to a whole 1,000 (ledger units)
+MIN_FINANCING_DAYS = 30  # shortest term quoted: products are priced per started 30 days
+
+
+def financing_need(session: Session, scenario: list[dict] | None = None) -> dict:
+    """How much cash is needed, by when and for how long, computed in code (no AI).
+
+    amount = deficit of the worst week, rounded up to a whole 1,000;
+    needed_by = first day of the first shortfall week;
+    days_needed = days from needed_by until the first receipt that brings the balance back
+    to >= 0 after the LAST shortfall week (at least MIN_FINANCING_DAYS).
+    """
+    fc = build_forecast(session, scenario=scenario)
+    pack = load_country_pack(get_setting(session, "country", None))
+    base = {"currency": fc.currency, "shortfall_weeks": fc.shortfall_weeks, "scenario": scenario or []}
+    if not fc.shortfall_weeks:
+        return {**base, "amount_cents": 0, "needed_by": None, "days_needed": 0, "worst_week": fc.min_week,
+                "worst_closing_cents": fc.min_closing_cents, "recovery_week": None, "recovery_refs": [],
+                "explanation": f"No shortfall: the lowest balance is {pack.display(fc.min_closing_cents)} "
+                               f"in week {fc.min_week}. No financing is needed."}
+    worst = min((w for w in fc.weeks if w.closing_cents < 0), key=lambda w: (w.closing_cents, w.index))
+    amount = -(-(-worst.closing_cents) // FINANCING_ROUNDING_CENTS) * FINANCING_ROUNDING_CENTS
+    first = fc.weeks[fc.shortfall_weeks[0] - 1]
+    last = fc.weeks[fc.shortfall_weeks[-1] - 1]
+    needed_by = first.start
+    recovery = None
+    if last.index < len(fc.weeks):
+        nxt = fc.weeks[last.index]
+        bal = last.closing_cents
+        for ln in sorted(nxt.lines, key=lambda ln: (ln.expected_date, -ln.amount_cents)):
+            bal += ln.amount_cents
+            if ln.kind == "receipt" and bal >= 0:
+                recovery = (nxt, ln)
+                break
+    if recovery:
+        rw, rl = recovery
+        end, refs, rec_week = rl.expected_date, list(rl.source_refs), rw.index
+        rec_text = (f"balance is back above zero with {rl.label} ({pack.display(rl.amount_cents)}) "
+                    f"expected {rl.expected_date.isoformat()} in week {rw.index}")
+    else:
+        end, refs, rec_week = fc.weeks[-1].end, [], None
+        rec_text = "no receipt within the forecast horizon brings the balance back above zero"
+    days = max(MIN_FINANCING_DAYS, (end - needed_by).days)
+    return {
+        **base, "amount_cents": amount, "amount_display": pack.display(amount), "needed_by": needed_by.isoformat(), "days_needed": days,
+        "worst_week": worst.index, "worst_closing_cents": worst.closing_cents,
+        "worst_closing_display": pack.display(worst.closing_cents), "recovery_week": rec_week, "recovery_refs": refs,
+        "explanation": (
+            f"Shortfall in week(s) {', '.join(map(str, fc.shortfall_weeks))}; the worst is week {worst.index} at "
+            f"{pack.display(worst.closing_cents)}. Amount = that deficit rounded up to a whole 1,000: "
+            f"{pack.display(amount)}. Needed from {needed_by.isoformat()} (start of week {first.index}) for "
+            f"{days} days: {rec_text}."),
+    }
