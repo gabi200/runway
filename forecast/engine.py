@@ -185,9 +185,12 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
             )
         )
 
-    # Payments: scheduled first, then open AP without a scheduled payment.
+    # Scheduled payments have their own lines; AP lines cover only the residual balance.
     scheduled = session.exec(select(Payment).where(Payment.status == "scheduled")).all()
-    covered = {p.invoice_id for p in scheduled if p.invoice_id}
+    committed: dict[str, list[Payment]] = defaultdict(list)
+    for payment in session.exec(select(Payment).where(Payment.status.in_(["scheduled", "executed"]))):
+        if payment.invoice_id:
+            committed[payment.invoice_id].append(payment)
     for p in scheduled:
         d = moves.get(p.id, p.execute_date)
         refs = [p.id] + ([p.invoice_id] if p.invoice_id else [])
@@ -204,15 +207,17 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
         )
     ap = session.exec(select(Invoice).where(Invoice.direction == "AP", Invoice.status == "open")).all()
     for inv in ap:
-        if inv.id in covered:
+        payments = committed.get(inv.id, [])
+        remaining = max(0, inv.amount_cents - sum(p.amount_cents for p in payments))
+        if remaining == 0:
             continue
         lines.append(
             ForecastLine(
                 label=f"Payable {inv.number}",
                 kind="payment",
-                amount_cents=-inv.amount_cents,
+                amount_cents=-remaining,
                 expected_date=max(inv.due_date, start),
-                source_refs=[inv.id],
+                source_refs=[inv.id] + [p.id for p in payments],
                 note=f"due {inv.due_date}" + (" (critical)" if inv.critical else ""),
             )
         )

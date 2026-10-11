@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
-
 from agent.documents import scan_document
 from agent.prompts import REFUSAL_TEXT, is_bypass_attempt
 from common.config import load_country_pack
 
-_DOC_BLOCK = re.compile(r"<<<UNTRUSTED_DOCUMENT id=(\S+) .*?flagged=(yes|no)\n(.*?)>>>", re.S)
+_DOC_BLOCK = re.compile(r"<<<UNTRUSTED_DOCUMENT id=(\S+) flagged=(yes|no)[^\n]*\n.*?-----\n(.*?)>>>", re.S)
 HELP = ("I can explain your cash forecast, send reminders on overdue invoices, suggest moving a "
         "non-critical payment, compare financing options and review incoming documents. "
         "Try: 'Give me the Monday brief'.")
@@ -224,7 +222,6 @@ class OfflinePlanner:
         out: list[str] = []
         if fc:
             weeks = {w["index"]: w for w in fc["weeks"]}
-            low = weeks[fc["min_week"]]
             if short:
                 rec_info = OfflinePlanner._recoveries(fc)
                 sw = ", ".join(f"week {w['index']} ({w['start']} to {w['end']}) at {_money(w['closing_cents'])}"
@@ -292,11 +289,21 @@ class OfflinePlanner:
                     out.append("Nothing was excluded.")
             ap = by.get("prepare_financing_application")
             if ap:
-                out.append("Application: " + OfflinePlanner._status(ap[0][1]))
+                dep = ""
+                resc = (by.get("reschedule_payment") or [(0, None)])[0][1]
+                if need and need.get("scenario") and resc and resc.get("approval_id"):
+                    base = next((r["data"] for a, r in by.get("get_financing_need", [])
+                                 if not a.get("scenario") and r.get("status") == "ok"), None)
+                    dep = (f" This application assumes reschedule {resc['approval_id']} is approved"
+                           + (f"; without it the need is {_money(base['amount_cents'])}." if base and base.get("amount_cents") else "."))
+                out.append("Application: " + OfflinePlanner._status(ap[0][1]) + dep)
         elif short and "financing" in wants and by.get("compare_financing"):
             out.append("No financing option can deliver in time and fit the amount.")
             for e in cmpd.get("excluded", []):
                 out.append(f"Excluded: {e['name']} ({e['reason']})")
+        pack = load_country_pack()
+        if fc and pack.fx_from_eur != 1:
+            out.append(f"Amounts are shown in {pack.currency}, converted for display from the EUR ledger.")
         if not out:
             out.append(HELP)
         return "\n".join(out)

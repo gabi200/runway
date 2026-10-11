@@ -66,6 +66,13 @@ def describe_approval(session, tool: str, args: dict, pack) -> list[str]:
         prod = get_product(args.get("product_id", "")) or {}
         lines.append(f"Prepare a {prod.get('name', args.get('product_id'))} application for {amt(args.get('amount_cents'))}")
         lines.append(f"Money needed by: {args.get('needed_by')}")
+        from sqlmodel import select
+        from common.db import ApprovalRequest
+        pend = [r.id for r in session.exec(select(ApprovalRequest).where(
+            ApprovalRequest.tool_name == "reschedule_payment", ApprovalRequest.status == "pending"))]
+        if pend:
+            lines.append(f"Assumes reschedule {', '.join(pend)} is approved; without it the financing "
+                         "need is larger.")
     if not lines:
         for k, v in args.items():
             lines.append(f"{k.replace('_cents', '').replace('_', ' ')}: "

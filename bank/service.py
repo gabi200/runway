@@ -63,12 +63,26 @@ def list_payees(session: Session) -> list[dict]:
     return [row.model_dump(mode="json") for row in session.exec(select(Payee).order_by(Payee.id))]
 
 
+def iban_is_valid(iban: str) -> bool:
+    """Structural IBAN check: country code, check digits and ISO 13616 mod-97 checksum."""
+    compact = (iban or "").replace(" ", "").upper()
+    if not (15 <= len(compact) <= 34) or not compact[:2].isalpha() or not compact[2:4].isdigit():
+        return False
+    if not compact.isalnum():
+        return False
+    rearranged = compact[4:] + compact[:4]
+    digits = "".join(str(int(ch, 36)) for ch in rearranged)
+    return int(digits) % 97 == 1
+
+
 def create_payee(session: Session, name: str, iban: str,
                  counterparty_id: str | None, verified: bool) -> dict:
     """Register a payee after human authorization."""
     _lock(session)
     if counterparty_id and session.get(Counterparty, counterparty_id) is None:
         raise BankServiceError(422, "Unknown counterparty")
+    if verified and not iban_is_valid(iban):
+        raise BankServiceError(422, "A payee can only be verified with a valid IBAN")
     row = Payee(id=_next_id(session, Payee, "PAYEE-"), name=name, iban=iban,
                 counterparty_id=counterparty_id, verified=verified, created_by="owner", created_at=datetime.now(timezone.utc))
     session.add(row)
@@ -83,6 +97,8 @@ def verify_payee(session: Session, payee_id: str, verified: bool) -> dict:
     row = session.get(Payee, payee_id)
     if row is None:
         raise BankServiceError(404, "Payee not found")
+    if verified and not iban_is_valid(row.iban):
+        raise BankServiceError(422, "A payee can only be verified with a valid IBAN")
     row.verified = verified
     session.add(row)
     session.commit()
@@ -123,7 +139,7 @@ def create_payment(session: Session, body: dict, actor: str = "agent") -> dict:
                 or invoice.currency != account.currency):
             raise BankServiceError(422, "Invoice must be an open AP invoice for this payee and currency")
         committed = session.exec(select(Payment).where(Payment.invoice_id == invoice.id,
-            Payment.status != "cancelled")).all()
+            Payment.status.in_(["scheduled", "executed"]))).all()
         if sum(p.amount_cents for p in committed) + body["amount_cents"] > invoice.amount_cents:
             raise BankServiceError(422, "Payments exceed invoice amount")
     if body.get("document_id") and session.get(Document, body["document_id"]) is None:
@@ -184,7 +200,17 @@ def advance(session: Session, days: int) -> dict:
     ).order_by(Payment.execute_date, Payment.id)).all()
     executed = []
     for payment in payments:
-        payee = session.get(Payee, payment.payee_id)
+        payee = session.get(Payee, payment.payee_id, populate_existing=True)
+        reason = None
+        if payee is None or not payee.verified:
+            reason = "Payee is unknown or unverified"
+        elif not 0 < payment.amount_cents <= load_rules()["payment"]["max_payment_cents"]:
+            reason = "Payment amount is outside allowed bounds"
+        if reason:
+            payment.status = "failed"
+            session.add(payment)
+            session.add(Setting(key=f"bank.failure.{payment.id}", value=reason))
+            continue
         counterparty = session.get(Counterparty, payee.counterparty_id) if payee.counterparty_id else None
         category = {"payroll": "payroll", "landlord": "rent", "utility": "utilities",
                     "tax": "vat", "lender": "loan_repayment"}.get(
@@ -203,7 +229,10 @@ def advance(session: Session, days: int) -> dict:
         session.add(payment)
         if payment.invoice_id:
             invoice = session.get(Invoice, payment.invoice_id)
-            if invoice and invoice.direction == "AP":
+            session.flush()
+            settled = sum(p.amount_cents for p in session.exec(select(Payment).where(
+                Payment.invoice_id == payment.invoice_id, Payment.status == "executed")))
+            if invoice and invoice.direction == "AP" and settled >= invoice.amount_cents:
                 invoice.status = "paid"
                 invoice.paid_date = payment.execute_date
                 session.add(invoice)
@@ -212,4 +241,4 @@ def advance(session: Session, days: int) -> dict:
     set_setting(session, "today", today.isoformat())
     return {"previous_today": previous.isoformat(), "today": today.isoformat(),
             "days": days, "executed_count": len(executed), "executed_payment_ids": executed,
-            "total_executed_cents": sum(payment.amount_cents for payment in payments)}
+            "total_executed_cents": sum(payment.amount_cents for payment in payments if payment.id in executed)}

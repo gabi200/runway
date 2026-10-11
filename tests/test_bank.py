@@ -26,7 +26,7 @@ def database(tmp_path, monkeypatch):
         session.add(Account(id="ACC-MAIN", name="Main", currency="EUR", opening_balance_cents=10000))
         session.add(Counterparty(id="SUP-TEST", name="Supplier", kind="supplier"))
         session.commit()
-        session.add(Payee(id="PAYEE-TEST", name="Supplier", iban="TEST-IBAN",
+        session.add(Payee(id="PAYEE-TEST", name="Supplier", iban="DE89 3704 0044 0532 0130 00",
                           counterparty_id="SUP-TEST", verified=True, created_at=datetime.now(timezone.utc)))
         session.add(Payee(id="PAYEE-UNVERIFIED", name="Unknown", iban="OTHER", created_at=datetime.now(timezone.utc)))
         session.add(Invoice(id="AP-TEST", number="1", direction="AP", counterparty_id="SUP-TEST",
@@ -56,10 +56,10 @@ def test_auth_scopes():
         assert client.patch("/payments/PAY-0001", json={"execute_date": TODAY.isoformat()}).status_code == 401
     with BankClient() as executor:
         with pytest.raises(BankError) as error:
-            executor.create_payee("New", "NEW-IBAN", None, True)
+            executor.create_payee("New", "GB29 NWBK 6016 1331 9268 19", None, True)
         assert error.value.status_code == 403
     with BankClient(token="human-dev-token") as human:
-        row = human.create_payee("New", "NEW-IBAN", "SUP-TEST", True)
+        row = human.create_payee("New", "GB29 NWBK 6016 1331 9268 19", "SUP-TEST", True)
         assert row["verified"] is True
         assert row["created_by"] == "owner"
         assert len(human.list_payees()) == 3
@@ -287,7 +287,7 @@ def test_patch_cannot_pull_forward_or_exceed_invoice_due():
 
 def test_unlinked_payment_is_other_and_identifiable():
     with BankClient(token="human-dev-token") as client:
-        row = client.create_payment("unlinked", "PAYEE-TEST", 100, "EUR", TODAY)
+        client.create_payment("unlinked", "PAYEE-TEST", 100, "EUR", TODAY)
         client.advance(0)
         tx = client.list_transactions("ACC-MAIN")[0]
         assert tx["category"] == "other"
@@ -392,3 +392,67 @@ def test_service_maximum_payment_boundary_and_replay():
     with session_scope() as session:
         replay = service.create_payment(session, body)
     assert replay["id"] == first["id"] and replay["idempotent_replay"]
+
+
+def test_partial_execution_keeps_invoice_open_until_fully_paid():
+    from bank.service import advance
+    with session_scope() as s:
+        for ident, amount in [("PART1", 100), ("PART2", 1100)]:
+            s.add(Payment(id=ident, idempotency_key=ident, payee_id="PAYEE-TEST",
+                          amount_cents=amount, currency="EUR", execute_date=TODAY,
+                          invoice_id="AP-TEST", status="scheduled" if ident == "PART1" else "cancelled"))
+        s.commit()
+        assert advance(s, 0)["executed_count"] == 1
+        assert s.get(Invoice, "AP-TEST").status == "open"
+        p = s.get(Payment, "PART2")
+        p.status = "scheduled"
+        s.add(p)
+        s.commit()
+        advance(s, 0)
+        assert s.get(Invoice, "AP-TEST").status == "paid"
+
+
+@pytest.mark.parametrize("payee,amount", [("PAYEE-UNVERIFIED", 100), ("PAYEE-TEST", -1),
+                                          ("PAYEE-TEST", 100000001)])
+def test_advance_refuses_unsafe_stored_payment(payee, amount):
+    from bank.service import advance
+    from common.db import get_setting
+    with session_scope() as s:
+        s.add(Payment(id="UNSAFE", idempotency_key="unsafe", payee_id=payee,
+                      amount_cents=amount, currency="EUR", execute_date=TODAY))
+        s.commit()
+        result = advance(s, 0)
+        assert result["executed_count"] == result["total_executed_cents"] == 0
+        assert s.get(Payment, "UNSAFE").status == "failed"
+        assert get_setting(s, "bank.failure.UNSAFE")
+        assert not s.exec(select(Transaction)).all()
+
+
+def test_failed_invoice_payment_can_be_replaced():
+    from bank.service import create_payment
+    with session_scope() as s:
+        s.add(Payment(id="FAILED", idempotency_key="failed", payee_id="PAYEE-TEST",
+                      amount_cents=1200, currency="EUR", execute_date=TODAY,
+                      invoice_id="AP-TEST", status="failed"))
+        s.commit()
+        body = payload(execute_date=TODAY)
+        assert create_payment(s, body)["status"] == "scheduled"
+
+
+def test_verify_requires_valid_iban():
+    """A payee without a structurally valid IBAN (e.g. created by CSV import) cannot be verified."""
+    from bank.service import BankServiceError, iban_is_valid, verify_payee
+    from common.db import Payee, session_scope
+
+    assert iban_is_valid("DE89 3704 0044 0532 0130 00")
+    assert not iban_is_valid("")
+    assert not iban_is_valid("DE00 3704 0044 0532 0130 00")
+    with session_scope() as s:
+        s.add(Payee(id="PAYEE-NOIBAN", name="Imported Co", iban="", verified=False))
+        s.commit()
+        try:
+            verify_payee(s, "PAYEE-NOIBAN", True)
+        except BankServiceError as exc:
+            assert exc.status_code == 422
+        else:
+            raise AssertionError("verification without IBAN must fail")

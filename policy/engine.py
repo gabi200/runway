@@ -149,6 +149,13 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
         if get_setting(session, "kill_switch", "off") != "off" and tier != "T0":
             return Decision("DENY", "Kill switch restricts tools to T0", tier)
         today = get_today(session)
+        if tool_name in {"compare_financing", "prepare_financing_application"}:
+            bounds = rules["financing"]
+            days = args.get("days_needed", bounds["min_days_needed"])
+            if not bounds["min_days_needed"] <= days <= bounds["max_days_needed"]:
+                return Decision("DENY", "days_needed must be within 1..365 days", tier)
+            if not today <= _date(args["needed_by"]) <= today + timedelta(days=bounds["max_needed_by_days"]):
+                return Decision("DENY", "needed_by must be within today..today+120 days", tier)
         payment_rules = rules["payment"]
         roles: tuple[str, ...] = ()
         reason = "Tool allowed by policy"
@@ -170,9 +177,10 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
                 return Decision("DENY", "Payment must match an open AP invoice and its amount", tier)
             if invoice:
                 committed = session.exec(select(Payment).where(Payment.invoice_id == invoice.id,
-                    Payment.status != "cancelled").execution_options(populate_existing=True)).all()
-                if sum(p.amount_cents for p in committed) + amount > invoice.amount_cents:
-                    return Decision("DENY", "Payments exceed invoice amount", tier)
+                    Payment.status.in_(["scheduled", "executed"])).execution_options(populate_existing=True)).all()
+                remaining = invoice.amount_cents - sum(p.amount_cents for p in committed)
+                if amount != remaining:
+                    return Decision("DENY", "Payment amount must equal the remaining unpaid and unscheduled invoice balance", tier)
             doc_ids = {args.get("document_id"), invoice.document_id if invoice else None} - {None}
             for doc_id in doc_ids:
                 doc = session.get(Document, doc_id, populate_existing=True)

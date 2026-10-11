@@ -1,6 +1,7 @@
 """Agent loop tests: unit tests with fakes, plus end-to-end tests with the OfflinePlanner."""
 
 import json
+import re
 import sys
 import types
 from datetime import datetime, timezone
@@ -182,6 +183,40 @@ class TestEndToEnd:
         with Session(db.get_engine()) as s:
             from sqlmodel import select
             assert len(s.exec(select(db.OutboxEmail).where(db.OutboxEmail.kind == "reminder")).all()) == 2
+
+    def test_cn_display_documents_keep_ledger_currency(self, env, monkeypatch):
+        import re
+        from sqlmodel import select
+
+        monkeypatch.setenv("RUNWAY_COUNTRY", "cn")
+        monkeypatch.setenv("RUNWAY_VAR_DIR", str(env / "var"))
+        from common.config import load_country_pack
+        load_country_pack.cache_clear()
+        try:
+            agent = Agent(lambda: Session(db.get_engine()))
+            turn = agent.monday_brief()
+            assert "converted for display from the EUR ledger" in turn.reply
+            with Session(db.get_engine()) as s:
+                mails = s.exec(select(db.OutboxEmail).where(db.OutboxEmail.kind == "reminder")).all()
+                assert mails
+                for m in mails:
+                    inv = s.get(db.Invoice, m.invoice_id)
+                    assert f"€{inv.amount_cents / 100:,.2f}" in m.body and "¥" not in m.body
+                from agent.pdf import prepare_application
+                from datetime import date
+                from pypdf import PdfReader
+                row = prepare_application(s, "overdraft", 1_000_000, date(2026, 11, 23), 30)
+                text = "\n".join(p.extract_text() for p in PdfReader(row.pdf_path).pages)
+                assert "¥" not in text and "€10,000.00" in text and "Limit €50,000" in text
+                assert row.currency == "EUR"
+                assert re.search(r"Total cost", text)
+        finally:
+            load_country_pack.cache_clear()
+
+    def test_brief_application_states_reschedule_dependency(self, env):
+        agent = Agent(lambda: Session(db.get_engine()))
+        turn = agent.monday_brief()
+        assert re.search(r"assumes reschedule APR-\d+ is approved; without it the need is", turn.reply)
 
     def test_jailbreak_refused_and_logged(self, env):
         agent = Agent(lambda: Session(db.get_engine()))

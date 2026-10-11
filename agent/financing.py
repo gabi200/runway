@@ -6,6 +6,7 @@ Terms come from `data/financing.yaml` (fictional products, SPEC 5.7). Pure code,
 from __future__ import annotations
 
 import math
+import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
@@ -57,6 +58,32 @@ def _largest_open_ar(session: Session, counterparty_id: str | None = None) -> In
         q = q.where(Invoice.counterparty_id == counterparty_id)
     rows = list(session.exec(q))
     return max(rows, key=lambda i: i.amount_cents) if rows else None
+
+
+_SYMBOLS = {"EUR": "€", "CNY": "¥", "USD": "$", "GBP": "£"}
+
+
+def ledger_money(cents: int, currency: str) -> str:
+    """Format ledger cents in the ledger/invoice currency (for documents sent to outsiders).
+
+    Unlike CountryPack.display this never converts: the amount stays in its own currency.
+    """
+    sign = "-" if cents < 0 else ""
+    sym = _SYMBOLS.get(currency.upper(), f"{currency.upper()} ")
+    return f"{sign}{sym}{abs(cents) / 100:,.2f}"
+
+
+def product_terms(product: dict[str, Any], currency: str) -> str:
+    """Product notes with every bare money figure (limit, one-off fee) given its currency unit."""
+    notes = str(product["notes"])
+    for key in ("max_amount_cents", "one_off_fee_cents"):
+        cents = product.get(key)
+        if not cents:
+            continue
+        figure = f"{cents / 100:,.0f}"
+        notes = re.sub(rf"(?<![\d,.]){re.escape(figure)}(?![\d,])",
+                       ledger_money(cents, currency).removesuffix(".00"), notes)
+    return notes
 
 
 def _fmt(cents: int) -> str:
@@ -127,7 +154,8 @@ def compare_financing(session: Session, amount_cents: int, needed_by: date, days
             "total_cost_display": _fmt(cost["total_cost_cents"]), "amount_display": _fmt(amount_cents),
             "arrives_in_time": True,
             "arrival_date": arrival.isoformat(), "time_to_cash_days": p["time_to_cash_days"],
-            "needs_confirmation": p.get("needs_confirmation"), "warnings": warnings, "terms": p["notes"],
+            "needs_confirmation": p.get("needs_confirmation"), "warnings": warnings,
+            "terms": product_terms(p, account_currency(session)),
         })
     ranked.sort(key=lambda r: (r["total_cost_cents"], r["time_to_cash_days"]))
     for n, r in enumerate(ranked, 1):

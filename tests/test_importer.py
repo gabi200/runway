@@ -42,14 +42,14 @@ def closings(path):
         return [w.closing_cents for w in build_forecast(s).weeks]
 
 
-def test_full_roundtrip_gives_same_forecast(gen):
+def test_scheduled_import_rejects_unverified_payees(gen):
     base, out = gen
-    summary = import_files(base / "full.db", out / "trial_balance.csv", out / "bank_statement.csv",
-                           out / "open_receivables.csv", out / "open_payables.csv",
-                           paid_invoices_csv=base / "paid.csv", scheduled_payments_csv=base / "sched.csv")
-    assert summary["warnings"] == [] and summary["today"] == "2026-10-19"
-    assert closings(base / "full.db") == closings(base / "src.db")
-    assert closings(base / "full.db")[5] < 0  # the week-6 shortfall survives the round trip
+    before = closings(base / "src.db")
+    with pytest.raises(ImportErrorReport, match="unverified"):
+        import_files(base / "src.db", out / "trial_balance.csv", out / "bank_statement.csv",
+                     out / "open_receivables.csv", out / "open_payables.csv",
+                     paid_invoices_csv=base / "paid.csv", scheduled_payments_csv=base / "sched.csv")
+    assert closings(base / "src.db") == before
 
 
 def test_basic_import_builds_forecast_and_payees_unverified(gen):
@@ -86,3 +86,68 @@ def test_missing_columns_rejected(gen):
         import_files(base / "x.db", "account_code,debit,credit\n1000,1.00,\n", out / "bank_statement.csv")
     with pytest.raises(ImportErrorReport, match="missing required column"):
         import_files(base / "x.db", out / "trial_balance.csv", "date,amount\n2026-01-01,1\n")
+
+
+TB = "account_code,account_name,debit,credit\n1000,Cash,50000,\n3000,Equity,,50000\n"
+BS = "date,description,amount,category\n2026-09-01,Payment from Acme Ltd INV1,1000,sales_receipt\n"
+AR = "number,counterparty,issue_date,due_date,amount,invoice_id\nA1,Acme Ltd,2026-09-01,2026-10-01,100,AR-1002\nA2,Acme Ltd,2026-09-01,2026-10-01,200,\n"
+
+
+@pytest.mark.parametrize("kwargs,match", [
+    ({"open_receivables_csv": AR}, "duplicate"),
+    ({"open_receivables_csv": AR.replace(",AR-1002", ","),
+      "scheduled_payments_csv": "counterparty,amount,execute_date\nAcme Ltd,500,2026-10-20\n"}, "supplier"),
+    ({"scheduled_payments_csv": "counterparty,amount,execute_date\nEvil Corp,-5,2026-10-20\n"}, "amount"),
+    ({"scheduled_payments_csv": "counterparty,amount,execute_date\nEvil Corp,99999999999,2026-10-20\n"}, "amount"),
+    ({"scheduled_payments_csv": "counterparty,amount,execute_date\nEvil Corp,5,2099-99-99\n"}, "ISO date"),
+])
+def test_invalid_import_preserves_ledger_and_audit(tmp_path, kwargs, match):
+    from audit.log import append, verify_chain
+    target = tmp_path / "old.db"
+    generate(target, out_dir=tmp_path / "out")
+    with db.session_scope(target) as s:
+        append(s, "owner", "get_balances", {}, "ALLOW")
+    before = target.read_bytes()
+    with pytest.raises(ImportErrorReport, match=match):
+        import_files(target, TB, BS, **kwargs)
+    assert target.read_bytes() == before
+    with db.session_scope(target) as s:
+        assert verify_chain(s).ok
+        assert s.exec(select(db.AuditEntry)).first() is not None
+
+
+@pytest.mark.parametrize("use_session", [False, True])
+def test_write_failure_preserves_existing_db(tmp_path, monkeypatch, use_session):
+    from audit.log import append, verify_chain
+    target = tmp_path / "old.db"
+    generate(target, out_dir=tmp_path / "out")
+    with db.session_scope(target) as s:
+        append(s, "owner", "get_balances", {}, "ALLOW")
+    before = target.read_bytes()
+    original = Session.commit
+    def fail_import(s):
+        if ".runway-import-" in str(s.get_bind().url):
+            raise RuntimeError("injected write failure")
+        original(s)
+    monkeypatch.setattr(Session, "commit", fail_import)
+    with db.session_scope(target) as s:
+        with pytest.raises(ImportErrorReport, match="existing database preserved"):
+            import_files(s if use_session else target, TB, BS)
+        assert target.read_bytes() == before
+        assert verify_chain(s).ok
+        assert s.exec(select(db.AuditEntry)).first() is not None
+    assert not list(tmp_path.glob(".runway-import-*"))
+
+
+@pytest.mark.parametrize("use_session", [False, True])
+def test_successful_atomic_import_reopens_database(tmp_path, use_session):
+    target = tmp_path / "old.db"
+    generate(target, out_dir=tmp_path / "out")
+    with db.session_scope(target) as s:
+        result = import_files(s if use_session else target, TB, BS)
+        assert result["today"] == "2026-09-02"
+        assert db.get_today(s).isoformat() == result["today"]
+        assert s.get(db.Account, "ACC-MAIN").name == "Imported company main account"
+    with db.session_scope(target) as s:
+        assert db.account_balance_cents(s) == 5000000
+    assert not list(tmp_path.glob(".runway-import-*"))

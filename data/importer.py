@@ -6,10 +6,11 @@ ledger so the 13-week forecast can run on the imported data.
 
 Honest limits of a CSV import (a real integration would read these from the bank
 and ledger APIs):
-* Paid-invoice history and scheduled payments are not in the four basic files.
-  Optionally pass ``paid_invoices_csv`` (number, counterparty, due_date, paid_date,
-  amount) and ``scheduled_payments_csv`` (counterparty, amount, execute_date) to
-  keep customer lateness and already-scheduled payments. Without them, paid
+* Paid-invoice history is not in the four basic files. Optionally pass
+  ``paid_invoices_csv`` (number, counterparty, due_date, paid_date, amount) to
+  keep customer lateness. Scheduled-payment CSVs are validated and rejected:
+  imported payees require human verification before any payment is scheduled.
+  Without paid history, paid
   customer invoices are rebuilt from "Payment from <customer> <number>" bank
   lines with the due date assumed equal to the payment date, so customer
   lateness starts at zero and is learned only from later data.
@@ -21,18 +22,20 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import re
+import tempfile
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from statistics import median
 from typing import Union
 
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session, SQLModel, create_engine
 
 from common.config import load_country_pack
 from common.db import (
-    Account, Counterparty, Invoice, Payee, Payment, Setting, Transaction, get_engine,
+    Account, Counterparty, Invoice, Payee, Setting, Transaction, reset_engines, db_url,
 )
 
 ACCOUNT = "ACC-MAIN"
@@ -70,7 +73,7 @@ def _cents(v: str, where: str) -> int:
         return 0
     try:
         return int((Decimal(v.replace(",", "")) * 100).quantize(Decimal(1)))
-    except InvalidOperation:
+    except (InvalidOperation, ValueError, OverflowError):
         raise ImportErrorReport(f"{where}: {v!r} is not a number") from None
 
 
@@ -99,9 +102,13 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
     """Validate the files, then replace the database content with the imported company.
 
     ``target`` is a Session or a SQLite path (None = default DB). Nothing is written
-    unless every file validates. Returns a summary dict (counts, opening balance,
+    unless every file validates; writes use a temporary DB and atomic replacement.
+    Scheduled payments are rejected because imported payees are unverified.
+    Returns a summary dict (counts, opening balance,
     today, warnings).
     """
+    if as_of is not None and type(as_of) is not date:
+        raise ImportErrorReport("as_of must be a date")
     pack = load_country_pack(country)
     warnings: list[str] = []
 
@@ -156,6 +163,10 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         for n, r in enumerate(_rows(paid_invoices_csv, "paid invoices",
                                     ("number", "counterparty", "due_date", "paid_date", "amount")), 1):
             where = f"paid invoices row {n}"
+            if (r.get("direction") or "AR") not in {"AR", "AP"}:
+                raise ImportErrorReport(f"{where}: direction must be AR or AP")
+            if _cents(r["amount"], f"{where} amount") <= 0:
+                raise ImportErrorReport(f"{where}: amount must be positive")
             hist.append(dict(direction=r.get("direction") or "AR", number=r["number"], cp_name=r["counterparty"],
                              cp_id=r.get("counterparty_id") or "",
                              due=_date(r["due_date"], f"{where} due_date"),
@@ -170,7 +181,15 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             sched.append(dict(cp_name=r["counterparty"], invoice=r.get("invoice_number", ""),
                               amount=_cents(r["amount"], f"{where} amount"),
                               execute=_date(r["execute_date"], f"{where} execute_date")))
-    ids = [o["id"] for o in opens if o["id"]]
+    from policy.engine import load_rules
+    for sp in sched:
+        if not 0 < sp["amount"] <= load_rules()["payment"]["max_payment_cents"]:
+            raise ImportErrorReport("scheduled payments: amount must be positive and within max_payment_cents")
+    counts = {"AR": 0, "AP": 0}
+    for o in opens:
+        counts[o["direction"]] += 1
+        o["id"] = o["id"] or f"{o['direction']}-{(1000 if o['direction'] == 'AR' else 2000) + counts[o['direction']]}"
+    ids = [o["id"] for o in opens]
     if len(ids) != len(set(ids)):
         raise ImportErrorReport("open items: duplicate invoice_id")
 
@@ -202,16 +221,21 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             or ("CUST-" if o["direction"] == "AR" else "SUP-") + _slug(o["cp_name"])
         o["cp_id"] = cid
         entry = cps.setdefault(cid, dict(name=o["cp_name"], direction=o["direction"], terms=[]))
+        if entry["name"] != o["cp_name"] or entry["direction"] != o["direction"]:
+            raise ImportErrorReport(f"counterparties: conflicting id {cid}")
         entry["terms"].append((o["due"] - o["issue"]).days)
     for h in hist:
         h["cp_id"] = h["cp_id"] or next((k for k, c in canon.items() if c[1] == h["cp_name"]), "") \
             or next((k for k, c in cps.items() if c["name"] == h["cp_name"]), "") \
             or ("CUST-" if h["direction"] == "AR" else "SUP-") + _slug(h["cp_name"])
-        cps.setdefault(h["cp_id"], dict(name=h["cp_name"], direction=h["direction"], terms=[]))
+        entry = cps.setdefault(h["cp_id"], dict(name=h["cp_name"], direction=h["direction"], terms=[]))
+        if entry["name"] != h["cp_name"] or entry["direction"] != h["direction"]:
+            raise ImportErrorReport(f"counterparties: conflicting id {h['cp_id']}")
     for sp in sched:
-        sp["cp_id"] = next((k for k, c in cps.items() if c["name"] == sp["cp_name"] or k == sp["cp_name"]), "") \
-            or "SUP-" + _slug(sp["cp_name"])
-        cps.setdefault(sp["cp_id"], dict(name=sp["cp_name"], direction="AP", terms=[]))
+        cid = next((k for k, c in cps.items() if c["name"] == sp["cp_name"] or k == sp["cp_name"]), None)
+        if cid is None or cps[cid]["direction"] != "AP" or (cid in canon and canon[cid][2] == "customer"):
+            raise ImportErrorReport("scheduled payments: counterparty must be a supplier with a payee")
+        raise ImportErrorReport(f"scheduled payments: payee for {sp['cp_name']} is unverified; verify with a human before scheduling")
     by_name = {c["name"]: cid for cid, c in cps.items()}
 
     # ---- paid customer invoices rebuilt from receipts ------------------------- #
@@ -233,14 +257,23 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             hit = next((cid for nm, cid in by_name.items() if nm in t["desc"]), None)
             t["cp"] = hit
 
+    invoice_ids = ids + [f"{h['direction']}-H{k:05d}" for k, h in enumerate(hist, 1)]
+    invoice_ids += [f"AR-H{k:05d}" for k in range(len(hist) + 1, len(hist) + len(paid) + 1)]
+    if len(invoice_ids) != len(set(invoice_ids)):
+        raise ImportErrorReport("invoices: duplicate or colliding invoice id")
+    payee_ids = [f"PAYEE-{cid.removeprefix('SUP-')}" for cid, c in cps.items() if c["direction"] == "AP"]
+    if len(payee_ids) != len(set(payee_ids)):
+        raise ImportErrorReport("payees: colliding id")
+
     # ---- write ----------------------------------------------------------------- #
-    if isinstance(target, Session):
-        session, eng, own = target, target.get_bind(), False
-    else:
-        eng = get_engine(target)
-        session, own = Session(eng), True
+    target_engine = target.get_bind() if isinstance(target, Session) else None
+    destination = Path(target_engine.url.database if target_engine else db_url(target).removeprefix("sqlite:///"))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".runway-import-", suffix=".db", dir=destination.parent)
+    os.close(fd)
+    eng = create_engine(f"sqlite:///{temporary}", connect_args={"check_same_thread": False})
+    session = Session(eng)
     try:
-        SQLModel.metadata.drop_all(eng)
         SQLModel.metadata.create_all(eng)
         session.add(Account(id=ACCOUNT, name=f"{company} main account", currency=currency,
                             opening_balance_cents=opening))
@@ -260,8 +293,7 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         n_ar = n_ap = 0
         for o in opens:
             n_ar, n_ap = (n_ar + 1, n_ap) if o["direction"] == "AR" else (n_ar, n_ap + 1)
-            iid = o["id"] or f"{o['direction']}-{(1000 if o['direction'] == 'AR' else 2000) + (n_ar if o['direction'] == 'AR' else n_ap)}"
-            o["iid"] = iid
+            iid = o["id"]
             session.add(Invoice(id=iid, number=o["number"], direction=o["direction"],
                                 counterparty_id=o["cp_id"], issue_date=o["issue"], due_date=o["due"],
                                 amount_cents=o["gross"], vat_cents=o["vat"], currency=currency))
@@ -276,7 +308,7 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
                                 vat_cents=round(h["gross"] * pack.vat_rate / (1 + pack.vat_rate)),
                                 currency=currency, status="paid", paid_date=h["paid"]))
         session.commit()
-        for k, p in enumerate(paid, 1):
+        for k, p in enumerate(paid, len(hist) + 1):
             t = p["tx"]
             iid = f"AR-H{k:05d}"
             session.add(Invoice(id=iid, number=p["number"], direction="AR", counterparty_id=p["cp"],
@@ -294,25 +326,25 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
                                     amount_cents=t["amount"], currency=currency, description=t["desc"],
                                     category=t["cat"], counterparty_id=t.get("cp"),
                                     invoice_id=t.get("inv")))
-        payee_of = {c: f"PAYEE-{c.removeprefix('SUP-')}" for c, v in cps.items() if v["direction"] == "AP"}
-        for k, sp in enumerate(sched, 1):
-            pid = payee_of[sp["cp_id"]]
-            inv = next((i for i in opens if i["number"] == sp["invoice"]), None) if sp["invoice"] else None
-            session.add(Payment(id=f"PAY-{k:04d}", idempotency_key=f"import-pay-{k:04d}", account_id=ACCOUNT,
-                                payee_id=pid, amount_cents=sp["amount"], currency=currency,
-                                execute_date=sp["execute"], status="scheduled", automatic=False,
-                                invoice_id=inv["iid"] if inv else None, created_by="import",
-                                created_sim_date=as_of))
         session.commit()
         for k, v in {"today": as_of.isoformat(), "kill_switch": "off", "country": country}.items():
             session.add(Setting(key=k, value=v))
         session.commit()
-    except Exception:
+    except Exception as exc:
         session.rollback()
-        raise
+        raise ImportErrorReport(f"Import failed; existing database preserved: {exc}") from exc
+    else:
+        session.close()
+        eng.dispose()
+        if isinstance(target, Session):
+            target.close()
+            target_engine.dispose()
+        reset_engines()
+        os.replace(temporary, destination)
     finally:
-        if own:
-            session.close()
+        session.close()
+        eng.dispose()
+        Path(temporary).unlink(missing_ok=True)
     return dict(transactions=len(txs), open_receivables=n_ar, open_payables=n_ap,
                 counterparties=len(cps), paid_history_rebuilt=len(paid),
                 opening_balance_cents=opening, today=as_of.isoformat(), warnings=warnings)

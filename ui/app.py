@@ -12,7 +12,7 @@ import io
 import json
 import os
 import sys
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -82,7 +82,10 @@ def init_state() -> None:
     st.session_state.setdefault("chat", [])
     st.session_state.setdefault("brief", None)
     st.session_state.setdefault("confirm_reset", False)
-    if "kill" not in st.session_state:
+    # Widget keys cannot be written after their widget exists; actions queue the value here.
+    if "kill_next" in st.session_state:
+        st.session_state.kill = st.session_state.pop("kill_next")
+    elif "kill" not in st.session_state:
         with session_scope() as s:
             st.session_state.kill = db.kill_switch_on(s)
 
@@ -104,7 +107,7 @@ def on_kill_toggle() -> None:
 def reset_demo() -> None:
     generate(out_dir=SAMPLE_DIR)
     st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
-                            kill=False, confirm_reset=False)
+                            kill_next=False, confirm_reset=False)
     st.session_state.pop("scenario", None)
 
 
@@ -194,12 +197,24 @@ def page_onboarding() -> None:
     bs = st.file_uploader("Bank statement CSV", type="csv", key="up_bs")
     ar = st.file_uploader("Open receivables CSV (optional)", type="csv", key="up_ar")
     ap = st.file_uploader("Open payables CSV (optional)", type="csv", key="up_ap")
-    if st.button("Use generated sample data"):
+    st.caption("Optional history files. Without them the forecast cannot know each customer's usual "
+               "lateness or which payments are already scheduled, so it differs from the demo company's.")
+    pi = st.file_uploader("Paid invoices history CSV (optional)", type="csv", key="up_pi")
+    sp = st.file_uploader("Scheduled payments CSV (optional)", type="csv", key="up_sp")
+    notice = st.session_state.pop("notice", None)
+    if notice:
+        st.success(notice)
+    st.caption("Generated sample data REPLACES the database, including the audit log.")
+    if st.button("Use generated sample data") and auth.require_login("load the sample data"):
         with st.spinner("Generating 12 months of sample data..."):
             summary = generate(out_dir=SAMPLE_DIR)
-        st.session_state.kill = False
-        st.success("Sample data loaded.")
-        st.json(summary, expanded=False)
+        st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
+                                kill_next=False, notice="Sample data loaded.")
+        st.session_state.pop("scenario", None)
+        with session_scope() as s:
+            log_human(s, "load_sample_data", {k: v for k, v in summary.items() if k != "warnings"},
+                      "HUMAN_ACTION", "Sample data regenerated from the UI")
+        st.rerun()
     if tb is not None:
         rows = read_csv(tb)
         debit, credit = sum(num(r.get("debit")) for r in rows), sum(num(r.get("credit")) for r in rows)
@@ -217,18 +232,23 @@ def page_onboarding() -> None:
         st.dataframe(pd.DataFrame(rows).tail(20), width="stretch", hide_index=True)
         st.info(f"{len(rows)} transactions. Money in {total_in:,.2f}, money out {abs(total_out):,.2f}.")
     if tb is not None and bs is not None:
-        st.caption("Importing REPLACES the database (including the audit log) with the uploaded company. "
-                   "Payees created by an import are unverified until a human verifies them.")
-        if st.button("Import uploaded files", type="primary") and auth.require_login("import data"):
+        st.warning("Importing REPLACES the whole database with the uploaded company. The current audit log "
+                   "will be replaced too. Payees created by an import are unverified until a human "
+                   "verifies them.")
+        sure = st.checkbox("I understand the current data and audit log will be replaced", key="imp_confirm")
+        if st.button("Import uploaded files", type="primary", disabled=not sure) \
+                and auth.require_login("import data"):
             try:
                 summary = import_files(
                     None, tb.getvalue(), bs.getvalue(),
-                    ar.getvalue() if ar is not None else None, ap.getvalue() if ap is not None else None)
+                    ar.getvalue() if ar is not None else None, ap.getvalue() if ap is not None else None,
+                    paid_invoices_csv=pi.getvalue() if pi is not None else None,
+                    scheduled_payments_csv=sp.getvalue() if sp is not None else None)
             except ImportErrorReport as exc:
                 st.error(f"Import rejected, nothing was changed: {exc}")
             else:
                 st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
-                                        kill=False)
+                                        kill_next=False)
                 st.session_state.pop("scenario", None)
                 with session_scope() as s:
                     log_human(s, "import_files", {k: v for k, v in summary.items() if k != "warnings"},
@@ -286,7 +306,7 @@ def page_chat() -> None:
     st.header("Monday brief & chat")
     st.caption("The agent proposes and prepares; it cannot move money outside the rules. "
                "Anything above its limits lands in the approval queue.")
-    if st.button("Run Monday brief", type="primary"):
+    if st.button("Run Monday brief", type="primary") and auth.require_login("run the Monday brief"):
         with st.spinner("Agent is working..."):
             st.session_state.brief = get_agent().monday_brief()
     if st.session_state.brief is not None:
@@ -300,10 +320,12 @@ def page_chat() -> None:
             else:
                 render_turn(turn)
     msg = st.chat_input("Ask about cash, invoices, financing...")
+    if msg and not auth.require_login("chat with the agent"):
+        msg = None
     if msg:
         st.session_state.chat.append(("user", msg, None))
         with st.spinner("Thinking..."):
-            turn = get_agent().chat(msg, actor=st.session_state.role or "guest")
+            turn = get_agent().chat(msg, actor=st.session_state.role)
         st.session_state.chat.append(("assistant", turn.reply, turn))
         st.rerun()
 

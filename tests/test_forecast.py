@@ -39,7 +39,7 @@ def test_shape(s):
 def test_week6_trough(s):
     fc = build_forecast(s)
     assert fc.min_week == 6
-    assert abs(fc.min_closing_cents - (-18_000_00)) <= 2_500_00
+    assert fc.min_closing_cents == -1_830_332
     assert all(fc.weeks[i].closing_cents >= 0 for i in range(4))  # weeks 1-4
     assert 6 in fc.shortfall_weeks
 
@@ -136,3 +136,22 @@ def test_explain_opening_balance_has_sources(s):
     summ = ex["transactions_summary"]
     assert summ["count"] == len(summ["transaction_ids"]) > 0
     assert ex["account"]["opening_balance_cents"] + summ["sum_cents"] == ex["value_cents"]
+
+
+def test_ap_remaining_balance_includes_partial_payment_refs(s):
+    from sqlmodel import select
+    inv = next(i for i in s.exec(select(Invoice)) if i.direction == "AP" and i.status == "open"
+               and not s.exec(select(Payment).where(Payment.invoice_id == i.id)).all())
+    existing = s.exec(select(Payment)).first()
+    for ident, amount, status in [("PART-EXEC", 100, "executed"), ("PART-SCHED", 200, "scheduled"),
+                                  ("PART-FAIL", 400, "failed"), ("PART-CANCEL", 500, "cancelled")]:
+        s.add(Payment(id=ident, idempotency_key=ident, payee_id=existing.payee_id,
+                      amount_cents=amount, currency="EUR", execute_date=inv.due_date,
+                      invoice_id=inv.id, status=status))
+    s.flush()
+    lines = [ln for w in build_forecast(s).weeks for ln in w.lines if inv.id in ln.source_refs]
+    residual = next(ln for ln in lines if ln.label.startswith("Payable"))
+    assert residual.amount_cents == -(inv.amount_cents - 300)
+    assert set(residual.source_refs) == {inv.id, "PART-EXEC", "PART-SCHED"}
+    assert sum(ln.amount_cents for ln in lines) == -(inv.amount_cents - 100)
+    s.rollback()

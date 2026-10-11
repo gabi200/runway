@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -11,9 +10,8 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlmodel import Session, select
 
-from agent.financing import account_currency, get_product, product_cost
+from agent.financing import account_currency, get_product, ledger_money, product_cost, product_terms
 from agent.outbox import COMPANY, next_id, var_dir
-from common.config import load_country_pack
 from common.db import (Account, FinancingApplication, Invoice, account_balance_cents, get_today)
 
 DEFAULT_DAYS_NEEDED = 60
@@ -27,7 +25,6 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
     product = get_product(product_id)
     if product is None:
         raise ValueError(f"unknown financing product: {product_id}")
-    pack = load_country_pack()
     today = get_today(session)
     fc = build_forecast(session)
     cost = product_cost(product, amount_cents, days_needed)
@@ -42,7 +39,11 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{app_id}.pdf"
     st = getSampleStyleSheet()
-    m = pack.display
+    cur = account_currency(session)
+
+    def m(cents: int) -> str:
+        return ledger_money(cents, cur)
+
     shortfall = ("none" if not fc.shortfall_weeks else
                  f"lowest balance {m(fc.min_closing_cents)} in week {fc.min_week}; "
                  f"weeks below minimum: {', '.join(map(str, fc.shortfall_weeks))}")
@@ -65,7 +66,7 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
         Spacer(1, 6 * mm), Paragraph("Request", st["Heading2"]),
         table([("Product", product["name"]), ("Amount", m(amount_cents)),
                ("Needed by", needed_by.isoformat()), ("Assumed duration", f"{days_needed} days"),
-               ("Terms", product["notes"])]),
+               ("Terms", product_terms(product, cur))]),
         Spacer(1, 6 * mm), Paragraph("Forecast shortfall (13 weeks)", st["Heading2"]),
         table([("Shortfall", shortfall)]),
         Spacer(1, 6 * mm), Paragraph("True cost", st["Heading2"]),
@@ -73,7 +74,7 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
                ("Total cost", m(cost["total_cost_cents"]))]),
     ])
     row = FinancingApplication(id=app_id, product_id=product_id, amount_cents=amount_cents,
-                               currency=account_currency(session), needed_by=needed_by, pdf_path=str(path))
+                               currency=cur, needed_by=needed_by, pdf_path=str(path))
     session.add(row)
     session.commit()
     session.refresh(row)

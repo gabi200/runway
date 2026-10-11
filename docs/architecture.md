@@ -8,7 +8,7 @@ Runway is an AI finance officer for a small business (the fictional Lumen Packag
 
 ```mermaid
 flowchart TD
-    UI["Streamlit UI (ui/app.py)<br/>owner and accountant roles"]
+    UI["Streamlit UI (ui/app.py)<br/>PIN sign-in (ui/auth.py), owner and accountant roles"]
     AG["Agent (agent/orchestrator.py)<br/>LLM or OfflinePlanner"]
     PS["Pseudonymizer (llm/pseudonym.py)"]
     LLM["LLM adapter (llm/adapter.py)<br/>DeepSeek, OpenAI-compatible"]
@@ -16,8 +16,8 @@ flowchart TD
     POL["Rules engine (policy/engine.py + rules.yaml)<br/>plain Python, no AI"]
     AUD["Audit log (audit/log.py)<br/>hash chain + anchors"]
     TL["Tool handlers (agent/tools.py)"]
-    FC["Forecast engine (forecast/engine.py)"]
-    FIN["Financing (agent/financing.py, data/financing.yaml)"]
+    FC["Forecast engine + financing_need (forecast/engine.py)"]
+    FIN["Financing comparison (agent/financing.py, data/financing.yaml)"]
     OUT["Outbox + PDF (agent/outbox.py, agent/pdf.py)<br/>var/outbox, var/applications"]
     BC["BankClient (bank/client.py)<br/>executor token"]
     BANK["Mock bank (bank/app.py, bank/service.py)<br/>FastAPI"]
@@ -26,6 +26,8 @@ flowchart TD
     UI -->|chat, brief| AG
     UI -->|approve / reject / clear flag / kill switch / payees| EX
     UI -->|human token| BANK
+    UI -->|CSV import| IMP["Importer (data/importer.py)"]
+    IMP --> DB
     AG --> PS --> LLM
     AG -->|every tool call| EX
     EX -->|1. evaluate| POL
@@ -45,16 +47,17 @@ flowchart TD
 ASCII version:
 
 ```
- Owner / accountant (Streamlit UI)
-        |  chat                         |  approve / reject / clear flag / kill switch / add payee
+ Owner / accountant (Streamlit UI, PIN sign-in)
+        |  chat                         |  approve / reject / clear flag / kill switch / payees / CSV import
         v                               v
  Agent (LLM or offline planner)     agent.executor.approve / reject      bank (human token)
-        |  masked text (llm/pseudonym.py)
+        |  masked text (llm/pseudonym.py); unknown placeholders in tool arguments are rejected
         |  every tool call
         v
  agent.executor.run_tool
    1. policy.engine.evaluate  -->  ALLOW | NEEDS_APPROVAL(roles) | DENY      (no AI)
    2. audit.log.append        -->  decision is logged before anything happens
+      (financing tools: omitted amount/needed_by/days_needed are filled from forecast.engine.financing_need first)
    3. ALLOW:          execute handler -> audit EXECUTED / FAILED
       NEEDS_APPROVAL: create ApprovalRequest (waits for humans)
       DENY:           return reason to the agent
@@ -73,22 +76,25 @@ All components share one SQLite file (`var/runway.db` by default, set by `RUNWAY
 | Module | Responsibility |
 |---|---|
 | `common/db.py` | SQLModel schema, engine cache, settings helpers (`get_today`, `kill_switch_on`), `account_balance_cents`. Money is always integer cents. |
-| `common/config.py` | Country packs (`config/eu.yaml`, `config/cn.yaml`): currency, VAT rate, VAT day, display FX factor. `load_country_pack()` reads `RUNWAY_COUNTRY` (default `eu`). |
+| `common/config.py` | Country packs (`config/eu.yaml`, `config/cn.yaml`): currency, VAT rate, VAT day, display FX factor. `load_country_pack()` reads `RUNWAY_COUNTRY` (default `eu`). `CountryPack.display(ledger_cents)` converts and formats an amount for people; it is the only conversion in the code. The ledger and the bank stay in the account currency (EUR). |
 | `data/generate.py` | Seeded generator for Lumen Packaging: 12 months of history, open items, settings, CSV exports, attack documents. |
-| `forecast/engine.py` | `build_forecast`, `explain_figure`. Pure Python. Every line carries `source_refs`. |
-| `agent/financing.py` + `data/financing.yaml` | `compare_financing`, `product_cost`. True cost in integer cents. |
-| `policy/engine.py` + `policy/rules.yaml` | `evaluate(session, tool, args, actor, approvals)` returns a `Decision`. Tiers, limits, argument validation, kill switch. |
+| `data/importer.py` | `import_files(...)`: validates a company's CSV exports (trial balance, bank statement, optional open receivables and payables, optional paid invoices and scheduled payments) and rebuilds the database. All-or-nothing: nothing is written if any file fails validation. Imported payees are unverified. |
+| `forecast/engine.py` | `build_forecast`, `explain_figure`, `financing_need`. Pure Python. Every line carries `source_refs`. `financing_need` computes the amount, the needed-by date and the duration of a financing request from the forecast. |
+| `agent/financing.py` + `data/financing.yaml` | `compare_financing`, `product_cost`. True cost in integer cents; every option carries its cash arrival date; excluded options carry a reason and their arrival date. |
+| `policy/engine.py` + `policy/rules.yaml` | `evaluate(session, tool, args, actor, approvals)` returns a `Decision`. Tiers, limits (including `max_payment_cents`), argument validation, kill switch, invoice overpayment, reschedule and financing-application rules. `rules.yaml` is read once per process (`load_rules` is cached; `reload_rules()` re-reads it). |
 | `audit/log.py` | `append`, `verify_chain`, `list_entries`. SHA-256 hash chain, head/count anchors in `setting`, SQLite triggers that reject UPDATE and DELETE. |
-| `agent/executor.py` | `run_tool`, `approve`, `reject`, `pending_approvals`. The only path from the agent to side effects. |
-| `agent/tools.py` | `TOOL_SPECS` (OpenAI function schemas, 15 tools, T0 to T3 only) and `HANDLERS`. Bank writes only via `BankClient` with the executor token. |
+| `agent/executor.py` | `run_tool`, `approve(session, id, role, approver_id)`, `reject`, `pending_approvals`, `clear_document_flag`. The only path from the agent to side effects. |
+| `agent/tools.py` | `TOOL_SPECS` (OpenAI function schemas, 16 tools, T0 to T3 only) and `HANDLERS`. Bank writes only via `BankClient` with the executor token. |
 | `agent/outbox.py`, `agent/pdf.py` | Test inbox (`OutboxEmail` row plus `var/outbox/MAIL-xxxx.eml`) and the financing application PDF (`var/applications/FIN-xxxx.pdf`). |
-| `agent/documents.py` | `ingest_document`, `scan_document`, `wrap_untrusted`. Deterministic injection and business-email-compromise (BEC) scan. |
+| `agent/documents.py` | `ingest_text`, `ingest_file(path, kind, sender, allowed_root)`, `ingest_document` (bytes or text only), `scan_document`, `sanitize_meta`, `wrap_untrusted`. Deterministic injection and business-email-compromise (BEC) scan over sender, filename and body. |
 | `agent/orchestrator.py`, `agent/prompts.py` | `Agent.chat`, `Agent.monday_brief`, the tool loop, system prompt, deterministic jailbreak filter `is_bypass_attempt`. |
 | `llm/adapter.py` | `LLMAdapter` (OpenAI SDK, any compatible provider) and `get_adapter()` (falls back to the offline planner). |
 | `llm/offline.py` | `OfflinePlanner`: deterministic keyword-routed stand-in for the LLM, same `chat(messages, tools)` interface. |
-| `llm/pseudonym.py` | `Pseudonymizer`: reversible masking of names, e-mails and IBANs. |
-| `bank/app.py`, `bank/service.py`, `bank/client.py` | Mock bank: bearer-token auth, payee and payment endpoints, idempotency, simulated clock. |
+| `llm/pseudonym.py` | `Pseudonymizer`: reversible masking of counterparty and payee names, person names learned from text (`learn`), e-mails and IBANs; case-sensitive masking of structured ids; `has_unknown_placeholder`. |
+| `bank/app.py`, `bank/service.py`, `bank/client.py` | Mock bank: bearer-token auth with enforced scopes, payee and payment endpoints, idempotency, own amount, overpayment and due-date checks, simulated clock. |
 | `ui/app.py`, `ui/helpers.py` | Streamlit UI (see section 8). |
+| `ui/auth.py` | Demo PIN sign-in: role per browser session, a stable per-session approver id. |
+| `ui/render.py` | `safe_text` (neutralises links, images and markdown in model or document text), `describe_approval` (plain-language approval cards). |
 
 ## 3. Data model (`common/db.py`)
 
@@ -98,12 +104,12 @@ All amounts are integer cents (EUR in storage; the CN pack only converts for dis
 |---|---|---|
 | `account` | `id` (ACC-MAIN), `currency`, `opening_balance_cents` | Bank account. Balance = opening + sum of transactions up to a date. |
 | `counterparty` | `id` (CUST-BRIGHTFIELD, SUP-CARTONIA, ...), `kind`, `payment_terms_days`, `email` | Customers, suppliers, landlord, tax office, lender, payroll. |
-| `payee` | `id` (PAYEE-CARTONIA, ...), `iban`, `verified`, `created_by` | Who the company may pay. Only humans create or edit rows. |
+| `payee` | `id` (PAYEE-CARTONIA, ...), `iban`, `verified`, `created_by` | Who the company may pay. Only humans create or verify rows (an import creates unverified payees with an empty IBAN, `created_by = import`). |
 | `invoice` | `id` (AR-1101, AP-2050), `direction` (AR/AP), `due_date`, `amount_cents`, `status`, `critical`, `document_id` | Receivables (owed to us) and payables (we owe). `critical` marks tax items that must not be rescheduled. |
 | `transaction` | `id` (TX-000123), `booking_date`, `amount_cents` (signed), `category`, `invoice_id` | Booked bank history. Source rows for forecast traceability. |
-| `payment` | `id` (PAY-0001), `idempotency_key` (unique), `payee_id`, `execute_date`, `status` (scheduled/executed/cancelled), `automatic`, `created_sim_date` | Payments in the mock bank. `automatic` and `created_sim_date` feed the daily caps. |
+| `payment` | `id` (PAY-0001), `idempotency_key` (unique), `payee_id`, `execute_date`, `status` (scheduled/executed/cancelled), `automatic`, `created_sim_date`, `transaction_id` | Payments in the mock bank. `automatic` and `created_sim_date` feed the daily caps. `transaction_id` is set when `advance` books the payment; the forecast uses it to exclude such transactions from recurring estimates. |
 | `document` | `id` (DOC-0001), `content_text`, `flagged`, `flag_reason`, `cleared` | Incoming invoices and e-mails. Text is untrusted. |
-| `approvalrequest` | `id` (APR-0001), `tool_name`, `args_json`, `required_roles_json`, `approvals_json`, `status` | A tool call parked for humans. |
+| `approvalrequest` | `id` (APR-0001), `tool_name`, `args_json`, `required_roles_json`, `approvals_json`, `status` | A tool call parked for humans. `approvals_json` holds `{role, approver_id}` entries (older rows with plain role strings are read and upgraded). |
 | `outboxemail` | `id` (MAIL-0001), `to`, `kind` (reminder/fraud_alert/notification), `invoice_id`, `sent_at` | Test inbox. |
 | `financingapplication` | `id` (FIN-0001), `product_id`, `pdf_path`, `status` | Prepared, never submitted. |
 | `auditentry` | `id`, `timestamp`, `actor`, `action`, `args_json`, `args_hash`, `decision`, `reason`, `prev_hash`, `hash` | Hash-chained log. |
@@ -111,33 +117,35 @@ All amounts are integer cents (EUR in storage; the CN pack only converts for dis
 
 Canonical IDs used by the demo and tests: account `ACC-MAIN`; customers `CUST-BRIGHTFIELD` (net 75) and `CUST-SMALL-1..6` (net 30); suppliers `SUP-CARTONIA`, `SUP-INKWORKS`, `SUP-VOLTA-ENERGY`, `SUP-SWIFTLOG`; verified payees `PAYEE-CARTONIA`, `-INKWORKS`, `-VOLTA`, `-SWIFTLOG`, `-LANDLORD`, `-TAX`, `-LENDER`, `-PAYROLL`; one unverified `PAYEE-NEWVENDOR`.
 
-Simulated time: `Setting("today")`, default 2026-10-19 (a Monday). Forecast week 1 is 2026-10-19 to 10-25, week 6 is 11-23 to 11-29, week 11 is 12-28 to 2027-01-03. `POST /simulate/advance` moves the clock and books due scheduled payments.
+Simulated time: `Setting("today")`, default 2026-10-19 (a Monday). Forecast week 1 is 2026-10-19 to 10-25, week 6 is 11-23 to 11-29, week 10 is 12-21 to 12-27, week 11 is 12-28 to 2027-01-03. `POST /simulate/advance` moves the clock and books due scheduled payments.
 
 ## 4. Request flow of one tool call
 
 Example: the agent calls `schedule_payment` for 950 to a verified payee.
 
-1. **Agent** (`Agent._loop` in `agent/orchestrator.py`). The user message and history are masked by `Pseudonymizer.mask`, so the model sees `<SUPPLIER_2>` and `<IBAN_3>`, not real names. The model replies with a tool call. Its arguments are unmasked with `unmask_obj` and passed to `executor.run_tool(session, name, args, actor="agent")`. The agent object never touches the bank client.
-2. **Replay short-circuit** (`executor.run_tool`, `schedule_payment` only). Before the policy runs, the executor computes the idempotency key (`args["idempotency_key"]` or the derived one) and looks for an existing `Payment` with that key. If one exists and the request body matches the stored original (`setting` row `bank.request.<PAY-id>`), the original payment is returned with `idempotent_replay: true`, the audit log gets an `IDEMPOTENT_REPLAY` entry, and nothing else happens. A body mismatch is audited as DENY. This path has no side effects, but it does not consult the kill switch or the other policy rules.
-3. **Policy** (`executor.run_tool` calls `policy.engine.evaluate`). The engine loads `policy/rules.yaml` on every call and runs, in order:
+1. **Agent** (`Agent._loop` in `agent/orchestrator.py`). The pseudonymizer first learns person names from the history, the user message and every tool result (`learn`), then masks them. The model sees `<SUPPLIER_2>`, `<PERSON_1>`, `<EMAIL_1>` and `<IBAN_3>`, not real values. The model replies with a tool call. Its arguments are unmasked with `unmask_obj`; if any argument still contains a placeholder that was never issued (`has_unknown_placeholder`), the call is not executed and the model gets an error. Otherwise the call is passed to `executor.run_tool(session, name, args, actor="agent")`. The agent object never touches the bank client.
+2. **Defaults for financing tools** (`executor.run_tool`, `compare_financing` and `prepare_financing_application` only). Any of `amount_cents`, `needed_by`, `days_needed` that is omitted is filled from `forecast.engine.financing_need` before the policy runs, so the model never has to compute them. If that fails the call is audited as DENY.
+3. **Kill switch and replay short-circuit** (`schedule_payment`). The executor re-reads the kill switch. If it is on, the call is evaluated by the policy first, so a non-T0 call is denied even if it is an exact replay of an earlier request. Otherwise the executor validates the arguments and the `max_payment_cents` bound, computes the idempotency key (`args["idempotency_key"]` or the derived one) and looks for an existing `Payment` with that key. If one exists and the request body matches the stored original (`setting` row `bank.request.<PAY-id>`), the original payment is returned with `idempotent_replay: true`, the audit log gets an `IDEMPOTENT_REPLAY` entry, and nothing else happens. A body mismatch is audited as DENY.
+4. **Policy** (`executor.run_tool` calls `policy.engine.evaluate`). The engine runs, in order:
    1. tier lookup (unknown tool or T4 gives DENY);
    2. argument screen (`_forbidden`: any key containing `iban`, or named `bank_details` or `account_number`, at any depth, gives DENY);
-   3. schema validation (`_validate`: unexpected or missing keys, wrong types, non-positive integers, bad dates, enums);
-   4. actor check (`agent`, `owner`, `accountant`, `system`);
-   5. kill switch (any tool above T0 gives DENY when `Setting.kill_switch != "off"`);
-   6. tool-specific rules (for `schedule_payment`: payee verified, currency matches the account, date not in the past, invoice matches an open AP invoice of that payee and the amount does not exceed it, linked document not flagged-and-uncleared, then the automatic limits);
-   7. if approver roles are required, the outcome is NEEDS_APPROVAL unless all required roles are already in `approvals`.
+   3. schema validation (`_validate`: unexpected or missing keys, wrong types, non-positive integers, bad dates, enums, scenario lists);
+   4. for `schedule_payment`: `amount_cents` above `payment.max_payment_cents` (1,000,000.00) gives DENY;
+   5. actor check (`agent`, `owner`, `accountant`, `system`);
+   6. kill switch (any tool above T0 gives DENY when `Setting.kill_switch != "off"`);
+   7. tool-specific rules (see `docs/algorithms.md` section 4): for `schedule_payment` the payee must be verified, the currency must match the account, the date must not be in the past, a linked invoice must be an open AP invoice of that payee, the amount and the sum of all non-cancelled payments for that invoice must not exceed the invoice amount, a linked document must not be flagged-and-uncleared, then the automatic limits; for `reschedule_payment` the new date must lie between today (or the current payment date, whichever is later) and the invoice due date; for `prepare_financing_application` the product must exist, be able to deliver by `needed_by`, and the amount must pass eligibility (advance cap, overdraft limit);
+   8. if approver roles are required, the outcome is NEEDS_APPROVAL unless all required roles are already in `approvals`.
    Any exception inside the engine returns DENY (fail closed).
-4. **Audit** (`audit.log.append`). The decision (`ALLOW`, `NEEDS_APPROVAL` or `DENY`) with the full arguments and reason is appended before anything else happens.
-5. **Branch**:
+5. **Audit** (`audit.log.append`). The decision (`ALLOW`, `NEEDS_APPROVAL` or `DENY`) with the full arguments and reason is appended before anything else happens.
+6. **Branch**:
    - `DENY`: the agent receives `ToolResult(status="denied", reason=...)`. Nothing else happens.
    - `NEEDS_APPROVAL`: an `ApprovalRequest` row is created (an identical pending request is reused). The agent receives `status="needs_approval"` with the approval id and required roles.
    - `ALLOW`: `_execute` runs the handler from `HANDLERS`.
-6. **Executor to bank**. For payments the handler `schedule_payment` in `agent/tools.py` builds a `BankClient` with `RUNWAY_BANK_EXECUTOR_TOKEN` and calls `create_payment`. With no `RUNWAY_BANK_URL` the client runs the bank app in-process (FastAPI `TestClient`); with it set, it uses HTTP. The idempotency key is derived deterministically (`idempotency_key()`: SHA-256 of payee, amount, date, invoice, document) unless the caller supplies one. `automatic=True` is set when the policy tier was T2.
-7. **Bank** (`bank/service.create_payment`). Takes the SQLite writer lock (`BEGIN IMMEDIATE`), applies the idempotency rule, then its own checks: payee exists and is verified (422), amount a positive integer, currency matches the account, `execute_date` not before the bank's today, invoice (if given) is an open AP invoice for that payee, document (if given) exists. It stamps `created_sim_date` and stores the canonical request body in `setting` as `bank.request.<PAY-id>`.
-8. **Audit again**. `EXECUTED` on success, `FAILED` with the error text otherwise. The agent receives the `ToolResult`, which is masked before going back to the model.
+7. **Executor to bank**. For payments the handler `schedule_payment` in `agent/tools.py` builds a `BankClient` with `RUNWAY_BANK_EXECUTOR_TOKEN` and calls `create_payment` in the account currency. With no `RUNWAY_BANK_URL` the client runs the bank app in-process (FastAPI `TestClient`); with it set, it uses HTTP. The idempotency key is derived deterministically (`idempotency_key()`: SHA-256 of payee, amount, date, invoice, document) unless the caller supplies one. `automatic=True` is set when the policy tier was T2.
+8. **Bank** (`bank/app.py`, `bank/service.create_payment`). The token must carry the `payments` scope (the executor token does). The request model bounds `amount_cents` (strict integer, 0 < amount <= `max_payment_cents`). The service takes the SQLite writer lock (`BEGIN IMMEDIATE`), applies the idempotency rule, then its own checks: payee exists and is verified (422), amount a positive integer within the maximum, currency matches the account, `execute_date` not before the bank's today, invoice (if given) is an open AP invoice for that payee and currency, the sum of non-cancelled payments for that invoice plus this one does not exceed the invoice amount (422), document (if given) exists. It stamps `created_sim_date` and stores the canonical request body in `setting` as `bank.request.<PAY-id>`.
+9. **Audit again**. `EXECUTED` on success, `FAILED` with the error text otherwise. The agent receives the `ToolResult`, which is learned and masked before going back to the model.
 
-Spec vs code: the spec and contract describe the same flow. One detail not in the spec: step 2 also screens argument keys at any depth for IBAN-like names, and validates every argument against a hard-coded schema table (`_SCHEMAS`) that is separate from `TOOL_SPECS`.
+Spec vs code: the spec and contract describe the same flow. Details not in the spec: argument keys are screened at any depth for IBAN-like names; every argument is validated against a hard-coded schema table (`_SCHEMAS`) that is separate from `TOOL_SPECS`; the bank repeats the invoice and amount checks independently of the policy.
 
 ## 5. Approval flow
 
@@ -146,17 +154,20 @@ Triggers: `reschedule_payment` (owner), `prepare_financing_application` (owner; 
 ```
 agent: run_tool(...)  ->  NEEDS_APPROVAL  ->  ApprovalRequest(status=pending, required_roles=[...])
                                                     |
-UI approval queue: owner clicks Approve  ->  executor.approve(session, id, "owner")
+UI approval queue: owner clicks Approve  ->  executor.approve(session, id, "owner", approver_id=<browser session id>)
    - role not in required_roles           -> audit DENY, nothing recorded
-   - role recorded in approvals_json      -> audit APPROVED
+   - approver_id already used for another role on this request -> audit DENY "Same approver cannot fill two roles"
+   - role + approver_id recorded in approvals_json -> audit APPROVED
    - policy.evaluate(..., approvals=given) is run AGAIN with current database state
         DENY            -> request status "rejected", audit DENY "re-check at approval"
         NEEDS_APPROVAL  -> still waiting for the other role
         ALLOW           -> _execute(actor=<role>, automatic=False) -> status "executed" or "failed"
-UI: Reject -> executor.reject -> status "rejected", audit REJECTED
+UI: Reject -> executor.reject -> only role owner or accountant; status "rejected", audit REJECTED
 ```
 
 The re-check at approval time means a payment cannot be executed after circumstances changed (kill switch switched on, document flagged in the meantime, payee changed). The policy fixes the argument payload at request time: approvers approve exactly the stored `args_json`.
+
+Approver identity: the UI passes the Streamlit session id as `approver_id` (`ui/auth.py:approver_id`), which does not change when a user switches role in the same session. The same `approver_id` therefore cannot fill two roles of one request. A call without an `approver_id` uses the role name as the identity. `reject` accepts only `owner` or `accountant`; the agent cannot reject (`tests/test_executor.py::test_agent_cannot_reject`). This protects against one browser session doing both approvals; it does not protect against one person who holds both PINs and opens two sessions (see KNOWN RISKS).
 
 An approved action is executed with `automatic=False`, so it does not count toward the daily automatic caps.
 
@@ -164,16 +175,19 @@ An approved action is executed with `automatic=False`, so it does not count towa
 
 ### Rule 1. The AI never does arithmetic
 
-- All numbers are produced by Python: `forecast/engine.py:build_forecast`, `forecast/engine.py:explain_figure`, `agent/financing.py:product_cost` and `compare_financing`, `policy/engine.py:evaluate` (limits).
+- All numbers are produced by Python: `forecast/engine.py:build_forecast`, `explain_figure` and `financing_need`, `agent/financing.py:product_cost` and `compare_financing`, `policy/engine.py:evaluate` (limits).
+- The financing amount, the date it is needed by and the number of days are computed by `forecast.engine.financing_need` and handed to the model as the T1 tool `get_financing_need`. Omitted arguments of `compare_financing` and `prepare_financing_application` default to the same function (`executor.run_tool`, `tools._need_defaults`).
+- Tool results carry display strings (`*_display`, from `CountryPack.display`) next to the cents, so the model quotes formatted amounts instead of converting.
 - `agent/prompts.py:SYSTEM_PROMPT` rule 2 tells the model to quote only tool results.
-- `llm/offline.py:OfflinePlanner` builds its sentences only from tool results in the message history (`_reply`, `_financing_args`).
+- `llm/offline.py:OfflinePlanner` builds its sentences only from tool results in the message history (`_reply`, `_need`).
 - Enforcement strength: structural for decisions (the model cannot change a limit or a cost), instructional for wording. There is no check that a number in the model's free text matches a tool result. See KNOWN RISKS in `docs/security-self-assessment.md`.
 
 ### Rule 2. The AI never holds bank credentials and never calls the bank directly
 
 - Tokens are read from the environment only inside `agent/tools.py:bank_client`, called from the handlers `schedule_payment` and `reschedule_payment`, after the policy has allowed the call.
 - `Agent` receives only `ToolResult` objects (`agent/orchestrator.py:_loop`). No token, bank URL or IBAN is part of a result. Handlers return payment rows, which contain `payee_id` but not the IBAN.
-- `llm/pseudonym.py:Pseudonymizer.mask` replaces names and any IBAN-shaped string before text reaches the model.
+- `llm/pseudonym.py:Pseudonymizer.mask` replaces names, e-mail addresses and any IBAN-shaped string before text reaches the model.
+- The bank enforces token scopes: the executor token carries `read` and `payments`; only the human token also carries `payees` and `simulate` (`bank/app.py:authorize`). Test: `tests/test_bank.py::test_auth_scopes`, `::test_executor_cannot_advance`.
 - Test: `tests/test_executor.py::test_tool_specs_expose_no_forbidden_capability`.
 
 ### Rule 3. The rules engine is plain code outside the AI
@@ -182,20 +196,22 @@ An approved action is executed with `automatic=False`, so it does not count towa
 - It is called on every tool call by `agent/executor.py:run_tool` and again by `agent/executor.py:approve`. `run_tool` is the only entry point used by `Agent._run`.
 - It fails closed: an exception, missing config or malformed arguments return DENY (`evaluate`, final `except`; `tests/test_policy.py::test_malformed_policy_fails_closed`).
 - It refreshes `today` and `kill_switch` from the database with `populate_existing`, so cached ORM state cannot hide a change (`tests/test_policy.py::test_kill_switch_refreshes_external_change`).
+- The rules file itself is loaded once per process and cached (`tests/test_policy.py::test_rules_cached_and_explicitly_reloadable`).
 
 ### Rule 4. No tool for adding or changing payee bank details
 
 - `agent/tools.py:TOOL_SPECS` has no payee, IBAN, limit, export or kill-switch tool.
 - `policy/rules.yaml` lists `add_payee, update_payee, change_limits, export_data, set_kill_switch` as tier T4; `evaluate` returns DENY for T4 and for any name not in `_SCHEMAS`.
 - `policy/engine.py:_forbidden` rejects any argument key that contains `iban` or equals `bank_details` or `account_number`, at any nesting depth.
-- Defense in depth at the bank: `bank/app.py:authorize("payees")` returns 403 unless the caller used the human token; `bank/service.create_payment` returns 422 for an unverified payee. The executor token cannot create payees (`tests/test_bank.py::test_auth_scopes`).
-- The UI page "Payees (humans only)" is the only place that creates or verifies payees, using the human token (`POST /payees`, `PATCH /payees/{id}` which can change only the `verified` flag). Clearing a document flag is `agent/executor.py:clear_document_flag`, callable only with role `owner` or `accountant` and audited; it is not an agent tool.
+- Defense in depth at the bank: `bank/app.py:authorize("payees")` returns 403 unless the caller used the human token; `bank/service.create_payment` returns 422 for an unverified payee. The executor token cannot create or verify payees (`tests/test_bank.py::test_auth_scopes`).
+- The UI page "Payees (humans only)" is the only place that creates or verifies payees, using the human token (`POST /payees`, `PATCH /payees/{id}` which can change only the `verified` flag; a body with any other field is rejected). Existing IBANs cannot be edited; to use a different IBAN a human creates a new payee. The page lets only a signed-in owner verify or add payees. Clearing a document flag is `agent/executor.py:clear_document_flag`, callable only with role `owner` or `accountant` and audited; it is not an agent tool.
 
 ### Rule 5. Every figure traces back to ledger rows
 
-- `forecast/engine.py:ForecastLine.source_refs` lists the `Transaction`, `Invoice` or `Payment` ids behind each line. Recurring estimates cite the transactions they were averaged from.
-- `forecast/engine.py:explain_figure` returns the lines plus the actual source rows for any week and field; exposed to the agent as the T1 tool `explain_figure` and in the UI forecast page.
-- Test: `tests/test_forecast.py::test_traceability`, `::test_explain_figure`.
+- `forecast/engine.py:ForecastLine.source_refs` lists the `Transaction`, `Invoice` or `Payment` ids behind each line. A recurring estimate cites the transactions that make up the three monthly totals whose median it is (payments originated by the bank, that is rows referenced by `Payment.transaction_id`, are not used).
+- `forecast/engine.py:explain_figure` returns the lines plus the actual source rows for any week and field; exposed to the agent as the T1 tool `explain_figure` and in the UI forecast page. For `opening_cents` of week 1 it returns the account opening balance and a summary of every booked transaction up to the start date (count, sum, ids, first and last booking date), so the 40,000.00 can be rebuilt from ledger rows. For later weeks it states that the opening equals the previous closing.
+- `financing_need` returns `recovery_refs` (the ids of the receipt that ends the shortfall) and an `explanation` string built from the forecast.
+- Test: `tests/test_forecast.py::test_traceability`, `::test_explain_figure`, `::test_explain_opening_balance_has_sources`.
 - Limit: tracing applies to forecast and cost figures. Free text written by a real LLM is not machine-checked.
 
 ## 7. Cross-cutting design
@@ -203,8 +219,14 @@ An approved action is executed with `automatic=False`, so it does not count towa
 - **Simulated clock**: all date logic uses `common.db.get_today(session)`. Policy, forecast, bank, outbox (`_sim_now`) and reminders agree on one "today".
 - **Fail closed**: policy errors become DENY; audit `append` refuses to write if the existing chain does not verify.
 - **Concurrency**: the bank and the audit log take the SQLite writer lock before reading ids or the chain head (`BEGIN IMMEDIATE`, or an `INSERT OR IGNORE` on `setting` in `audit.log.append`). `tests/test_audit.py::test_concurrent_append` and `tests/test_bank.py::test_concurrent_duplicate_requests` cover it.
-- **Country pack**: currency symbol, VAT rate, VAT day come from `config/<code>.yaml`. See `docs/deployment.md` for the two places the pack is selected.
+- **Currency and country pack**: the ledger, the policy and every bank operation use the account currency (`Account.currency`, EUR in the demo). The country pack is display-only for amounts: `CountryPack.display(cents)` converts with `fx_from_eur` and formats. Tool results, e-mails, the application PDF and the offline planner's text use `display`. VAT rate and VAT day for the forecast come from the pack named in the `country` setting. See `docs/deployment.md` for the places the pack is selected.
+- **Safe ingestion**: documents enter only through `ingest_text` (a string is data, never a path), `ingest_file` (the resolved path, symlinks included, must lie inside `allowed_root`) or `ingest_document` (bytes or text). Sender, filename and kind are sanitised (`sanitize_meta`) before they are stored or shown to the model, and the scan covers sender and filename as well as the body.
+- **Safe rendering**: the UI passes model replies, reasons and document text through `ui/render.py:safe_text`, so links are shown as inline code (not clickable), images are removed and markdown is escaped. Badges escape their text.
 
 ## 8. UI
 
-`ui/app.py` is the human side. It never grants the agent extra powers: agent chat goes through `Agent`, human actions go through `agent.executor.approve/reject`, `audit.log.append` (with the acting role) and the bank client with the human token. The section list is defined in `SECTIONS`: Onboarding, Monday brief and chat, Forecast, Approval queue, Documents, Payees (humans only), Mock bank, Test inbox, Audit log. Details of the pages are in `docs/demo-script.md`.
+`ui/app.py` is the human side. It never grants the agent extra powers: agent chat goes through `Agent`, human actions go through `agent.executor.approve/reject`, `audit.log.append` (with the acting role and the browser session id) and the bank client with the human token. The section list is defined in `SECTIONS`: Onboarding, Monday brief and chat, Forecast, Approval queue, Documents, Payees (humans only), Mock bank, Test inbox, Audit log. Details of the pages are in `docs/demo-script.md`.
+
+Sign-in: the header has a role selector and a PIN field. PINs come from `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` (defaults 1111 and 2222); five wrong PINs lock the session until the page is reloaded. Switching role needs the other role's PIN. Until a role is signed in, the chat actor is `guest`, the Approve and Reject buttons are disabled, and these actions refuse to run: kill-switch toggle, data reset, CSV import, payee creation, flag clearing, clock advance. Only the owner role can add or verify payees.
+
+Onboarding: the page shows summaries of an uploaded trial balance and bank statement (debits against credits, money in and out). "Import uploaded files" calls `data.importer.import_files` with the two required files plus the optional open receivables and open payables files; it replaces the database content (including the audit log), resets the chat and the Monday brief, and writes an `import_files` audit entry. The UI does not offer the optional paid-invoices and scheduled-payments files; the importer accepts them (`docs/algorithms.md` section 9).

@@ -116,7 +116,7 @@ def test_payee_invoice_currency_and_documents(session):
     assert evaluate(session, 'schedule_payment', args(invoice_id='AP')).outcome == 'DENY'
     doc.cleared = True
     session.commit()
-    assert evaluate(session, 'schedule_payment', args(invoice_id='AP')).outcome == 'ALLOW'
+    assert evaluate(session, 'schedule_payment', args(1000000, invoice_id='AP')).outcome == 'NEEDS_APPROVAL'
     for field, value in [('status','paid'), ('direction','AR'), ('amount_cents',1), ('counterparty_id','OTHER')]:
         old = getattr(inv, field)
         if field == 'counterparty_id':
@@ -321,3 +321,30 @@ def test_rules_cached_and_explicitly_reloadable(session, monkeypatch):
 def test_maximum_payment_boundary(session):
     assert evaluate(session, "schedule_payment", args(100000000),
                     approvals=["owner", "accountant"]).outcome == "ALLOW"
+
+
+def test_invoice_payment_requires_exact_remaining_balance(session):
+    payment(session, "PART", 100, invoice_id="AP", status="executed")
+    payment(session, "SCHED", 200, invoice_id="AP")
+    payment(session, "FAILED", 300, invoice_id="AP", status="failed")
+    assert evaluate(session, "schedule_payment", args(100, invoice_id="AP")).outcome == "DENY"
+    assert evaluate(session, "schedule_payment", args(999700, invoice_id="AP")).outcome == "NEEDS_APPROVAL"
+
+
+@pytest.mark.parametrize("tool", ["compare_financing", "prepare_financing_application"])
+@pytest.mark.parametrize("extra", [{"days_needed": 10**9}, {"days_needed": 0},
+                                   {"needed_by": "2099-11-23"}, {"needed_by": "2026-10-18"}])
+def test_financing_time_bounds(session, tool, extra):
+    values = dict(amount_cents=600000, needed_by="2026-11-23", days_needed=30)
+    if tool == "prepare_financing_application":
+        values["product_id"] = "overdraft"
+    values.update(extra)
+    assert evaluate(session, tool, values, approvals=("owner", "accountant")).outcome == "DENY"
+
+
+@pytest.mark.parametrize("days", [1, 365])
+@pytest.mark.parametrize("offset", [0, 120])
+def test_financing_time_boundaries_allowed(session, days, offset):
+    values = dict(amount_cents=600000, needed_by=(get_today(session) + timedelta(days=offset)).isoformat(),
+                  days_needed=days)
+    assert evaluate(session, "compare_financing", values).outcome == "ALLOW"

@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from agent import outbox
-from agent.financing import compare_financing
+from agent.financing import compare_financing, ledger_money
 from common.config import load_country_pack
 from common.db import (Account, Document, Invoice, OutboxEmail, Transaction, account_balance_cents,
                        get_today)
@@ -285,7 +285,6 @@ def draft_email(session: Session, args: dict, ctx: dict) -> dict:
     inv = session.get(Invoice, args["invoice_id"]) if args.get("invoice_id") else None
     if args.get("invoice_id") and inv is None:
         raise ToolError(f"invoice {args['invoice_id']!r} not found")
-    money = load_country_pack().display
     note = f"\n\n{args['note']}" if args.get("note") else ""
     if inv is not None:
         from common.db import Counterparty
@@ -295,14 +294,14 @@ def draft_email(session: Session, args: dict, ctx: dict) -> dict:
         days = max(0, (get_today(session) - inv.due_date).days)
         previous = len(session.exec(select(OutboxEmail).where(
             OutboxEmail.invoice_id == inv.id, OutboxEmail.kind == "reminder")).all())
-        tone, subject, body = outbox.compose_reminder(name, inv.number, money(inv.amount_cents),
+        tone, subject, body = outbox.compose_reminder(name, inv.number, ledger_money(inv.amount_cents, inv.currency),
                                                       inv.due_date.isoformat(), days,
                                                       previous_reminders=previous)
         return {"subject": subject, "body": body + note, "tone": tone, "sent": False}
     if purpose == "payment_extension_request" and inv is not None:
         subject = f"Request to adjust payment date for invoice {inv.number}"
         body = (f"Dear {name},\n\nWe would like to ask whether payment of invoice {inv.number} "
-                f"({money(inv.amount_cents)}, due {inv.due_date.isoformat()}) can be made on the due date "
+                f"({ledger_money(inv.amount_cents, inv.currency)}, due {inv.due_date.isoformat()}) can be made on the due date "
                 f"or slightly later. Thank you for your understanding.{note}\n\nRegards,\n{outbox.COMPANY}")
         return {"subject": subject, "body": body, "tone": "friendly", "sent": False}
     return {"subject": args.get("note", "Message")[:60] or "Message",

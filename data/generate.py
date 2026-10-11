@@ -89,9 +89,9 @@ PAYEES = [  # id, name, counterparty, iban, verified
     ("PAYEE-VOLTA", "Volta Energy", "SUP-VOLTA-ENERGY", "DE75 5121 0800 1245 1261 99", True),
     ("PAYEE-SWIFTLOG", "SwiftLog Logistics", "SUP-SWIFTLOG", "DE91 1000 0000 0123 4567 89", True),
     ("PAYEE-LANDLORD", "Hafenstrasse Properties", "LANDLORD", "DE12 5001 0517 0648 4898 90", True),
-    ("PAYEE-TAX", "Tax Office", "TAX-OFFICE", "DE21 3002 0900 0000 1234 56", True),
+    ("PAYEE-TAX", "Tax Office", "TAX-OFFICE", "DE81 3002 0900 0000 1234 56", True),
     ("PAYEE-LENDER", "Rheinbank (term loan)", "LENDER", "DE68 2105 0170 0012 3456 78", True),
-    ("PAYEE-PAYROLL", "Lumen staff payroll", "PAYROLL", "DE33 1001 0010 0987 6543 21", True),
+    ("PAYEE-PAYROLL", "Lumen staff payroll", "PAYROLL", "DE29 1001 0010 0987 6543 21", True),
     ("PAYEE-NEWVENDOR", "NewVendor Trading Ltd", None, NEWVENDOR_IBAN, False),
 ]
 PAYEE_OF = {"SUP-CARTONIA": "PAYEE-CARTONIA", "SUP-INKWORKS": "PAYEE-INKWORKS"}

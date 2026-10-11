@@ -8,6 +8,7 @@ The agent never sees tokens, IBANs or bank URLs.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 
 from sqlmodel import Session, select
@@ -16,10 +17,15 @@ from agent.financing import compare_financing  # noqa: F401  (re-exported per CO
 from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
-from common.db import Account, ApprovalRequest, Document, Payment, Setting, get_setting, utcnow
+from common.db import Account, ApprovalRequest, Document, Payment, Setting, get_setting, get_today, utcnow
 from policy import engine as policy
 
 VALID_ROLES = ("owner", "accountant")
+
+
+def _sim_now(session: Session) -> datetime:
+    """Approval timestamps combine simulated today with the current UTC time and timezone."""
+    return datetime.combine(get_today(session), utcnow().timetz())
 
 
 def clear_document_flag(session: Session, document_id: str, role: str,
@@ -131,7 +137,7 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
                                                             json.loads(req.required_roles_json)})
         req = ApprovalRequest(id=next_id(session, ApprovalRequest, "APR"), tool_name=tool_name,
                               args_json=key, required_roles_json=json.dumps(list(decision.roles)),
-                              reason=decision.reason)
+                              reason=decision.reason, created_at=_sim_now(session))
         session.add(req)
         session.commit()
         return ToolResult(status="needs_approval", tool=tool_name, reason=decision.reason,
@@ -157,6 +163,8 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
     """
     req = _get_pending(session, approval_id)
     if isinstance(req, ToolResult):
+        audit.append(session, role, "approve", {"approval_id": approval_id, "approver_id": approver_id},
+                     "DENY", req.reason)
         return req
     required = json.loads(req.required_roles_json)
     args = json.loads(req.args_json)
@@ -170,6 +178,8 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
              for entry in stored]
     identity = approver_id if approver_id is not None else role
     if not isinstance(identity, str) or not identity.strip():
+        audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity},
+                     "DENY", "Invalid approver identity")
         return ToolResult(status="denied", tool=req.tool_name, reason="Invalid approver identity")
     if any(entry["approver_id"] == identity and entry["role"] != role for entry in given):
         audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity},
@@ -186,7 +196,7 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
                  "APPROVED", f"approvals so far: {given}")
     decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
     if decision.outcome == "DENY":
-        req.status, req.decided_at, req.result_json = "rejected", utcnow(), _canon({"denied": decision.reason})
+        req.status, req.decided_at, req.result_json = "rejected", _sim_now(session), _canon({"denied": decision.reason})
         session.add(req)
         session.commit()
         audit.append(session, role, req.tool_name, args, "DENY", f"re-check at approval: {decision.reason}")
@@ -198,7 +208,7 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
                           data={"required_roles": required, "approved_roles": approved_roles})
     result = _execute(session, req.tool_name, args, role, automatic=False)
     req.status = "executed" if result.status == "ok" else "failed"
-    req.decided_at = utcnow()
+    req.decided_at = _sim_now(session)
     req.result_json = _canon(result.model_dump(mode="json"))
     session.add(req)
     session.commit()
@@ -215,7 +225,7 @@ def reject(session: Session, approval_id: str, role: str, reason: str = "") -> T
     req = _get_pending(session, approval_id, "reject")
     if isinstance(req, ToolResult):
         return req
-    req.status, req.decided_at = "rejected", utcnow()
+    req.status, req.decided_at = "rejected", _sim_now(session)
     req.result_json = _canon({"rejected_by": role, "reason": reason})
     session.add(req)
     session.commit()

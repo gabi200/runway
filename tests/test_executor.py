@@ -393,3 +393,27 @@ def test_kill_switch_blocks_existing_replay_without_bank_call(session):
     db.set_setting(session, "kill_switch", "on")
     assert run_tool(session, "schedule_payment", args).status == "denied"
     assert _decisions(session)[-1] == "DENY"
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject", "policy_denial"])
+def test_approval_dates_follow_simulated_clock(session, monkeypatch, decision):
+    request = run_tool(session, "schedule_payment", _pay_args(200000))
+    req = session.get(db.ApprovalRequest, request.approval_id)
+    assert req.created_at.date() == db.get_today(session)
+    db.set_setting(session, "today", "2026-10-20")
+    monkeypatch.setitem(executor.HANDLERS, "schedule_payment", lambda *args: {"executed": True})
+    if decision == "reject":
+        reject(session, req.id, "owner")
+    else:
+        if decision == "policy_denial":
+            db.set_setting(session, "kill_switch", "on")
+        approve(session, req.id, "owner")
+    assert req.decided_at.date() == db.get_today(session)
+
+
+@pytest.mark.parametrize("identity", ["", "   ", 123])
+def test_invalid_approver_identity_is_audited(session, identity):
+    request = run_tool(session, "schedule_payment", _pay_args(200000))
+    assert approve(session, request.approval_id, "owner", identity).status == "denied"
+    assert _decisions(session)[-1] == "DENY"
+    assert verify_chain(session).ok

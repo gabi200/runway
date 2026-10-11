@@ -27,7 +27,7 @@ from data.generate import generate
 
 def run(out: Path, seed: int) -> dict:
     out.mkdir(parents=True, exist_ok=True)
-    lines = ["# Runway offline execution evidence", "", f"Seed: {seed}. Bank calls go through the real HTTP API via BankClient.", ""]
+    lines = ["# Runway offline execution evidence", "", f"Seed: {seed}. Bank calls go through the mock bank API (FastAPI routes and bearer-token scopes) via BankClient, using the in-process ASGI transport; set RUNWAY_BANK_URL to use a running server instead.", ""]
 
     def record(label, result):
         payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else result

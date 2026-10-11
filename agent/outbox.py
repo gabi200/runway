@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from common.config import load_country_pack
+from agent.financing import ledger_money
 from common.db import REPO_ROOT, Counterparty, Invoice, OutboxEmail, get_setting, get_today, utcnow
 
 DEFAULT_OWNER_EMAIL = "owner@lumen-packaging.example"
@@ -49,7 +49,7 @@ def tone_for(days_overdue: int, previous_reminders: int = 0) -> str:
 
 def compose_reminder(name: str, number: str, amount: str, due: str, days_overdue: int,
                      tone: str | None = None, previous_reminders: int = 0) -> tuple[str, str, str]:
-    """Return (tone, subject, body) of a payment reminder; `amount` is a display string."""
+    """Return (tone, subject, body) of a payment reminder; `amount` is a string in the invoice currency."""
     tone = tone or tone_for(days_overdue, previous_reminders)
     if tone == "final" and previous_reminders <= 0:
         tone = "firm"
@@ -102,7 +102,7 @@ def reminder_for_invoice(session: Session, invoice: Invoice, today) -> tuple[str
     """Return (to, tone, subject, body) for an overdue AR invoice."""
     cp = session.get(Counterparty, invoice.counterparty_id)
     days = (today - invoice.due_date).days
-    amount = load_country_pack().display(invoice.amount_cents)
+    amount = ledger_money(invoice.amount_cents, invoice.currency)
     previous = len(session.exec(select(OutboxEmail).where(
         OutboxEmail.invoice_id == invoice.id, OutboxEmail.kind == "reminder")).all())
     tone, subject, body = compose_reminder(cp.name if cp else "customer", invoice.number, amount,

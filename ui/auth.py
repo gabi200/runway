@@ -10,13 +10,20 @@ a real deployment needs SSO/MFA.
 from __future__ import annotations
 
 import hmac
+import json
 import os
+import time
 import uuid
 
 import streamlit as st
 
+from audit import log as audit
+from common import db
+from common.db import session_scope
+
 ROLES = ("owner", "accountant")
 MAX_FAILURES = 5
+LOCKOUT_SECONDS = 300
 
 
 def pin_for(role: str) -> str:
@@ -30,7 +37,6 @@ def check_pin(role: str, pin: str) -> bool:
 def init() -> None:
     st.session_state.setdefault("sid", f"session-{uuid.uuid4().hex[:8]}")
     st.session_state.setdefault("role", None)
-    st.session_state.setdefault("failures", 0)
 
 
 def signed_in() -> bool:
@@ -46,14 +52,48 @@ def identity() -> str:
     return f"{st.session_state.role}@{st.session_state.sid}"
 
 
+def _failures(role: str) -> tuple[int, float]:
+    """(failure count, last failure epoch) for a role, persisted server-side."""
+    with session_scope() as s:
+        raw = db.get_setting(s, f"pin_failures:{role}")
+    try:
+        d = json.loads(raw) if raw else {}
+        return int(d.get("n", 0)), float(d.get("ts", 0))
+    except (ValueError, TypeError, AttributeError):
+        return 0, 0.0
+
+
+def locked_seconds(role: str, now: float | None = None) -> int:
+    """Seconds of lockout left for this role (0 = not locked)."""
+    n, ts = _failures(role)
+    if n < MAX_FAILURES:
+        return 0
+    return max(0, int(LOCKOUT_SECONDS - ((now if now is not None else time.time()) - ts)))
+
+
+def _record(role: str, ok: bool) -> None:
+    with session_scope() as s:
+        if ok:
+            db.set_setting(s, f"pin_failures:{role}", json.dumps({"n": 0, "ts": 0}))
+            return
+        n, ts = _failures(role)
+        if n >= MAX_FAILURES and time.time() - ts >= LOCKOUT_SECONDS:
+            n = 0  # lockout expired: start counting again
+        db.set_setting(s, f"pin_failures:{role}", json.dumps({"n": n + 1, "ts": time.time()}))
+        audit.append(s, "anonymous", "sign_in_failed",
+                     {"role": role, "session": st.session_state.get("sid"), "failures": n + 1},
+                     "DENY", "Wrong PIN")
+
+
 def sign_in(role: str, pin: str) -> str | None:
     """Return an error message, or None when the PIN matched and the role is now active."""
-    if st.session_state.failures >= MAX_FAILURES:
-        return "Too many wrong PINs in this session. Reload the page to try again."
+    left = locked_seconds(role)
+    if left:
+        return f"Too many wrong PINs for {role}. Try again in {left // 60 + 1} minute(s)."
     if not check_pin(role, pin):
-        st.session_state.failures += 1
+        _record(role, False)
         return "Wrong PIN."
-    st.session_state.failures = 0
+    _record(role, True)
     st.session_state.role = role
     return None
 

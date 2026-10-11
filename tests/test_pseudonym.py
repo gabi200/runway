@@ -89,3 +89,18 @@ def test_counterparty_email_local_part_registers_person(session):
     p = Pseudonymizer(session)
     masked = p.mask("Ask Anna Berger or berger about it")
     assert "Anna" not in masked and "Berger" not in masked.replace("berger", "")
+
+
+def test_learn_does_not_treat_company_signoff_as_person(session):
+    p = Pseudonymizer(session)
+    p.add_company_name("Lumen Packaging")
+    p.learn("Please pay.\n\nKind regards,\nLumen Packaging")
+    out = p.mask("Our packaging line and Lumen Packaging, plus Cartonia Packaging GmbH.")
+    assert "<PERSON_" not in out and "packaging line" in out
+
+
+def test_learn_still_learns_real_two_token_person(session):
+    p = Pseudonymizer(session)
+    p.learn("Hi\n\nBest regards,\nHans Muller")
+    assert p.mask("call Hans Muller") .startswith("call <PERSON_")
+    assert "Cartonia Packaging" not in "".join(p._rev.get(k, "") for k in p._rev if k.startswith("<PERSON"))

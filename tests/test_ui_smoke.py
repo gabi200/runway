@@ -43,6 +43,7 @@ def test_all_pages_render(at):
 
 
 def test_brief_approvals_kill_switch_and_audit(at):
+    sign_in(at)
     goto(at, "Monday brief & chat")
     next(b for b in at.button if b.label == "Run Monday brief").click().run()
     assert not at.exception
@@ -53,12 +54,13 @@ def test_brief_approvals_kill_switch_and_audit(at):
     assert any("intact" in s.value for s in at.success)
     at.toggle(key="kill").set_value(True).run()
     with db.session_scope() as s:
-        assert not db.kill_switch_on(s)  # not signed in: refused
-    sign_in(at)
-    at.toggle(key="kill").set_value(True).run()
-    assert not at.exception
-    with db.session_scope() as s:
         assert db.kill_switch_on(s)
+
+
+def test_kill_switch_refused_when_signed_out(at):
+    at.toggle(key="kill").set_value(True).run()
+    with db.session_scope() as s:
+        assert not db.kill_switch_on(s)
 
 
 def test_forecast_and_currency_switch(at):
@@ -160,7 +162,6 @@ def test_role_switch_needs_pin(at):
 
 
 def test_one_session_cannot_fill_both_roles(at):
-    from sqlmodel import select
     from agent.executor import run_tool
     with db.session_scope() as s:
         res = run_tool(s, "prepare_financing_application",
@@ -187,3 +188,92 @@ def test_model_markdown_is_neutralised():
     out = safe_text("see [click](http://evil.example/x) ![p](http://evil.example/p.png) http://a.example <b>x</b>")
     assert "](" not in out.replace("\\](", "") and "![" not in out and "<b>" not in out
     assert "`http://a.example`" in out
+
+
+def _audit_count():
+    from sqlmodel import select
+    with db.session_scope() as s:
+        return len(s.exec(select(db.AuditEntry)).all())
+
+
+def test_confirm_reset_signed_in_with_kill_switch_on(at):
+    sign_in(at)
+    at.toggle(key="kill").set_value(True).run()
+    next(b for b in at.button if b.label == "Reset demo data").click().run()
+    next(b for b in at.button if b.label == "Confirm reset").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.toggle(key="kill").value is False
+    with db.session_scope() as s:
+        assert not db.kill_switch_on(s)
+
+
+def test_sample_data_needs_sign_in_and_works_signed_in(at):
+    goto(at, "Onboarding")
+    before = _audit_count()
+    next(b for b in at.button if b.label == "Use generated sample data").click().run()
+    assert not at.exception
+    assert any("Sign in" in i.value for i in at.info)
+    assert _audit_count() == before  # nothing was wiped
+    sign_in(at)
+    goto(at, "Onboarding")
+    at.toggle(key="kill").set_value(True).run()
+    next(b for b in at.button if b.label == "Use generated sample data").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.toggle(key="kill").value is False
+    assert any("Sample data loaded" in s.value for s in at.success)
+
+
+def test_brief_and_chat_need_sign_in(at):
+    goto(at, "Monday brief & chat")
+    next(b for b in at.button if b.label == "Run Monday brief").click().run()
+    assert any("Sign in" in i.value for i in at.info)
+    assert at.session_state["brief"] is None
+    at.chat_input[0].set_value("hello").run()
+    assert at.session_state["chat"] == []
+
+
+def test_pin_lockout_persists_across_sessions_and_is_audited(at, tmp_path):
+    from sqlmodel import select
+    for _ in range(5):
+        at.selectbox(key="login_role").set_value("owner")
+        at.text_input(key="login_pin").set_value("0000")
+        at.button(key="login_btn").click().run()
+    # a brand-new browser session (page reload) is still locked, even with the right PIN
+    fresh = AppTest.from_file(APP, default_timeout=60).run()
+    fresh.selectbox(key="login_role").set_value("owner")
+    fresh.text_input(key="login_pin").set_value("1111")
+    fresh.button(key="login_btn").click().run()
+    assert any("Too many wrong PINs" in e.value for e in fresh.error)
+    assert fresh.session_state["role"] is None
+    with db.session_scope() as s:
+        assert len(s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "sign_in_failed")).all()) == 5
+
+
+def test_pin_lockout_expires(at, monkeypatch):
+    from ui import auth
+    with db.session_scope() as s:
+        db.set_setting(s, "pin_failures:owner", '{"n": 5, "ts": 1000}')
+    assert auth.locked_seconds("owner", now=1000 + 100) > 0
+    assert auth.locked_seconds("owner", now=1000 + 301) == 0
+    assert auth.locked_seconds("accountant", now=1000 + 100) == 0
+
+
+def test_import_requires_confirm_and_sign_in_and_has_optional_uploads(at):
+    goto(at, "Onboarding")
+    labels = [f.label for f in at.get("file_uploader")]
+    assert any("Paid invoices" in x for x in labels) and any("Scheduled payments" in x for x in labels)
+
+
+def test_financing_card_states_reschedule_dependency(at):
+    from agent.executor import run_tool
+    with db.session_scope() as s:
+        r1 = run_tool(s, "reschedule_payment", {"payment_id": next(
+            p.id for p in s.exec(__import__("sqlmodel").select(db.Payment).where(db.Payment.status == "scheduled"))),
+            "new_date": "2026-12-01"}, actor="agent")
+        r2 = run_tool(s, "prepare_financing_application",
+                      {"product_id": "invoice_financing", "amount_cents": 1_000_000,
+                       "needed_by": "2026-11-23", "days_needed": 30}, actor="agent")
+    assert r1.status == "needs_approval" and r2.status == "needs_approval", (r1, r2)
+    sign_in(at)
+    goto(at, "Approval queue")
+    assert any(f"Assumes reschedule {r1.approval_id} is approved" in m.value for m in at.markdown)

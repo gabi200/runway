@@ -84,3 +84,14 @@ def test_needed_by_too_early_leaves_only_fast_options(session):
 def test_nothing_deliverable(session):
     r = compare_financing(session, 1_000_000, TODAY, 10)
     assert r["recommended"] is None and r["ranked"] == []
+
+
+def test_ledger_money_keeps_currency_and_terms_carry_units(monkeypatch):
+    from agent.financing import ledger_money, product_terms
+
+    monkeypatch.setenv("RUNWAY_COUNTRY", "cn")
+    assert ledger_money(740000, "EUR") == "€7,400.00"
+    assert ledger_money(-100, "USD") == "-$1.00"
+    assert ledger_money(100, "CHF") == "CHF 1.00"
+    terms = product_terms(get_product("overdraft"), "EUR")
+    assert "Limit €50,000" in terms and "€200 one-off" in terms

@@ -25,6 +25,9 @@ _ROLE_LOCALS = {"accounts", "account", "billing", "finance", "info", "support", 
 _SIGN_OFFS = {"regards", "thanks", "cheers", "best", "sincerely", "yours", "thank", "total", "subtotal", "amount"}
 PLACEHOLDER_RE = re.compile(r"<([A-Z]+)_(\d+)(_[A-Z]+)?>")
 _MIN_ALIAS_LEN = 6
+_COMMON_WORDS = {"packaging", "company", "department", "team", "services", "service", "group", "management",
+                 "accounting", "finance", "support", "sales", "logistics", "energy", "bank", "office",
+                 "customer", "supplier", "invoice", "payment", "dear", "hello", "best", "kind", "many"}
 _LEGAL_SUFFIXES = {"gmbh", "ltd", "llc", "inc", "corp", "bv", "sa", "ag", "co", "the", "limited"}
 
 
@@ -40,6 +43,7 @@ class Pseudonymizer:
         self._ids: dict[str, str] = {}  # identifier literal -> placeholder (case-sensitive)
         self._rev: dict[str, str] = {}  # placeholder -> original literal
         self._counters: dict[str, int] = {}
+        self._company_words: set[str] = set()  # words of own/counterparty company names: never a person
         self._regex: re.Pattern[str] | None = None
         if session is not None:
             self.load(session)
@@ -89,7 +93,12 @@ class Pseudonymizer:
         from common.db import Counterparty, Payee
 
         cp_ph: dict[str, str] = {}
+        from common.db import Account
+
+        for acc in session.exec(select(Account)):
+            self.add_company_name(acc.name)
         for cp in session.exec(select(Counterparty).order_by(Counterparty.id)):
+            self.add_company_name(cp.name)
             label = "CUSTOMER" if cp.kind == "customer" else "SUPPLIER"
             cp_ph[cp.id] = self.add(label, cp.name, ident=cp.id)
             if cp.email:
@@ -100,6 +109,21 @@ class Pseudonymizer:
                 label = cp_ph[p.counterparty_id][1:].split("_")[0]
             self.add(label, p.name, ident=p.id, id_tag="PAYEEID")
             self.add("IBAN", _norm_iban(p.iban))
+
+    def add_company_name(self, name: str) -> None:
+        """Remember a company name so its words are never learned as a person's name."""
+        self._company_words |= {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9'-]+", name or "")}
+
+    def _person_ok(self, name: str) -> bool:
+        """A learnable person name: two capitalised tokens, none a company or common word."""
+        from agent.outbox import COMPANY
+
+        toks = name.split()
+        if len(toks) != 2 or not all(re.fullmatch(_NAME, t) for t in toks):
+            return False
+        banned = self._company_words | _COMMON_WORDS | _SIGN_OFFS | _LEGAL_SUFFIXES | {
+            w.lower() for w in COMPANY.split()}
+        return not any(t.lower() in banned for t in toks)
 
     def add_person(self, name: str) -> str:
         return self.add("PERSON", name)
@@ -113,13 +137,16 @@ class Pseudonymizer:
             parts = m.group(0).split("@")[0].split(".")
             if len(parts) == 2 and all(p.isalpha() and 2 <= len(p) <= 20 for p in parts) \
                     and not {p.lower() for p in parts} & _ROLE_LOCALS:
-                self.add("PERSON", " ".join(p.capitalize() for p in parts))
+                cand = " ".join(p.capitalize() for p in parts)
+                if self._person_ok(cand):
+                    self.add("PERSON", cand)
         for rx in (_HEADER_NAME_RE, _CLOSER_RE):
             for m in rx.finditer(text):
-                self.add("PERSON", m.group(1))
+                if self._person_ok(m.group(1)):
+                    self.add("PERSON", m.group(1))
         last = text.rstrip().rsplit("\n", 1)[-1] if "\n" in text.strip() else ""
         m = _LAST_LINE_RE.match(last.strip()) if last.strip() else None
-        if m and m.group(1).split()[0].lower() not in _SIGN_OFFS:
+        if m and self._person_ok(m.group(1)):
             self.add("PERSON", m.group(1))
 
     def learn_obj(self, obj: Any) -> None:

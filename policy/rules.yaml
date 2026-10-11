@@ -16,3 +16,7 @@ payment:
 reminder:
   daily_limit: 10
   interval_days: 7
+financing:
+  min_days_needed: 1
+  max_days_needed: 365
+  max_needed_by_days: 120
