@@ -1,7 +1,8 @@
 """Tool executor: policy -> audit -> execute, plus the human approval workflow.
 
-Every call is evaluated by `policy.engine.evaluate` first and every step is written
-to the hash-chained audit log. The agent never sees tokens, IBANs or bank URLs.
+New calls are evaluated by `policy.engine.evaluate`; exact payment replays return
+the original record. Every decision is written to the hash-chained audit log.
+The agent never sees tokens, IBANs or bank URLs.
 """
 
 from __future__ import annotations
@@ -13,9 +14,10 @@ from sqlmodel import Session, select
 
 from agent.financing import compare_financing  # noqa: F401  (re-exported per CONTRACTS section 6)
 from agent.outbox import next_id
-from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, jsonable  # noqa: F401
+from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
-from common.db import ApprovalRequest, utcnow
+from common.config import load_country_pack
+from common.db import ApprovalRequest, Payment, Setting, utcnow
 from policy import engine as policy
 
 VALID_ROLES = ("owner", "accountant")
@@ -47,6 +49,34 @@ def _execute(session: Session, tool: str, args: dict, actor: str, automatic: boo
 def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent") -> ToolResult:
     """Evaluate policy, audit the decision, then execute, park for approval, or deny."""
     args = dict(args or {})
+    if tool_name == "schedule_payment":
+        try:
+            policy._validate(args, *policy._SCHEMAS[tool_name])
+        except (ValueError, TypeError, KeyError) as exc:
+            audit.append(session, actor, tool_name, args, "DENY", str(exc))
+            return ToolResult(status="denied", tool=tool_name, reason=str(exc))
+        key = args.get("idempotency_key") or idempotency_key(args)
+        existing = session.exec(select(Payment).where(Payment.idempotency_key == key)
+                                .execution_options(populate_existing=True)).first()
+        if existing is not None:
+            try:
+                if actor not in {"agent", "owner", "accountant", "system"}:
+                    raise ValueError("Unknown actor")
+                stored = session.get(Setting, f"bank.request.{existing.id}")
+                original = json.loads(stored.value) if stored else existing.model_dump(mode="json")
+                body = {"idempotency_key": key, "payee_id": args["payee_id"],
+                        "amount_cents": args["amount_cents"],
+                        "currency": args.get("currency", load_country_pack().currency),
+                        "execute_date": str(args["execute_date"]),
+                        "invoice_id": args.get("invoice_id"), "document_id": args.get("document_id")}
+                if _canon(body) != _canon({k: original.get(k) for k in body}):
+                    raise ValueError("Idempotency key already used with a different body (409)")
+            except (ValueError, TypeError, KeyError) as exc:
+                audit.append(session, actor, tool_name, args, "DENY", str(exc))
+                return ToolResult(status="denied", tool=tool_name, reason=str(exc))
+            data = dict(existing.model_dump(mode="json"), idempotent_replay=True)
+            audit.append(session, actor, tool_name, args, "IDEMPOTENT_REPLAY", "Original payment returned")
+            return ToolResult(status="ok", tool=tool_name, data=data)
     decision = policy.evaluate(session, tool_name, args, actor)
     audit.append(session, actor, tool_name, args, decision.outcome, decision.reason)
     if decision.outcome == "DENY":

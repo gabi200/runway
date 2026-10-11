@@ -1,0 +1,53 @@
+[
+  {
+    "payee_id": "PAYEE-INKWORKS",
+    "id": "PAY-0001",
+    "currency": "EUR",
+    "status": "executed",
+    "document_id": null,
+    "created_by": "seed",
+    "created_sim_date": "2026-10-15",
+    "idempotency_key": "seed-pay-inkworks-0001",
+    "account_id": "ACC-MAIN",
+    "amount_cents": 1200000,
+    "execute_date": "2026-12-14",
+    "invoice_id": "AP-2052",
+    "automatic": false,
+    "created_at": "2026-10-15T09:00:00Z",
+    "transaction_id": "TX-000189"
+  },
+  {
+    "payee_id": "PAYEE-CARTONIA",
+    "id": "PAY-0002",
+    "currency": "EUR",
+    "status": "executed",
+    "document_id": null,
+    "created_by": "agent",
+    "created_sim_date": "2026-10-19",
+    "idempotency_key": "split-0",
+    "account_id": "ACC-MAIN",
+    "amount_cents": 95000,
+    "execute_date": "2026-10-19",
+    "invoice_id": null,
+    "automatic": true,
+    "created_at": "2026-10-11T11:47:37.690089Z",
+    "transaction_id": "TX-000187"
+  },
+  {
+    "payee_id": "PAYEE-INKWORKS",
+    "id": "PAY-0003",
+    "currency": "EUR",
+    "status": "executed",
+    "document_id": null,
+    "created_by": "agent",
+    "created_sim_date": "2026-10-19",
+    "idempotency_key": "demo-duplicate",
+    "account_id": "ACC-MAIN",
+    "amount_cents": 95000,
+    "execute_date": "2026-10-19",
+    "invoice_id": null,
+    "automatic": true,
+    "created_at": "2026-10-11T11:47:37.720463Z",
+    "transaction_id": "TX-000188"
+  }
+]

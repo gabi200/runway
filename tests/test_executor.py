@@ -191,3 +191,74 @@ def test_failed_execution_is_audited(session, monkeypatch):
     monkeypatch.setitem(executor.HANDLERS, "get_balances", lambda s, a, c: 1 / 0)
     r = run_tool(session, "get_balances", {})
     assert r.status == "error" and _decisions(session)[-1] == "FAILED"
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_replay_before_daily_caps(session, explicit):
+    args = _pay_args(95_000, **({"idempotency_key": "replay-cap"} if explicit else {}))
+    first = run_tool(session, "schedule_payment", args)
+    assert first.status == "ok"
+    second = run_tool(session, "schedule_payment", args)
+    assert second.status == "ok" and second.data["idempotent_replay"] is True
+    assert second.data["id"] == first.data["id"]
+    assert _decisions(session)[-1] == "IDEMPOTENT_REPLAY"
+    assert pending_approvals(session) == []
+
+
+@pytest.mark.parametrize("change", [{"amount_cents": 94_000}, {"currency": "USD"},
+                                   {"iban": "DE00"}, {"payee_id": "PAYEE-CARTONIA"},
+                                   {"execute_date": "2026-10-23"}, {"invoice_id": "AP-NOPE"},
+                                   {"document_id": "DOC-NOPE"}])
+def test_reused_key_different_body_denied(session, change):
+    args = _pay_args(95_000, idempotency_key="conflict")
+    assert run_tool(session, "schedule_payment", args).status == "ok"
+    assert run_tool(session, "schedule_payment", {**args, **change}).status == "denied"
+    assert len(session.exec(select(Payment).where(Payment.idempotency_key == "conflict")).all()) == 1
+
+
+def test_replay_after_execution_uses_original_request(session):
+    from bank.client import BankClient
+
+    args = _pay_args(95_000, idempotency_key="after-execution")
+    first = run_tool(session, "schedule_payment", args)
+    assert first.status == "ok"
+    session.commit()
+    with BankClient() as bank:
+        bank.advance(4)
+    replay = run_tool(session, "schedule_payment", args)
+    assert replay.status == "ok" and replay.data["idempotent_replay"]
+    assert replay.data["id"] == first.data["id"] and replay.data["status"] == "executed"
+    assert _decisions(session)[-1] == "IDEMPOTENT_REPLAY"
+
+
+def test_replay_after_human_approved_payment(session):
+    args = _pay_args(980_000, idempotency_key="approved-replay")
+    request = run_tool(session, "schedule_payment", args)
+    assert approve(session, request.approval_id, "owner").status == "needs_approval"
+    original = approve(session, request.approval_id, "accountant")
+    assert original.status == "ok"
+    replay = run_tool(session, "schedule_payment", args)
+    assert replay.status == "ok" and replay.data["idempotent_replay"]
+    assert replay.data["id"] == original.data["id"]
+    assert pending_approvals(session) == []
+
+
+@pytest.mark.parametrize("key", [[], {}, 123, ""])
+def test_malformed_idempotency_key_denied(session, key):
+    assert run_tool(session, "schedule_payment", _pay_args(idempotency_key=key)).status == "denied"
+
+
+def test_replay_after_reschedule_compares_original_body(session):
+    from bank.client import BankClient
+
+    args = _pay_args(95_000, idempotency_key="rescheduled-replay")
+    first = run_tool(session, "schedule_payment", args)
+    assert first.status == "ok"
+    session.commit()
+    with BankClient() as bank:
+        bank.reschedule_payment(first.data["id"], date(2026, 10, 24))
+    replay = run_tool(session, "schedule_payment", args)
+    assert replay.status == "ok" and replay.data["idempotent_replay"]
+    assert replay.data["execute_date"] == "2026-10-24"
+    conflict = run_tool(session, "schedule_payment", {**args, "execute_date": "2026-10-24"})
+    assert conflict.status == "denied" and "409" in conflict.reason

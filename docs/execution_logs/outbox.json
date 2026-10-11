@@ -1,0 +1,38 @@
+[
+  {
+    "to": "ap@bergmann-toys.example",
+    "subject": "FINAL NOTICE: invoice LUM-2026-0091",
+    "invoice_id": "AR-1091",
+    "sent_at": "2026-10-19T11:47:37.429310Z",
+    "body": "Dear Bergmann Toys,\n\nDespite earlier reminders, invoice LUM-2026-0091 for \u20ac7,400.00 (due 2026-10-04) remains unpaid and is 15 days overdue. This is our final notice: please pay immediately, otherwise we will have to escalate the matter.\n\nRegards,\nLumen Packaging",
+    "id": "MAIL-0001",
+    "kind": "reminder"
+  },
+  {
+    "to": "billing@lindqvist-candles.example",
+    "subject": "Payment overdue: invoice LUM-2026-0092",
+    "invoice_id": "AR-1092",
+    "sent_at": "2026-10-19T11:47:37.440829Z",
+    "body": "Dear Lindqvist Candles,\n\nInvoice LUM-2026-0092 for \u20ac5,200.00, due on 2026-10-11, is 8 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
+    "id": "MAIL-0002",
+    "kind": "reminder"
+  },
+  {
+    "to": "owner@lumen-packaging.example",
+    "subject": "Fraud alert: document DOC-0001 flagged",
+    "invoice_id": null,
+    "sent_at": "2026-10-19T11:47:37.647886Z",
+    "body": "Runway flagged document DOC-0001 (cartonia_invoice_A1.pdf, from unknown sender).\n\nReason: bank-detail change requested; contains an IBAN alongside a bank-detail change; asks to skip approval; contains instructions aimed at an AI assistant (ignore previous instructions); urgency combined with a payment request\n\nAny payment linked to it is blocked until you review and clear it.",
+    "id": "MAIL-0003",
+    "kind": "fraud_alert"
+  },
+  {
+    "to": "owner@lumen-packaging.example",
+    "subject": "Fraud alert: document DOC-0002 flagged",
+    "invoice_id": null,
+    "sent_at": "2026-10-19T11:47:37.667111Z",
+    "body": "Runway flagged document DOC-0002 (owner_email_A2.txt, from unknown sender).\n\nReason: asks to skip approval; urgency combined with a payment request\n\nAny payment linked to it is blocked until you review and clear it.",
+    "id": "MAIL-0004",
+    "kind": "fraud_alert"
+  }
+]
