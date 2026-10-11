@@ -81,6 +81,9 @@ def test_approve_clear_flag_payee_advance_scenario(at):
     with db.session_scope() as s:
         from sqlmodel import select
         assert any(d.cleared for d in s.exec(select(db.Document)))
+        entry = s.exec(select(db.AuditEntry).where(
+            db.AuditEntry.action == "clear_document_flag")).one()
+        assert entry.actor == "owner" and entry.decision == "HUMAN_ACTION"
     goto(at, "Payees (humans only)")
     goto(at, "Mock bank")
     next(b for b in at.button if b.label == "Advance").click().run()
@@ -89,3 +92,27 @@ def test_approve_clear_flag_payee_advance_scenario(at):
     next(b for b in at.button if b.label == "Add delay").click().run()
     assert not at.exception
     assert at.metric
+
+
+def test_payee_verify_unverify_is_owner_only_and_audited(at):
+    from sqlmodel import select
+    from audit.log import verify_chain
+
+    goto(at, "Payees (humans only)")
+    key = "verify_PAYEE-NEWVENDOR"
+    assert at.button(key=key).label == "Verify"
+    at.button(key=key).click().run()
+    assert not at.exception
+    assert at.button(key=key).label == "Unverify"
+    with db.session_scope() as s:
+        assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is True
+        entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "verify_payee")).one()
+        assert entry.actor == "owner" and entry.decision == "HUMAN_ACTION"
+        assert verify_chain(s).ok
+    at.button(key=key).click().run()
+    assert not at.exception
+    with db.session_scope() as s:
+        assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
+    at.selectbox(key="role").set_value("accountant").run()
+    assert not at.exception
+    assert not [button for button in at.button if button.label in ("Verify", "Unverify")]

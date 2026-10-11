@@ -262,3 +262,59 @@ def test_replay_after_reschedule_compares_original_body(session):
     assert replay.data["execute_date"] == "2026-10-24"
     conflict = run_tool(session, "schedule_payment", {**args, "execute_date": "2026-10-24"})
     assert conflict.status == "denied" and "409" in conflict.reason
+
+
+@pytest.mark.parametrize("role", ["owner", "accountant"])
+def test_human_clears_document_flag_and_audits(session, role):
+    session.add(Document(id="DOC-CLEAR", filename="invoice.pdf", kind="invoice",
+                         flagged=True, flag_reason="Bank details changed"))
+    session.commit()
+    result = executor.clear_document_flag(session, "DOC-CLEAR", role, "Confirmed with supplier")
+    assert result.status == "ok"
+    session.expire_all()
+    document = session.get(Document, "DOC-CLEAR")
+    assert document.cleared is True and document.flagged is True
+    assert document.flag_reason == "Bank details changed"
+    entry = session.exec(select(AuditEntry).order_by(AuditEntry.id.desc())).first()
+    assert (entry.actor, entry.action, entry.decision) == (role, "clear_document_flag", "HUMAN_ACTION")
+    assert json.loads(entry.args_json) == {"document_id": "DOC-CLEAR", "note": "Confirmed with supplier"}
+    assert verify_chain(session).ok
+
+
+@pytest.mark.parametrize("role", ["agent", "system", "intern", ""])
+def test_clear_document_flag_rejects_nonhuman_roles(session, role):
+    session.add(Document(id="DOC-CLEAR", filename="invoice.pdf", kind="invoice", flagged=True))
+    session.commit()
+    assert executor.clear_document_flag(session, "DOC-CLEAR", role).status == "error"
+    session.expire_all()
+    assert session.get(Document, "DOC-CLEAR").cleared is False
+
+
+def test_clear_document_flag_missing_document(session):
+    assert executor.clear_document_flag(session, "MISSING", "owner").status == "error"
+
+
+def test_clear_document_flag_is_not_an_agent_tool(session):
+    assert "clear_document_flag" not in {tool["function"]["name"] for tool in TOOL_SPECS}
+    session.add(Document(id="DOC-CLEAR", filename="invoice.pdf", kind="invoice", flagged=True))
+    session.commit()
+    result = run_tool(session, "clear_document_flag", {"document_id": "DOC-CLEAR", "role": "owner"})
+    assert result.status == "denied"
+    session.expire_all()
+    assert session.get(Document, "DOC-CLEAR").cleared is False
+    assert _decisions(session)[-1] == "DENY"
+
+
+def test_clear_document_flag_rolls_back_when_audit_fails(session):
+    from common.db import Setting
+
+    session.add(Document(id="DOC-CLEAR", filename="invoice.pdf", kind="invoice", flagged=True))
+    session.commit()
+    run_tool(session, "get_balances", {})
+    head = session.get(Setting, "audit_head")
+    head.value = "corrupted"
+    session.add(head)
+    session.commit()
+    with pytest.raises(ValueError):
+        executor.clear_document_flag(session, "DOC-CLEAR", "owner")
+    assert session.get(Document, "DOC-CLEAR").cleared is False

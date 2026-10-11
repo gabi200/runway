@@ -17,10 +17,26 @@ from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
 from common.config import load_country_pack
-from common.db import ApprovalRequest, Payment, Setting, utcnow
+from common.db import ApprovalRequest, Document, Payment, Setting, utcnow
 from policy import engine as policy
 
 VALID_ROLES = ("owner", "accountant")
+
+
+def clear_document_flag(session: Session, document_id: str, role: str,
+                        note: str = "") -> ToolResult:
+    """Record a human review and clear a document's payment block."""
+    action = "clear_document_flag"
+    if role not in VALID_ROLES:
+        return ToolResult(status="error", tool=action, reason="Only owner or accountant can clear a flag")
+    document = session.get(Document, document_id)
+    if document is None:
+        return ToolResult(status="error", tool=action, reason="Document not found")
+    document.cleared = True
+    session.add(document)
+    audit.append(session, role, action, {"document_id": document_id, "note": note},
+                 "HUMAN_ACTION", note)
+    return ToolResult(status="ok", tool=action, data={"document_id": document_id, "cleared": True})
 
 
 def _canon(obj) -> str:

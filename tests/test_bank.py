@@ -226,3 +226,35 @@ def test_advance_matching_category_and_cancelled_payment():
     with BankClient() as client:
         assert client.list_transactions("ACC-MAIN")[0]["category"] == "vat"
         assert len(client.list_payments("cancelled")) == 1
+
+
+def test_verify_payee_requires_human_and_updates_in_place():
+    with TestClient(app) as client:
+        assert client.patch("/payees/PAYEE-TEST", json={"verified": False}).status_code == 401
+    with BankClient() as executor:
+        with pytest.raises(BankError) as error:
+            executor.verify_payee("PAYEE-TEST", False)
+        assert error.value.status_code == 403
+    with BankClient(token="human-dev-token") as human:
+        before = next(row for row in human.list_payees() if row["id"] == "PAYEE-TEST")
+        assert human.verify_payee("PAYEE-TEST", False) == {**before, "verified": False}
+        with pytest.raises(BankError) as error:
+            human.create_payment("unverified", "PAYEE-TEST", 100, "EUR", TODAY)
+        assert error.value.status_code == 422
+        assert human.verify_payee("PAYEE-TEST") == before
+        assert len(human.list_payees()) == 2
+        assert human.create_payment("verified", "PAYEE-TEST", 100, "EUR", TODAY)["status"] == "scheduled"
+        with pytest.raises(BankError) as error:
+            human.verify_payee("MISSING")
+        assert error.value.status_code == 404
+
+
+@pytest.mark.parametrize("body", [{}, {"verified": True, "iban": "NEW"},
+                                  {"verified": True, "name": "Changed"},
+                                  {"verified": True, "counterparty_id": None},
+                                  {"verified": "true"}, {"verified": 1}, {"verified": None}])
+def test_verify_payee_only_accepts_verified_boolean(body):
+    with TestClient(app, headers={"Authorization": "Bearer human-dev-token"}) as client:
+        before = client.get("/payees").json()
+        assert client.patch("/payees/PAYEE-TEST", json=body).status_code == 422
+        assert client.get("/payees").json() == before

@@ -73,6 +73,10 @@ class BankClient:
         return self._request("POST", "/payees", json=dict(name=name, iban=iban,
             counterparty_id=counterparty_id, verified=verified))
 
+    def verify_payee(self, payee_id: str, verified: bool = True) -> dict:
+        """Set verification status using a human bank token."""
+        return self._request("PATCH", f"/payees/{payee_id}", json={"verified": verified})
+
     def create_payment(self, idempotency_key: str, payee_id: str, amount_cents: int,
                        currency: str, execute_date: date, invoice_id: str | None = None,
                        document_id: str | None = None, automatic: bool = False) -> dict:

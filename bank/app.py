@@ -69,6 +69,11 @@ class PaymentPatch(BaseModel):
     execute_date: date
 
 
+class PayeePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    verified: bool = Field(strict=True)
+
+
 @app.get("/accounts", dependencies=[Depends(authorize("read"))])
 def accounts(session: DB) -> list[dict]:
     return service.get_accounts(session)
@@ -89,6 +94,11 @@ def payees(session: DB) -> list[dict]:
 @app.post("/payees", dependencies=[Depends(authorize("payees"))])
 def add_payee(body: PayeeCreate, session: DB) -> dict:
     return service.create_payee(session, **body.model_dump())
+
+
+@app.patch("/payees/{payee_id}", dependencies=[Depends(authorize("payees"))])
+def patch_payee(payee_id: str, body: PayeePatch, session: DB) -> dict:
+    return service.verify_payee(session, payee_id, body.verified)
 
 
 @app.post("/payments")

@@ -430,7 +430,7 @@ def page_documents() -> None:
     st.header("Documents")
     st.caption("Incoming PDFs and emails are **untrusted data**. They are scanned for hidden instructions "
                "and bank-detail-change tricks (a classic fraud). Flagged documents block any linked payment "
-               "until the owner clears them.")
+               "until the owner or accountant clears them.")
     up = st.file_uploader("Upload an invoice PDF or email text", type=["pdf", "txt", "eml"], key="up_doc")
     kind = st.selectbox("Kind", ["invoice", "email", "other"])
     sender = st.text_input("Sender (optional)")
@@ -469,18 +469,16 @@ def page_documents() -> None:
             st.caption(f"Kind: {k}  |  Sender: {snd or 'unknown'}")
             st.text(text[:3000])
             if flagged and not cleared:
-                if st.session_state.role == "owner":
+                if st.session_state.role in executor.VALID_ROLES:
                     if st.button("Clear flag (I reviewed this document)", key=f"clr_{did}"):
                         with session_scope() as s:
-                            d = s.get(Document, did)
-                            d.cleared = True
-                            s.add(d)
-                            s.commit()
-                            log_human(s, "clear_document_flag", {"document_id": did, "reason": reason},
-                                      "INFO", "Owner reviewed and cleared the flag")
-                        st.rerun()
+                            result = executor.clear_document_flag(
+                                s, did, st.session_state.role, "Reviewed and cleared in the UI")
+                        if result.status == "ok":
+                            st.rerun()
+                        st.error(result.reason)
                 else:
-                    st.caption("Only the owner can clear a flag.")
+                    st.caption("Only the owner or accountant can clear a flag.")
 
 
 # --------------------------------------------------------------------------- #
@@ -499,8 +497,22 @@ def page_payees() -> None:
         return
     st.dataframe(pd.DataFrame(payees), width="stretch", hide_index=True)
     if st.session_state.role != "owner":
-        st.caption("Switch to the owner role to add payees.")
+        st.caption("Switch to the owner role to add or verify payees.")
         return
+    for payee in payees:
+        details, action = st.columns([4, 1])
+        details.write(f"{payee['name']} ({payee['id']})")
+        verified = not payee["verified"]
+        if action.button("Verify" if verified else "Unverify", key=f"verify_{payee['id']}"):
+            try:
+                with human_bank() as bank:
+                    bank.verify_payee(payee["id"], verified)
+                with session_scope() as s:
+                    log_human(s, "verify_payee", {"payee_id": payee["id"], "verified": verified},
+                              "HUMAN_ACTION", "Verification changed via the bank's human token")
+                st.rerun()
+            except BankError as exc:
+                st.error(f"Bank refused: {exc.detail}")
     st.subheader("Add a payee")
     with session_scope() as s:
         cps = [(None, "(none)")] + [(c.id, c.name) for c in s.exec(select(Counterparty))]
@@ -519,8 +531,7 @@ def page_payees() -> None:
                 st.success(f"Created {row['id']} (verified={row['verified']}).")
             except BankError as exc:
                 st.error(f"Bank refused: {exc.detail}")
-    st.caption("To verify an existing unverified payee, re-register it here with 'Verified' ticked "
-               "(the bank API has no in-place verify endpoint).")
+    st.caption("To use a different IBAN, create a new payee. Existing bank details cannot be edited.")
 
 
 # --------------------------------------------------------------------------- #

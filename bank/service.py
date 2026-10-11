@@ -75,6 +75,19 @@ def create_payee(session: Session, name: str, iban: str,
     return row.model_dump(mode="json")
 
 
+def verify_payee(session: Session, payee_id: str, verified: bool) -> dict:
+    """Set a payee's verification status after human authorization."""
+    _lock(session)
+    row = session.get(Payee, payee_id)
+    if row is None:
+        raise BankServiceError(404, "Payee not found")
+    row.verified = verified
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row.model_dump(mode="json")
+
+
 def create_payment(session: Session, body: dict, actor: str = "agent") -> dict:
     """Schedule a payment, retaining its original idempotency payload."""
     _lock(session)
