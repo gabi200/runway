@@ -232,19 +232,22 @@ def test_brief_and_chat_need_sign_in(at):
     assert at.session_state["chat"] == []
 
 
-def test_pin_lockout_persists_across_sessions_and_is_audited(at, tmp_path):
+def test_pin_lockout_is_per_session_and_audited(at, tmp_path):
     from sqlmodel import select
     for _ in range(5):
         at.selectbox(key="login_role").set_value("owner")
         at.text_input(key="login_pin").set_value("0000")
         at.button(key="login_btn").click().run()
-    # a brand-new browser session (page reload) is still locked, even with the right PIN
+    at.text_input(key="login_pin").set_value("1111")
+    at.button(key="login_btn").click().run()
+    assert any("Too many wrong PINs" in e.value for e in at.error)
+    assert at.session_state["role"] is None
+    # another browser session is not locked out by someone else's guessing
     fresh = AppTest.from_file(APP, default_timeout=60).run()
     fresh.selectbox(key="login_role").set_value("owner")
     fresh.text_input(key="login_pin").set_value("1111")
     fresh.button(key="login_btn").click().run()
-    assert any("Too many wrong PINs" in e.value for e in fresh.error)
-    assert fresh.session_state["role"] is None
+    assert fresh.session_state["role"] == "owner"
     with db.session_scope() as s:
         assert len(s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "sign_in_failed")).all()) == 5
 
@@ -252,10 +255,16 @@ def test_pin_lockout_persists_across_sessions_and_is_audited(at, tmp_path):
 def test_pin_lockout_expires(at, monkeypatch):
     from ui import auth
     with db.session_scope() as s:
+        db.set_setting(s, "pin_failures:owner:S1", '{"n": 5, "ts": 1000}')
         db.set_setting(s, "pin_failures:owner", '{"n": 5, "ts": 1000}')
-    assert auth.locked_seconds("owner", now=1000 + 100) > 0
-    assert auth.locked_seconds("owner", now=1000 + 301) == 0
-    assert auth.locked_seconds("accountant", now=1000 + 100) == 0
+    assert auth.locked_seconds("owner", now=1000 + 100, sid="S1") > 0
+    assert auth.locked_seconds("owner", now=1000 + 301, sid="S1") == 0
+    assert auth.locked_seconds("owner", now=1000 + 100, sid="S2") == 0
+    with db.session_scope() as s:  # many failures across sessions lock the role everywhere
+        db.set_setting(s, "pin_failures:owner", '{"n": 20, "ts": 1000}')
+    assert auth.locked_seconds("owner", now=1000 + 600, sid="S2") > 0
+    assert auth.locked_seconds("owner", now=1000 + 901, sid="S2") == 0
+    assert auth.locked_seconds("accountant", now=1000 + 100, sid="S1") == 0
 
 
 def test_import_requires_confirm_and_sign_in_and_has_optional_uploads(at):
