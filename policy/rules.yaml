@@ -8,6 +8,7 @@ payment:
   max_payment_cents: 100000000
   approval_tier: T3
   automatic_amount_cents: 100000
+  automatic_requires_invoice: true   # payments without an open AP invoice always need the owner
   daily_payee_cents: 100000
   daily_global_cents: 300000
   accountant_above_cents: 500000

@@ -15,6 +15,8 @@ from audit.log import verify_chain
 from common import db
 from common.db import (AuditEntry, Document, FinancingApplication, Invoice, OutboxEmail, Payment)
 
+pytestmark = pytest.mark.usefixtures("unbacked_automatic")
+
 
 @pytest.fixture()
 def session(tmp_path, monkeypatch):

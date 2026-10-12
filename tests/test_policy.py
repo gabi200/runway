@@ -49,6 +49,7 @@ def payment(s, ident, amount=95000, **extra):
 @pytest.mark.parametrize('amount,outcome,roles', [(1,'ALLOW',()),(99999,'ALLOW',()),
     (100000,'NEEDS_APPROVAL',('owner',)),(500000,'NEEDS_APPROVAL',('owner',)),
     (500001,'NEEDS_APPROVAL',('owner','accountant'))])
+@pytest.mark.usefixtures("unbacked_automatic")
 def test_thresholds(session, amount, outcome, roles):
     d = evaluate(session, 'schedule_payment', args(amount))
     assert (d.outcome, d.roles) == (outcome, roles)
@@ -72,6 +73,7 @@ def test_bank_details_any_depth(session, key):
     assert evaluate(session, 'run_scenario', {'changes':[{'type':'inflow', key:'x'}]}).outcome == 'DENY'
 
 
+@pytest.mark.usefixtures("unbacked_automatic")
 def test_a3_split_payments(session):
     for index in range(4):
         d = evaluate(session, 'schedule_payment', args())
@@ -80,6 +82,7 @@ def test_a3_split_payments(session):
             payment(session, f'P{index}')
 
 
+@pytest.mark.usefixtures("unbacked_automatic")
 def test_daily_totals_and_exclusions(session):
     payment(session, 'cancel', status='cancelled')
     manual = payment(session, 'manual')

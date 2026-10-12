@@ -190,7 +190,9 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
                 Payment.status != "cancelled", Payment.created_sim_date == today)
                 .execution_options(populate_existing=True)).all()
             payee_total = sum(p.amount_cents for p in payments if p.payee_id == payee.id)
-            if (amount < payment_rules["automatic_amount_cents"]
+            # Only payments backed by an open AP invoice may run without a human.
+            backed = invoice is not None or not payment_rules["automatic_requires_invoice"]
+            if (backed and amount < payment_rules["automatic_amount_cents"]
                     and amount + payee_total < payment_rules["daily_payee_cents"]
                     and amount + sum(p.amount_cents for p in payments) < payment_rules["daily_global_cents"]):
                 reason = "Automatic payment within amount and daily limits"
@@ -198,7 +200,7 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
                 tier = payment_rules["approval_tier"]
                 roles = tuple(payment_rules["material_roles"] if amount > payment_rules["accountant_above_cents"]
                               else payment_rules["owner_roles"])
-                reason = "Payment exceeds automatic limits"
+                reason = "Payment exceeds automatic limits" if backed else "Payment without an open AP invoice needs approval"
         elif tool_name == "reschedule_payment":
             payment = session.get(Payment, args["payment_id"], populate_existing=True)
             invoice = session.get(Invoice, payment.invoice_id, populate_existing=True) if payment and payment.invoice_id else None
