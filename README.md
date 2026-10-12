@@ -69,7 +69,7 @@ Details and switching providers or country packs: [docs/deployment.md](docs/depl
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 268 tests, about 14 seconds, no network
+.venv/bin/pytest                 # 323 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A6
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
 ```

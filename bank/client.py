@@ -77,6 +77,10 @@ class BankClient:
         """Set verification status using a human bank token."""
         return self._request("PATCH", f"/payees/{payee_id}", json={"verified": verified})
 
+    def set_payee_iban(self, payee_id: str, iban: str) -> dict:
+        """Fill in a missing IBAN using a human bank token."""
+        return self._request("PUT", f"/payees/{payee_id}/iban", json={"iban": iban})
+
     def create_payment(self, idempotency_key: str, payee_id: str, amount_cents: int,
                        currency: str, execute_date: date, invoice_id: str | None = None,
                        document_id: str | None = None, automatic: bool = False) -> dict:

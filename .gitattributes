@@ -1,0 +1,2 @@
+# Store PDFs byte for byte: autocrlf would corrupt ReportLab output on Windows checkouts.
+*.pdf binary

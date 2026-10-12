@@ -6,6 +6,8 @@ from bank.client import BankClient, BankError
 from common.db import Payment
 from common.config import load_country_pack
 
+pytestmark = pytest.mark.usefixtures("unbacked_automatic")
+
 
 def test_duplicate_and_bank_conflict(stack, pay_args):
     s, _, _ = stack

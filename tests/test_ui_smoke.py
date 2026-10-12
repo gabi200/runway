@@ -136,6 +136,22 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
     assert not [button for button in at.button if button.label in ("Verify", "Unverify")]
 
 
+def test_owner_fills_missing_iban_once(at):
+    from datetime import datetime, timezone
+    with db.session_scope() as s:
+        s.add(db.Payee(id="PAYEE-IMPORTED", name="Imported", iban="", created_at=datetime.now(timezone.utc)))
+        s.commit()
+    sign_in(at)
+    goto(at, "Payees (humans only)")
+    at.text_input(key="iban_PAYEE-IMPORTED").set_value("DE89 3704 0044 0532 0130 00")
+    at.button(key="set_iban_PAYEE-IMPORTED").click().run()
+    assert not at.exception
+    assert not [w for w in at.text_input if w.key == "iban_PAYEE-IMPORTED"]
+    with db.session_scope() as s:
+        row = s.get(db.Payee, "PAYEE-IMPORTED")
+        assert row.iban == "DE89 3704 0044 0532 0130 00" and row.verified is False
+
+
 def test_human_actions_need_sign_in_and_wrong_pin_rejected(at):
     goto(at, "Payees (humans only)")
     assert not [b for b in at.button if b.label in ("Verify", "Unverify")]
@@ -232,19 +248,22 @@ def test_brief_and_chat_need_sign_in(at):
     assert at.session_state["chat"] == []
 
 
-def test_pin_lockout_persists_across_sessions_and_is_audited(at, tmp_path):
+def test_pin_lockout_is_per_session_and_audited(at, tmp_path):
     from sqlmodel import select
     for _ in range(5):
         at.selectbox(key="login_role").set_value("owner")
         at.text_input(key="login_pin").set_value("0000")
         at.button(key="login_btn").click().run()
-    # a brand-new browser session (page reload) is still locked, even with the right PIN
+    at.text_input(key="login_pin").set_value("1111")
+    at.button(key="login_btn").click().run()
+    assert any("Too many wrong PINs" in e.value for e in at.error)
+    assert at.session_state["role"] is None
+    # another browser session is not locked out by someone else's guessing
     fresh = AppTest.from_file(APP, default_timeout=60).run()
     fresh.selectbox(key="login_role").set_value("owner")
     fresh.text_input(key="login_pin").set_value("1111")
     fresh.button(key="login_btn").click().run()
-    assert any("Too many wrong PINs" in e.value for e in fresh.error)
-    assert fresh.session_state["role"] is None
+    assert fresh.session_state["role"] == "owner"
     with db.session_scope() as s:
         assert len(s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "sign_in_failed")).all()) == 5
 
@@ -252,10 +271,16 @@ def test_pin_lockout_persists_across_sessions_and_is_audited(at, tmp_path):
 def test_pin_lockout_expires(at, monkeypatch):
     from ui import auth
     with db.session_scope() as s:
+        db.set_setting(s, "pin_failures:owner:S1", '{"n": 5, "ts": 1000}')
         db.set_setting(s, "pin_failures:owner", '{"n": 5, "ts": 1000}')
-    assert auth.locked_seconds("owner", now=1000 + 100) > 0
-    assert auth.locked_seconds("owner", now=1000 + 301) == 0
-    assert auth.locked_seconds("accountant", now=1000 + 100) == 0
+    assert auth.locked_seconds("owner", now=1000 + 100, sid="S1") > 0
+    assert auth.locked_seconds("owner", now=1000 + 301, sid="S1") == 0
+    assert auth.locked_seconds("owner", now=1000 + 100, sid="S2") == 0
+    with db.session_scope() as s:  # many failures across sessions lock the role everywhere
+        db.set_setting(s, "pin_failures:owner", '{"n": 20, "ts": 1000}')
+    assert auth.locked_seconds("owner", now=1000 + 600, sid="S2") > 0
+    assert auth.locked_seconds("owner", now=1000 + 901, sid="S2") == 0
+    assert auth.locked_seconds("accountant", now=1000 + 100, sid="S1") == 0
 
 
 def test_import_requires_confirm_and_sign_in_and_has_optional_uploads(at):

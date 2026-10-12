@@ -121,11 +121,11 @@ Simulated time: `Setting("today")`, default 2026-10-19 (a Monday). Forecast week
 
 ## 4. Request flow of one tool call
 
-Example: the agent calls `schedule_payment` for 950 to a verified payee.
+Example: the agent calls `schedule_payment` for 950 to a verified payee against an open AP invoice of 950.
 
 1. **Agent** (`Agent._loop` in `agent/orchestrator.py`). The pseudonymizer first learns person names from the history, the user message and every tool result (`learn`), then masks them. The model sees `<SUPPLIER_2>`, `<PERSON_1>`, `<EMAIL_1>` and `<IBAN_3>`, not real values. The model replies with a tool call. Its arguments are unmasked with `unmask_obj`; if any argument still contains a placeholder that was never issued (`has_unknown_placeholder`), the call is not executed and the model gets an error. Otherwise the call is passed to `executor.run_tool(session, name, args, actor="agent")`. The agent object never touches the bank client.
-2. **Defaults for financing tools** (`executor.run_tool`, `compare_financing` and `prepare_financing_application` only). Any of `amount_cents`, `needed_by`, `days_needed` that is omitted is filled from `forecast.engine.financing_need` before the policy runs, so the model never has to compute them. If that fails the call is audited as DENY.
-3. **Kill switch and replay short-circuit** (`schedule_payment`). The executor re-reads the kill switch. If it is on, the call is evaluated by the policy first, so a non-T0 call is denied even if it is an exact replay of an earlier request. Otherwise the executor validates the arguments and the `max_payment_cents` bound, computes the idempotency key (`args["idempotency_key"]` or the derived one) and looks for an existing `Payment` with that key. If one exists and the request body matches the stored original (`setting` row `bank.request.<PAY-id>`), the original payment is returned with `idempotent_replay: true`, the audit log gets an `IDEMPOTENT_REPLAY` entry, and nothing else happens. A body mismatch is audited as DENY.
+2. **Defaults for financing tools** (`executor.run_tool`, `compare_financing` and `prepare_financing_application` only). Any of `amount_cents`, `needed_by`, `days_needed` that is omitted is filled from `forecast.engine.financing_need` (via `agent/tools.py:_need_defaults`, the same helper the handlers use) before the policy runs, so the model never has to compute them. If that fails, or the forecast has no financing need, the call is audited as DENY.
+3. **Replay short-circuit** (`schedule_payment`). The executor validates the arguments and the `max_payment_cents` bound (`policy.engine.validate_call`), computes the idempotency key (`args["idempotency_key"]` or the derived one) and looks for an existing `Payment` with that key. If one exists, the executor re-reads the kill switch (a replay skips `evaluate`, so it is checked here) and denies the call if it is on. If the request body matches the stored original (`setting` row `bank.request.<PAY-id>`), the original payment is returned with `idempotent_replay: true`, the audit log gets an `IDEMPOTENT_REPLAY` entry, and nothing else happens. A body mismatch is audited as DENY.
 4. **Policy** (`executor.run_tool` calls `policy.engine.evaluate`). The engine runs, in order:
    1. tier lookup (unknown tool or T4 gives DENY);
    2. argument screen (`_forbidden`: any key containing `iban`, or named `bank_details` or `account_number`, at any depth, gives DENY);
@@ -157,11 +157,13 @@ agent: run_tool(...)  ->  NEEDS_APPROVAL  ->  ApprovalRequest(status=pending, re
 UI approval queue: owner clicks Approve  ->  executor.approve(session, id, "owner", approver_id=<browser session id>)
    - role not in required_roles           -> audit DENY, nothing recorded
    - approver_id already used for another role on this request -> audit DENY "Same approver cannot fill two roles"
-   - role + approver_id recorded in approvals_json -> audit APPROVED
+   - role + approver_id recorded in approvals_json (compare-and-set on the pending row) -> audit APPROVED
    - policy.evaluate(..., approvals=given) is run AGAIN with current database state
-        DENY            -> request status "rejected", audit DENY "re-check at approval"
+        DENY, kill switch on -> request stays "pending", audit DENY "re-check at approval"
+        DENY (other)    -> request status "rejected", audit DENY "re-check at approval"
         NEEDS_APPROVAL  -> still waiting for the other role
-        ALLOW           -> _execute(actor=<role>, automatic=False) -> status "executed" or "failed"
+        ALLOW           -> claim pending -> "executing" (a concurrent click loses), then
+                           _execute(actor=<role>, automatic=False) -> status "executed" or "failed"
 UI: Reject -> executor.reject -> only role owner or accountant; status "rejected", audit REJECTED
 ```
 
@@ -204,7 +206,7 @@ An approved action is executed with `automatic=False`, so it does not count towa
 - `policy/rules.yaml` lists `add_payee, update_payee, change_limits, export_data, set_kill_switch` as tier T4; `evaluate` returns DENY for T4 and for any name not in `_SCHEMAS`.
 - `policy/engine.py:_forbidden` rejects any argument key that contains `iban` or equals `bank_details` or `account_number`, at any nesting depth.
 - Defense in depth at the bank: `bank/app.py:authorize("payees")` returns 403 unless the caller used the human token; `bank/service.create_payment` returns 422 for an unverified payee. The executor token cannot create or verify payees (`tests/test_bank.py::test_auth_scopes`).
-- The UI page "Payees (humans only)" is the only place that creates or verifies payees, using the human token (`POST /payees`, `PATCH /payees/{id}` which can change only the `verified` flag; a body with any other field is rejected). Existing IBANs cannot be edited; to use a different IBAN a human creates a new payee. The page lets only a signed-in owner verify or add payees. Clearing a document flag is `agent/executor.py:clear_document_flag`, callable only with role `owner` or `accountant` and audited; it is not an agent tool.
+- The UI page "Payees (humans only)" is the only place that creates or verifies payees, using the human token (`POST /payees`, `PATCH /payees/{id}` which can change only the `verified` flag; a body with any other field is rejected). Existing IBANs cannot be edited; to use a different IBAN a human creates a new payee. A payee without an IBAN (from a CSV import) can be given one once through `PUT /payees/{id}/iban`; it stays unverified. The page lets only a signed-in owner verify or add payees. Clearing a document flag is `agent/executor.py:clear_document_flag`, callable only with role `owner` or `accountant` and audited; it is not an agent tool.
 
 ### Rule 5. Every figure traces back to ledger rows
 
@@ -227,6 +229,6 @@ An approved action is executed with `automatic=False`, so it does not count towa
 
 `ui/app.py` is the human side. It never grants the agent extra powers: agent chat goes through `Agent`, human actions go through `agent.executor.approve/reject`, `audit.log.append` (with the acting role and the browser session id) and the bank client with the human token. The section list is defined in `SECTIONS`: Onboarding, Monday brief and chat, Forecast, Approval queue, Documents, Payees (humans only), Mock bank, Test inbox, Audit log. Details of the pages are in `docs/demo-script.md`.
 
-Sign-in: the header has a role selector and a PIN field. PINs come from `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` (defaults 1111 and 2222); five wrong PINs lock the session until the page is reloaded. Switching role needs the other role's PIN. Until a role is signed in, the chat actor is `guest`, the Approve and Reject buttons are disabled, and these actions refuse to run: kill-switch toggle, data reset, CSV import, payee creation, flag clearing, clock advance. Only the owner role can add or verify payees.
+Sign-in: the header has a role selector and a PIN field. PINs come from `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` (defaults 1111 and 2222); five wrong PINs lock that browser session for 5 minutes, and 20 wrong PINs for one role across all sessions within 15 minutes lock that role everywhere (counters stored in the database). Switching role needs the other role's PIN. Until a role is signed in, the chat actor is `guest`, the Approve and Reject buttons are disabled, and these actions refuse to run: kill-switch toggle, data reset, CSV import, payee creation, flag clearing, clock advance. Only the owner role can add or verify payees.
 
 Onboarding: the page shows summaries of an uploaded trial balance and bank statement (debits against credits, money in and out). "Import uploaded files" calls `data.importer.import_files` with the two required files plus the optional open receivables and open payables files; it replaces the database content (including the audit log), resets the chat and the Monday brief, and writes an `import_files` audit entry. The UI does not offer the optional paid-invoices and scheduled-payments files; the importer accepts them (`docs/algorithms.md` section 9).

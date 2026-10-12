@@ -15,6 +15,8 @@ from audit.log import verify_chain
 from common import db
 from common.db import (AuditEntry, Document, FinancingApplication, Invoice, OutboxEmail, Payment)
 
+pytestmark = pytest.mark.usefixtures("unbacked_automatic")
+
 
 @pytest.fixture()
 def session(tmp_path, monkeypatch):
@@ -405,8 +407,11 @@ def test_approval_dates_follow_simulated_clock(session, monkeypatch, decision):
     if decision == "reject":
         reject(session, req.id, "owner")
     else:
-        if decision == "policy_denial":
-            db.set_setting(session, "kill_switch", "on")
+        if decision == "policy_denial":  # a lasting denial (the kill switch keeps requests pending)
+            payee = session.get(db.Payee, json.loads(req.args_json)["payee_id"])
+            payee.verified = False
+            session.add(payee)
+            session.commit()
         approve(session, req.id, "owner")
     assert req.decided_at.date() == db.get_today(session)
 
@@ -417,3 +422,28 @@ def test_invalid_approver_identity_is_audited(session, identity):
     assert approve(session, request.approval_id, "owner", identity).status == "denied"
     assert _decisions(session)[-1] == "DENY"
     assert verify_chain(session).ok
+
+
+def test_concurrent_final_approval_executes_once(session, monkeypatch):
+    """Two clicks that both saw the request pending: only one may execute it."""
+    req = run_tool(session, "reschedule_payment", {"payment_id": "PAY-0001", "new_date": "2026-12-01"})
+    assert req.status == "needs_approval"
+    with db.session_scope() as other:
+        stale = other.get(executor.ApprovalRequest, req.approval_id)  # loaded before the first click lands
+        assert approve(session, req.approval_id, "owner", "owner-1").status == "ok"
+        monkeypatch.setattr(executor, "_get_pending", lambda *a, **k: stale)
+        second = approve(other, req.approval_id, "owner", "owner-2")
+    assert second.status != "ok"
+    executed = [e for e in session.exec(select(AuditEntry).where(AuditEntry.action == "reschedule_payment"))
+                if e.decision == "EXECUTED"]
+    assert len(executed) == 1
+
+
+def test_kill_switch_at_approval_keeps_request_pending(session):
+    req = run_tool(session, "reschedule_payment", {"payment_id": "PAY-0001", "new_date": "2026-12-01"})
+    db.set_setting(session, "kill_switch", "on")
+    blocked = approve(session, req.approval_id, "owner", "owner-1")
+    assert blocked.status == "denied" and "stays pending" in blocked.reason
+    assert [r.id for r in pending_approvals(session)] == [req.approval_id]
+    db.set_setting(session, "kill_switch", "off")
+    assert approve(session, req.approval_id, "owner", "owner-1").status == "ok"

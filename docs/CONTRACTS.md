@@ -133,7 +133,8 @@ def evaluate(session, tool_name: str, args: dict, actor: str = "agent",
   Any args key named `iban`/`bank_details`/`account_number` → DENY. Payee
   unverified/unknown → DENY. Payment linked (args `document_id` or the invoice's
   `document_id`) to a flagged, uncleared document → DENY.
-- T2 automatic payment: verified payee AND amount < 1,000 AND today's total to that
+- T2 automatic payment: verified payee AND an open AP invoice (`invoice_id`; required while
+  `payment.automatic_requires_invoice` is true, the default) AND amount < 1,000 AND today's total to that
   payee (incl. this one) < 1,000 AND today's total automatic payments (incl. this) < 3,000.
   Else NEEDS_APPROVAL(owner); amount > 5,000 → (owner, accountant).
   "Today's totals" = non-cancelled Payments with `automatic=True` and

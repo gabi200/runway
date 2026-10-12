@@ -106,6 +106,23 @@ def verify_payee(session: Session, payee_id: str, verified: bool) -> dict:
     return row.model_dump(mode="json")
 
 
+def set_payee_iban(session: Session, payee_id: str, iban: str) -> dict:
+    """Fill in the IBAN of a payee that has none (e.g. from CSV import); it stays unverified."""
+    _lock(session)
+    row = session.get(Payee, payee_id)
+    if row is None:
+        raise BankServiceError(404, "Payee not found")
+    if row.iban.strip():
+        raise BankServiceError(409, "Bank details already set; create a new payee to use a different IBAN")
+    if not iban_is_valid(iban):
+        raise BankServiceError(422, "Invalid IBAN")
+    row.iban, row.verified = iban, False
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row.model_dump(mode="json")
+
+
 def create_payment(session: Session, body: dict, actor: str = "agent") -> dict:
     """Schedule a payment, retaining its original idempotency payload."""
     _lock(session)
@@ -206,6 +223,13 @@ def advance(session: Session, days: int) -> dict:
             reason = "Payee is unknown or unverified"
         elif not 0 < payment.amount_cents <= load_rules()["payment"]["max_payment_cents"]:
             reason = "Payment amount is outside allowed bounds"
+        else:
+            # A document flagged after scheduling must still stop the payment.
+            invoice = session.get(Invoice, payment.invoice_id) if payment.invoice_id else None
+            for doc_id in {payment.document_id, invoice.document_id if invoice else None} - {None}:
+                doc = session.get(Document, doc_id, populate_existing=True)
+                if doc is None or (doc.flagged and not doc.cleared):
+                    reason = "Linked document is missing or flagged and uncleared"
         if reason:
             payment.status = "failed"
             session.add(payment)

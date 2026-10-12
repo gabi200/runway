@@ -11,11 +11,12 @@ import json
 from datetime import datetime
 
 
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from agent.financing import compare_financing  # noqa: F401  (re-exported per CONTRACTS section 6)
 from agent.outbox import next_id
-from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, idempotency_key, jsonable  # noqa: F401
+from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
 from common.db import Account, ApprovalRequest, Document, Payment, Setting, get_setting, get_today, utcnow
 from policy import engine as policy
@@ -71,31 +72,15 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
     """Evaluate policy, audit the decision, then execute, park for approval, or deny."""
     args = dict(args or {})
     if tool_name in {"compare_financing", "prepare_financing_application"}:
-        from forecast import engine as forecast
-
-        financing_need = getattr(forecast, "financing_need", None)
-        missing = [key for key in ("amount_cents", "needed_by", "days_needed") if args.get(key) is None]
-        if missing and financing_need is not None:
-            try:
-                need = financing_need(session)
-                args.update({key: need[key] for key in missing})
-            except Exception as exc:
-                reason = f"Financing defaults unavailable: {type(exc).__name__}"
-                audit.append(session, actor, tool_name, args, "DENY", reason)
-                return ToolResult(status="denied", tool=tool_name, reason=reason)
-    # Runtime controls must apply even to exact idempotent replays.
-    session.exec(select(Setting).where(Setting.key == "kill_switch")
-                 .execution_options(populate_existing=True)).all()
-    if get_setting(session, "kill_switch", "off") != "off":
-        decision = policy.evaluate(session, tool_name, args, actor)
-        if decision.outcome == "DENY":
-            audit.append(session, actor, tool_name, args, "DENY", decision.reason)
-            return ToolResult(status="denied", tool=tool_name, reason=decision.reason)
+        try:  # policy must judge the figures the tool will actually use
+            args = _need_defaults(session, args)
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, ToolError) else f"Financing defaults unavailable: {type(exc).__name__}"
+            audit.append(session, actor, tool_name, args, "DENY", reason)
+            return ToolResult(status="denied", tool=tool_name, reason=reason)
     if tool_name == "schedule_payment":
         try:
-            policy._validate(args, *policy._SCHEMAS[tool_name])
-            if args["amount_cents"] > policy.load_rules()["payment"]["max_payment_cents"]:
-                raise ValueError("Payment exceeds maximum amount")
+            policy.validate_call(tool_name, args)
         except (ValueError, TypeError, KeyError) as exc:
             audit.append(session, actor, tool_name, args, "DENY", str(exc))
             return ToolResult(status="denied", tool=tool_name, reason=str(exc))
@@ -103,6 +88,13 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
         existing = session.exec(select(Payment).where(Payment.idempotency_key == key)
                                 .execution_options(populate_existing=True)).first()
         if existing is not None:
+            # Replays skip evaluate(), so runtime controls are checked here.
+            session.exec(select(Setting).where(Setting.key == "kill_switch")
+                         .execution_options(populate_existing=True)).all()
+            if get_setting(session, "kill_switch", "off") != "off":
+                reason = "Kill switch restricts tools to T0"
+                audit.append(session, actor, tool_name, args, "DENY", reason)
+                return ToolResult(status="denied", tool=tool_name, reason=reason)
             try:
                 if actor not in {"agent", "owner", "accountant", "system"}:
                     raise ValueError("Unknown actor")
@@ -155,6 +147,16 @@ def _get_pending(session: Session, approval_id: str, tool: str = "approval") -> 
     return req
 
 
+def _claim(session: Session, approval_id: str, values: dict, **expected) -> bool:
+    """Compare-and-set on a still-pending request, so concurrent clicks cannot both win."""
+    stmt = update(ApprovalRequest).where(ApprovalRequest.id == approval_id, ApprovalRequest.status == "pending")
+    for column, value in expected.items():
+        stmt = stmt.where(getattr(ApprovalRequest, column) == value)
+    won = session.execute(stmt.values(**values)).rowcount == 1
+    session.commit()
+    return won
+
+
 def approve(session: Session, approval_id: str, role: str, approver_id: str | None = None) -> ToolResult:
     """Record distinct human approvers and re-evaluate every denial before executing.
 
@@ -188,13 +190,19 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
                           reason="Same approver cannot fill two roles")
     if role not in [entry["role"] for entry in given]:
         given.append({"role": role, "approver_id": identity})
-    req.approvals_json = json.dumps(given)
-    session.add(req)
-    session.commit()
+    if not _claim(session, req.id, {"approvals_json": json.dumps(given)}, approvals_json=req.approvals_json):
+        reason = "Approval request changed at the same time; reload and try again"
+        audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity}, "DENY", reason)
+        return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id, reason=reason)
     approved_roles = [entry["role"] for entry in given]
     audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity},
                  "APPROVED", f"approvals so far: {given}")
     decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
+    if decision.outcome == "DENY" and get_setting(session, "kill_switch", "off") != "off":
+        # Temporary stop: keep the request and its approvals for when the switch is off again.
+        audit.append(session, role, req.tool_name, args, "DENY", f"re-check at approval: {decision.reason}")
+        return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id,
+                          reason=f"{decision.reason}; the request stays pending")
     if decision.outcome == "DENY":
         req.status, req.decided_at, req.result_json = "rejected", _sim_now(session), _canon({"denied": decision.reason})
         session.add(req)
@@ -206,6 +214,9 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
         return ToolResult(status="needs_approval", tool=req.tool_name, approval_id=req.id,
                           reason=f"waiting for: {', '.join(missing) or decision.reason}",
                           data={"required_roles": required, "approved_roles": approved_roles})
+    if not _claim(session, req.id, {"status": "executing"}):
+        return ToolResult(status="error", tool=req.tool_name, approval_id=req.id,
+                          reason="approval is already being executed or decided")
     result = _execute(session, req.tool_name, args, role, automatic=False)
     req.status = "executed" if result.status == "ok" else "failed"
     req.decided_at = _sim_now(session)

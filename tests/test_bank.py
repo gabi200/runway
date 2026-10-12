@@ -456,3 +456,42 @@ def test_verify_requires_valid_iban():
             assert exc.status_code == 422
         else:
             raise AssertionError("verification without IBAN must fail")
+
+
+def test_advance_refuses_payment_whose_document_was_flagged_later():
+    from bank.service import advance
+    from common.db import Document
+    with session_scope() as s:
+        s.add(Document(id="DOC-LATE", filename="inv.pdf", kind="invoice"))
+        s.add(Payment(id="LINKED", idempotency_key="linked", payee_id="PAYEE-TEST",
+                      amount_cents=100, currency="EUR", execute_date=TODAY, document_id="DOC-LATE"))
+        s.commit()
+        doc = s.get(Document, "DOC-LATE")
+        doc.flagged = True
+        s.add(doc)
+        s.commit()
+        assert advance(s, 0)["executed_count"] == 0
+        assert s.get(Payment, "LINKED").status == "failed"
+        doc.cleared = True
+        s.add(doc)
+        p = s.get(Payment, "LINKED")
+        p.status = "scheduled"
+        s.add(p)
+        s.commit()
+        assert advance(s, 0)["executed_payment_ids"] == ["LINKED"]
+
+
+def test_missing_iban_can_be_set_once_by_a_human():
+    with session_scope() as s:
+        s.add(Payee(id="PAYEE-IMPORTED", name="Supplier", iban="", counterparty_id="SUP-TEST",
+                    created_at=datetime.now(timezone.utc)))
+        s.commit()
+    client = TestClient(app)
+    human = {"Authorization": "Bearer human-dev-token"}
+    url = "/payees/PAYEE-IMPORTED/iban"
+    assert client.put(url, json={"iban": "DE89 3704 0044 0532 0130 00"}, headers=AUTH).status_code == 403
+    assert client.put(url, json={"iban": "DE00 1234"}, headers=human).status_code == 422
+    row = client.put(url, json={"iban": "DE89 3704 0044 0532 0130 00"}, headers=human).json()
+    assert row["iban"] == "DE89 3704 0044 0532 0130 00" and row["verified"] is False
+    assert client.put(url, json={"iban": "GB82 WEST 1234 5698 7654 32"}, headers=human).status_code == 409
+    assert client.patch("/payees/PAYEE-IMPORTED", json={"verified": True}, headers=human).json()["verified"]
