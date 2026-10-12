@@ -136,6 +136,22 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
     assert not [button for button in at.button if button.label in ("Verify", "Unverify")]
 
 
+def test_owner_fills_missing_iban_once(at):
+    from datetime import datetime, timezone
+    with db.session_scope() as s:
+        s.add(db.Payee(id="PAYEE-IMPORTED", name="Imported", iban="", created_at=datetime.now(timezone.utc)))
+        s.commit()
+    sign_in(at)
+    goto(at, "Payees (humans only)")
+    at.text_input(key="iban_PAYEE-IMPORTED").set_value("DE89 3704 0044 0532 0130 00")
+    at.button(key="set_iban_PAYEE-IMPORTED").click().run()
+    assert not at.exception
+    assert not [w for w in at.text_input if w.key == "iban_PAYEE-IMPORTED"]
+    with db.session_scope() as s:
+        row = s.get(db.Payee, "PAYEE-IMPORTED")
+        assert row.iban == "DE89 3704 0044 0532 0130 00" and row.verified is False
+
+
 def test_human_actions_need_sign_in_and_wrong_pin_rejected(at):
     goto(at, "Payees (humans only)")
     assert not [b for b in at.button if b.label in ("Verify", "Unverify")]

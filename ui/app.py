@@ -626,6 +626,18 @@ def page_payees() -> None:
     for payee in payees:
         details, action = st.columns([4, 1])
         details.write(f"{payee['name']} ({payee['id']})")
+        if not payee["iban"].strip():  # imported payees arrive without bank details
+            new_iban = details.text_input("IBAN (can be set once)", key=f"iban_{payee['id']}")
+            if details.button("Set IBAN", key=f"set_iban_{payee['id']}") and new_iban:
+                try:
+                    with human_bank() as bank:
+                        bank.set_payee_iban(payee["id"], new_iban)
+                    with session_scope() as s:
+                        log_human(s, "set_payee_iban", {"payee_id": payee["id"]},
+                                  "HUMAN_ACTION", "IBAN filled in via the bank's human token; payee unverified")
+                    st.rerun()
+                except BankError as exc:
+                    st.error(f"Bank refused: {exc.detail}")
         verified = not payee["verified"]
         if action.button("Verify" if verified else "Unverify", key=f"verify_{payee['id']}"):
             try:
@@ -655,7 +667,8 @@ def page_payees() -> None:
                 st.success(f"Created {row['id']} (verified={row['verified']}).")
             except BankError as exc:
                 st.error(f"Bank refused: {exc.detail}")
-    st.caption("To use a different IBAN, create a new payee. Existing bank details cannot be edited.")
+    st.caption("A missing IBAN can be filled in once. To use a different IBAN, create a new payee: "
+               "existing bank details cannot be edited.")
 
 
 # --------------------------------------------------------------------------- #

@@ -479,3 +479,19 @@ def test_advance_refuses_payment_whose_document_was_flagged_later():
         s.add(p)
         s.commit()
         assert advance(s, 0)["executed_payment_ids"] == ["LINKED"]
+
+
+def test_missing_iban_can_be_set_once_by_a_human():
+    with session_scope() as s:
+        s.add(Payee(id="PAYEE-IMPORTED", name="Supplier", iban="", counterparty_id="SUP-TEST",
+                    created_at=datetime.now(timezone.utc)))
+        s.commit()
+    client = TestClient(app)
+    human = {"Authorization": "Bearer human-dev-token"}
+    url = "/payees/PAYEE-IMPORTED/iban"
+    assert client.put(url, json={"iban": "DE89 3704 0044 0532 0130 00"}, headers=AUTH).status_code == 403
+    assert client.put(url, json={"iban": "DE00 1234"}, headers=human).status_code == 422
+    row = client.put(url, json={"iban": "DE89 3704 0044 0532 0130 00"}, headers=human).json()
+    assert row["iban"] == "DE89 3704 0044 0532 0130 00" and row["verified"] is False
+    assert client.put(url, json={"iban": "GB82 WEST 1234 5698 7654 32"}, headers=human).status_code == 409
+    assert client.patch("/payees/PAYEE-IMPORTED", json={"verified": True}, headers=human).json()["verified"]

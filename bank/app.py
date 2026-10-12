@@ -76,6 +76,11 @@ class PayeePatch(BaseModel):
     verified: bool = Field(strict=True)
 
 
+class PayeeIban(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    iban: str = Field(min_length=1)
+
+
 @app.get("/accounts", dependencies=[Depends(authorize("read"))])
 def accounts(session: DB) -> list[dict]:
     return service.get_accounts(session)
@@ -101,6 +106,11 @@ def add_payee(body: PayeeCreate, session: DB) -> dict:
 @app.patch("/payees/{payee_id}", dependencies=[Depends(authorize("payees"))])
 def patch_payee(payee_id: str, body: PayeePatch, session: DB) -> dict:
     return service.verify_payee(session, payee_id, body.verified)
+
+
+@app.put("/payees/{payee_id}/iban", dependencies=[Depends(authorize("payees"))])
+def set_payee_iban(payee_id: str, body: PayeeIban, session: DB) -> dict:
+    return service.set_payee_iban(session, payee_id, body.iban)
 
 
 @app.post("/payments")

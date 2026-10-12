@@ -106,6 +106,23 @@ def verify_payee(session: Session, payee_id: str, verified: bool) -> dict:
     return row.model_dump(mode="json")
 
 
+def set_payee_iban(session: Session, payee_id: str, iban: str) -> dict:
+    """Fill in the IBAN of a payee that has none (e.g. from CSV import); it stays unverified."""
+    _lock(session)
+    row = session.get(Payee, payee_id)
+    if row is None:
+        raise BankServiceError(404, "Payee not found")
+    if row.iban.strip():
+        raise BankServiceError(409, "Bank details already set; create a new payee to use a different IBAN")
+    if not iban_is_valid(iban):
+        raise BankServiceError(422, "Invalid IBAN")
+    row.iban, row.verified = iban, False
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row.model_dump(mode="json")
+
+
 def create_payment(session: Session, body: dict, actor: str = "agent") -> dict:
     """Schedule a payment, retaining its original idempotency payload."""
     _lock(session)
