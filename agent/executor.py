@@ -207,6 +207,11 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
     audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity},
                  "APPROVED", f"approvals so far: {given}")
     decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
+    if decision.outcome == "DENY" and get_setting(session, "kill_switch", "off") != "off":
+        # Temporary stop: keep the request and its approvals for when the switch is off again.
+        audit.append(session, role, req.tool_name, args, "DENY", f"re-check at approval: {decision.reason}")
+        return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id,
+                          reason=f"{decision.reason}; the request stays pending")
     if decision.outcome == "DENY":
         req.status, req.decided_at, req.result_json = "rejected", _sim_now(session), _canon({"denied": decision.reason})
         session.add(req)
