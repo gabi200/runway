@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 
 
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from agent.financing import compare_financing  # noqa: F401  (re-exported per CONTRACTS section 6)
@@ -155,6 +156,16 @@ def _get_pending(session: Session, approval_id: str, tool: str = "approval") -> 
     return req
 
 
+def _claim(session: Session, approval_id: str, values: dict, **expected) -> bool:
+    """Compare-and-set on a still-pending request, so concurrent clicks cannot both win."""
+    stmt = update(ApprovalRequest).where(ApprovalRequest.id == approval_id, ApprovalRequest.status == "pending")
+    for column, value in expected.items():
+        stmt = stmt.where(getattr(ApprovalRequest, column) == value)
+    won = session.execute(stmt.values(**values)).rowcount == 1
+    session.commit()
+    return won
+
+
 def approve(session: Session, approval_id: str, role: str, approver_id: str | None = None) -> ToolResult:
     """Record distinct human approvers and re-evaluate every denial before executing.
 
@@ -188,9 +199,10 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
                           reason="Same approver cannot fill two roles")
     if role not in [entry["role"] for entry in given]:
         given.append({"role": role, "approver_id": identity})
-    req.approvals_json = json.dumps(given)
-    session.add(req)
-    session.commit()
+    if not _claim(session, req.id, {"approvals_json": json.dumps(given)}, approvals_json=req.approvals_json):
+        reason = "Approval request changed at the same time; reload and try again"
+        audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity}, "DENY", reason)
+        return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id, reason=reason)
     approved_roles = [entry["role"] for entry in given]
     audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity},
                  "APPROVED", f"approvals so far: {given}")
@@ -206,6 +218,9 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
         return ToolResult(status="needs_approval", tool=req.tool_name, approval_id=req.id,
                           reason=f"waiting for: {', '.join(missing) or decision.reason}",
                           data={"required_roles": required, "approved_roles": approved_roles})
+    if not _claim(session, req.id, {"status": "executing"}):
+        return ToolResult(status="error", tool=req.tool_name, approval_id=req.id,
+                          reason="approval is already being executed or decided")
     result = _execute(session, req.tool_name, args, role, automatic=False)
     req.status = "executed" if result.status == "ok" else "failed"
     req.decided_at = _sim_now(session)
