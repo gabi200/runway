@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 
 from agent.financing import compare_financing  # noqa: F401  (re-exported per CONTRACTS section 6)
 from agent.outbox import next_id
-from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, idempotency_key, jsonable  # noqa: F401
+from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
 from common.db import Account, ApprovalRequest, Document, Payment, Setting, get_setting, get_today, utcnow
 from policy import engine as policy
@@ -72,18 +72,12 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
     """Evaluate policy, audit the decision, then execute, park for approval, or deny."""
     args = dict(args or {})
     if tool_name in {"compare_financing", "prepare_financing_application"}:
-        from forecast import engine as forecast
-
-        financing_need = getattr(forecast, "financing_need", None)
-        missing = [key for key in ("amount_cents", "needed_by", "days_needed") if args.get(key) is None]
-        if missing and financing_need is not None:
-            try:
-                need = financing_need(session)
-                args.update({key: need[key] for key in missing})
-            except Exception as exc:
-                reason = f"Financing defaults unavailable: {type(exc).__name__}"
-                audit.append(session, actor, tool_name, args, "DENY", reason)
-                return ToolResult(status="denied", tool=tool_name, reason=reason)
+        try:  # policy must judge the figures the tool will actually use
+            args = _need_defaults(session, args)
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, ToolError) else f"Financing defaults unavailable: {type(exc).__name__}"
+            audit.append(session, actor, tool_name, args, "DENY", reason)
+            return ToolResult(status="denied", tool=tool_name, reason=reason)
     # Runtime controls must apply even to exact idempotent replays.
     session.exec(select(Setting).where(Setting.key == "kill_switch")
                  .execution_options(populate_existing=True)).all()
