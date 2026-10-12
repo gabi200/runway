@@ -56,7 +56,7 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Approver identity | Who gave an approval, as opposed to which role. The UI uses the browser session id. One identity cannot give both approvals of a four-eyes request, so the owner and the accountant must use two sessions. |
 | PIN sign-in | The demo login of the UI: `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` (defaults 1111 and 2222). It separates the roles for the demo; it is not production authentication. |
 | Material amount | Above `accountant_above_cents` (5,000.00): requires both owner and accountant. |
-| Automatic payment | A payment the agent may schedule without approval: payee verified, amount under 1,000, daily total to the payee under 1,000, daily total of all automatic payments under 3,000. |
+| Automatic payment | A payment the agent may schedule without approval: payee verified, an open supplier invoice behind it, amount under 1,000, daily total to the payee under 1,000, daily total of all automatic payments under 3,000. |
 | Daily cap | The per-payee and global daily limits on automatic payments. |
 | Kill switch | A setting (`kill_switch = on`) that drops the agent to T0: only read tools are allowed until a human switches it off. |
 | Tool executor | `agent/executor.py`. The only code that turns an allowed tool call into a side effect. It owns the audit calls and the approval workflow. |
