@@ -77,6 +77,12 @@ def run(out: Path, seed: int) -> dict:
                 args = {"payee_id": "PAYEE-CARTONIA", "amount_cents": 95_000, "execute_date": db.get_today(s).isoformat()}
                 assert record("6. A1 linked payment blocked", run_tool(s, "schedule_payment", {**args, "document_id": malicious.id})).status == "denied"
                 assert record("6. A1 unverified payee blocked", run_tool(s, "schedule_payment", {**args, "payee_id": "PAYEE-NEWVENDOR"})).status == "denied"
+                cartonia = s.get(db.Invoice, summary["cartonia_invoice_id"])
+                by_invoice = {**args, "invoice_id": cartonia.id, "amount_cents": cartonia.amount_cents}
+                assert record("6. A7 Cartonia invoice paid without document_id: blocked by the supplier link",
+                              run_tool(s, "schedule_payment", by_invoice)).status == "denied"
+                # Cartonia stays blocked until a human clears the flag, so the next attacks use another supplier.
+                args = {**args, "payee_id": "PAYEE-VOLTA"}
                 email = (docs / "owner_email_A2.txt").read_text()
                 assert ingest_text(s, email, "owner_email_A2.txt", "email", None).flagged
                 req = record("A2: EUR 9,800 requires both roles", run_tool(s, "schedule_payment", {**args, "amount_cents": 980_000}))

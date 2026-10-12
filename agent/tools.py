@@ -196,7 +196,8 @@ def list_documents(session: Session, args: dict, ctx: dict) -> list[dict]:
     q = select(Document)
     if args.get("flagged_only"):
         q = q.where(Document.flagged == True)  # noqa: E712
-    return [_row(d, drop=("content_text",)) for d in session.exec(q.order_by(Document.id))]
+    return [{**_row(d, drop=("content_text",)), "invoice_ids": json.loads(d.invoice_ids),
+             "counterparty_ids": json.loads(d.counterparty_ids)} for d in session.exec(q.order_by(Document.id))]
 
 
 def flag_document(session: Session, args: dict, ctx: dict) -> dict:
@@ -209,7 +210,7 @@ def flag_document(session: Session, args: dict, ctx: dict) -> dict:
     mail = outbox.send_email(
         session, outbox.owner_email(session), f"Fraud alert: document {doc.id} flagged",
         f"Runway flagged document {doc.id} ({doc.filename}, from {doc.sender or 'unknown sender'}).\n\n"
-        f"Reason: {doc.flag_reason}\n\nAny payment linked to it is blocked until you review and clear it.",
+        f"Reason: {doc.flag_reason}\n\nAny payment linked to it, to the invoices it names or to its supplier is blocked until you review and clear it.",
         kind="fraud_alert")
     return {"document_id": doc.id, "flagged": True, "alert_email_id": mail.id}
 
