@@ -78,19 +78,9 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
             reason = str(exc) if isinstance(exc, ToolError) else f"Financing defaults unavailable: {type(exc).__name__}"
             audit.append(session, actor, tool_name, args, "DENY", reason)
             return ToolResult(status="denied", tool=tool_name, reason=reason)
-    # Runtime controls must apply even to exact idempotent replays.
-    session.exec(select(Setting).where(Setting.key == "kill_switch")
-                 .execution_options(populate_existing=True)).all()
-    if get_setting(session, "kill_switch", "off") != "off":
-        decision = policy.evaluate(session, tool_name, args, actor)
-        if decision.outcome == "DENY":
-            audit.append(session, actor, tool_name, args, "DENY", decision.reason)
-            return ToolResult(status="denied", tool=tool_name, reason=decision.reason)
     if tool_name == "schedule_payment":
         try:
-            policy._validate(args, *policy._SCHEMAS[tool_name])
-            if args["amount_cents"] > policy.load_rules()["payment"]["max_payment_cents"]:
-                raise ValueError("Payment exceeds maximum amount")
+            policy.validate_call(tool_name, args)
         except (ValueError, TypeError, KeyError) as exc:
             audit.append(session, actor, tool_name, args, "DENY", str(exc))
             return ToolResult(status="denied", tool=tool_name, reason=str(exc))
@@ -98,6 +88,13 @@ def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent")
         existing = session.exec(select(Payment).where(Payment.idempotency_key == key)
                                 .execution_options(populate_existing=True)).first()
         if existing is not None:
+            # Replays skip evaluate(), so runtime controls are checked here.
+            session.exec(select(Setting).where(Setting.key == "kill_switch")
+                         .execution_options(populate_existing=True)).all()
+            if get_setting(session, "kill_switch", "off") != "off":
+                reason = "Kill switch restricts tools to T0"
+                audit.append(session, actor, tool_name, args, "DENY", reason)
+                return ToolResult(status="denied", tool=tool_name, reason=reason)
             try:
                 if actor not in {"agent", "owner", "accountant", "system"}:
                     raise ValueError("Unknown actor")

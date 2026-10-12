@@ -120,6 +120,13 @@ def _validate(args: dict, required: str, fields: dict[str, str]) -> None:
             raise ValueError(f"Invalid {key}")
 
 
+def validate_call(tool_name: str, args: dict) -> None:
+    """Stateless schema and amount checks, for idempotent replays that skip `evaluate`."""
+    _validate(args, *_SCHEMAS[tool_name])
+    if tool_name == "schedule_payment" and args["amount_cents"] > load_rules()["payment"]["max_payment_cents"]:
+        raise ValueError("Payment exceeds maximum amount")
+
+
 def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
              approvals: Sequence[str] = ()) -> Decision:
     """Evaluate fail-closed validation, forbidden capabilities, then the kill switch.
