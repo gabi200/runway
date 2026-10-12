@@ -456,3 +456,26 @@ def test_verify_requires_valid_iban():
             assert exc.status_code == 422
         else:
             raise AssertionError("verification without IBAN must fail")
+
+
+def test_advance_refuses_payment_whose_document_was_flagged_later():
+    from bank.service import advance
+    from common.db import Document
+    with session_scope() as s:
+        s.add(Document(id="DOC-LATE", filename="inv.pdf", kind="invoice"))
+        s.add(Payment(id="LINKED", idempotency_key="linked", payee_id="PAYEE-TEST",
+                      amount_cents=100, currency="EUR", execute_date=TODAY, document_id="DOC-LATE"))
+        s.commit()
+        doc = s.get(Document, "DOC-LATE")
+        doc.flagged = True
+        s.add(doc)
+        s.commit()
+        assert advance(s, 0)["executed_count"] == 0
+        assert s.get(Payment, "LINKED").status == "failed"
+        doc.cleared = True
+        s.add(doc)
+        p = s.get(Payment, "LINKED")
+        p.status = "scheduled"
+        s.add(p)
+        s.commit()
+        assert advance(s, 0)["executed_payment_ids"] == ["LINKED"]

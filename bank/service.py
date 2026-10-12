@@ -206,6 +206,13 @@ def advance(session: Session, days: int) -> dict:
             reason = "Payee is unknown or unverified"
         elif not 0 < payment.amount_cents <= load_rules()["payment"]["max_payment_cents"]:
             reason = "Payment amount is outside allowed bounds"
+        else:
+            # A document flagged after scheduling must still stop the payment.
+            invoice = session.get(Invoice, payment.invoice_id) if payment.invoice_id else None
+            for doc_id in {payment.document_id, invoice.document_id if invoice else None} - {None}:
+                doc = session.get(Document, doc_id, populate_existing=True)
+                if doc is None or (doc.flagged and not doc.cleared):
+                    reason = "Linked document is missing or flagged and uncleared"
         if reason:
             payment.status = "failed"
             session.add(payment)
