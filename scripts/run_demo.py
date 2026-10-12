@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from dataclasses import asdict
 import json
 import os
@@ -111,7 +112,8 @@ def run(out: Path, seed: int) -> dict:
                     rows = [r.model_dump(mode="json") for r in s.exec(select(model).order_by(model.id))]
                     (out / filename).write_text(json.dumps(rows, indent=2) + "\n")
             # SQLite backup is consistent even if journal settings change.
-            with sqlite3.connect(root / "demo.db") as source, sqlite3.connect(root / "tampered.db") as copy:
+            # closing(): sqlite3's own context manager only commits, and open files block cleanup on Windows.
+            with closing(sqlite3.connect(root / "demo.db")) as source, closing(sqlite3.connect(root / "tampered.db")) as copy:
                 source.backup(copy)
                 copy.execute("DROP TRIGGER auditentry_no_update")
                 copy.execute("UPDATE auditentry SET reason='tampered on a copy' WHERE id=2")
