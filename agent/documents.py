@@ -10,13 +10,13 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from common.db import Document
+from common.db import Counterparty, Document, Invoice
 from llm.pseudonym import IBAN_RE
 
 _IBAN_CHANGE = re.compile(
     r"(bank|account|payment)\s+(details?|information|data)\s+(have\s+|has\s+)?(been\s+)?(changed|updated|new)"
     r"|(new|changed|updated)\s+(bank|account|iban)|(change|update)\s+(of\s+)?(our\s+)?(bank|iban|account)"
-    r"|pay\s+(to\s+)?(the\s+)?(new\s+)?iban",
+    r"|pay\s+(to\s+)?(the\s+|this\s+|our\s+)?new\s+iban",
     re.I,
 )
 _SKIP = re.compile(r"skip(ping)?\s+(the\s+)?(approval|approvals|review|verification|checks?)|without\s+(any\s+)?approval|bypass\s+approval", re.I)
@@ -83,11 +83,35 @@ def sanitize_meta(value: str | None, cap: int = _META_MAX) -> str:
     return re.sub(r"\s+", " ", v).strip()[:cap]
 
 
+_EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
+
+
+def _whole(token: str) -> re.Pattern:
+    """Match `token` only when not embedded in a longer alphanumeric/hyphen run."""
+    return re.compile(rf"(?<![\w-]){re.escape(token)}(?![\w-])", re.I)
+
+
+def link_document(session, text: str, filename: str, sender: str | None) -> tuple[list[str], list[str]]:
+    """Deterministic (invoice_ids, counterparty_ids) this document refers to; pure code, no LLM."""
+    hay = "\n".join(x for x in (sender, filename, text) if x)
+    invoices = [i for i in session.exec(select(Invoice).where(Invoice.direction == "AP", Invoice.status == "open"))
+                if _whole(i.number).search(hay)]
+    domains = {d.lower() for d in _EMAIL.findall(hay)}
+    cps = {i.counterparty_id for i in invoices}
+    for c in session.exec(select(Counterparty)):
+        if (c.name.strip() and re.search(rf"(?<!\w){re.escape(c.name.strip())}(?!\w)", hay, re.I)) or (
+                c.email and "@" in c.email and c.email.rsplit("@", 1)[1].lower() in domains):
+            cps.add(c.id)
+    return sorted(i.id for i in invoices), sorted(cps)
+
+
 def _store(session, text: str, filename: str, kind: str, sender: str | None) -> Document:
     indicators = scan_document(text, sender, filename)
+    inv_ids, cp_ids = link_document(session, text, filename, sender)
     doc = Document(id=_next_doc_id(session), filename=sanitize_meta(filename) or "unnamed",
                    kind=sanitize_meta(kind, 40) or "other", sender=sanitize_meta(sender) or None,
-                   content_text=text, received_at=datetime.now(timezone.utc))
+                   content_text=text, received_at=datetime.now(timezone.utc),
+                   invoice_ids=json.dumps(inv_ids), counterparty_ids=json.dumps(cp_ids))
     session.add(doc)
     session.commit()
     session.refresh(doc)

@@ -7,6 +7,7 @@ integer minor units (cents) to avoid floating-point rounding errors.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -129,6 +130,8 @@ class Document(SQLModel, table=True):
     flagged: bool = False
     flag_reason: Optional[str] = None
     cleared: bool = False  # a human reviewed the flag and cleared it
+    invoice_ids: str = "[]"  # JSON list of open AP invoice ids named in the text (set at ingestion)
+    counterparty_ids: str = "[]"  # JSON list of counterparty ids named in the text/sender
 
 
 class ApprovalRequest(SQLModel, table=True):
@@ -221,6 +224,11 @@ def get_engine(path: str | Path | None = None) -> Engine:
     if url not in _engines:
         eng = create_engine(url, connect_args={"check_same_thread": False})
         SQLModel.metadata.create_all(eng)
+        with eng.begin() as conn:  # additive migration for databases created before document links
+            have = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(document)")}
+            for col in ("invoice_ids", "counterparty_ids"):
+                if col not in have:
+                    conn.exec_driver_sql(f"ALTER TABLE document ADD COLUMN {col} VARCHAR NOT NULL DEFAULT '[]'")
         _engines[url] = eng
     return _engines[url]
 
@@ -270,6 +278,27 @@ def get_today(s: Session) -> date:
 
 def kill_switch_on(s: Session) -> bool:
     return get_setting(s, "kill_switch", "off") == "on"
+
+
+def blocking_documents(s: Session, payee_id: str, invoice_id: str | None = None,
+                       document_id: str | None = None) -> list[str]:
+    """Ids of documents that block a payment: flagged and uncleared (or missing) and linked to it.
+
+    Linked = the explicit document, the invoice's document, a doc naming the invoice, or a doc naming the payee's counterparty.
+    """
+    payee = s.get(Payee, payee_id, populate_existing=True)
+    invoice = s.get(Invoice, invoice_id, populate_existing=True) if invoice_id else None
+    explicit = {document_id, invoice.document_id if invoice else None} - {None}
+    cp = payee.counterparty_id if payee else None
+    docs = s.exec(select(Document).order_by(Document.id).execution_options(populate_existing=True)).all()
+    found = {d.id for d in docs}
+    out = sorted(explicit - found)
+    for d in docs:
+        linked = (d.id in explicit or (invoice_id and invoice_id in json.loads(d.invoice_ids or "[]"))
+                  or (cp and cp in json.loads(d.counterparty_ids or "[]")))
+        if linked and d.flagged and not d.cleared:
+            out.append(d.id)
+    return out
 
 
 def account_balance_cents(s: Session, account_id: str = "ACC-MAIN", as_of: date | None = None) -> int:

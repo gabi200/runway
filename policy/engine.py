@@ -13,7 +13,8 @@ import yaml
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
-from common.db import Account, Document, Invoice, OutboxEmail, Payee, Payment, Setting, get_setting, get_today
+from common.db import (Account, Invoice, OutboxEmail, Payee, Payment, Setting, blocking_documents,
+                       get_setting, get_today)
 
 
 @dataclass(frozen=True)
@@ -188,11 +189,8 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
                 remaining = invoice.amount_cents - sum(p.amount_cents for p in committed)
                 if amount != remaining:
                     return Decision("DENY", "Payment amount must equal the remaining unpaid and unscheduled invoice balance", tier)
-            doc_ids = {args.get("document_id"), invoice.document_id if invoice else None} - {None}
-            for doc_id in doc_ids:
-                doc = session.get(Document, doc_id, populate_existing=True)
-                if doc is None or (doc.flagged and not doc.cleared):
-                    return Decision("DENY", "Linked document is missing or flagged and uncleared", tier)
+            if blocking_documents(session, payee.id, args.get("invoice_id"), args.get("document_id")):
+                return Decision("DENY", "Linked document is missing or flagged and uncleared", tier)
             payments = session.exec(select(Payment).where(Payment.automatic == True,
                 Payment.status != "cancelled", Payment.created_sim_date == today)
                 .execution_options(populate_existing=True)).all()

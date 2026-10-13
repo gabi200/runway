@@ -577,17 +577,20 @@ def page_documents() -> None:
     st.subheader("Stored documents")
     with session_scope() as s:
         docs = list(s.exec(select(Document).order_by(Document.id)))
-        view = [(d.id, d.filename, d.kind, d.sender, d.flagged, d.cleared, d.flag_reason, d.content_text)
-                for d in docs]
+        view = [(d.id, d.filename, d.kind, d.sender, d.flagged, d.cleared, d.flag_reason, d.content_text,
+                 json.loads(d.invoice_ids), json.loads(d.counterparty_ids)) for d in docs]
     if not view:
         st.caption("No documents yet.")
-    for did, fn, k, snd, flagged, cleared, reason, text in view:
+    for did, fn, k, snd, flagged, cleared, reason, text, inv_ids, cp_ids in view:
         status = ":blue-badge[Cleared by human]" if (flagged and cleared) else (
             ":red-badge[Flagged]" if flagged else ":green-badge[Clean]")
         with st.expander(f"{status} {safe_text(f'{did} - {fn}')}"):
             if flagged:
                 st.warning(f"Reasons: {safe_text(reason)}")
             st.caption(safe_text(f"Kind: {k}  |  Sender: {snd or 'unknown'}"))
+            if inv_ids or cp_ids:
+                st.caption(safe_text(f"Linked to: invoices {', '.join(inv_ids) or 'none'}, "
+                                     f"counterparties {', '.join(cp_ids) or 'none'}"))
             st.text(text[:3000])
             if flagged and not cleared:
                 if auth.signed_in():

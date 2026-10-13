@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from policy.engine import load_rules
 
 from common.db import (Account, Counterparty, Document, Invoice, Payee, Payment,
-                       Setting, Transaction, account_balance_cents, get_today, set_setting)
+                       Setting, Transaction, account_balance_cents, blocking_documents, get_today, set_setting)
 
 
 class BankServiceError(Exception):
@@ -161,6 +161,8 @@ def create_payment(session: Session, body: dict, actor: str = "agent") -> dict:
             raise BankServiceError(422, "Payments exceed invoice amount")
     if body.get("document_id") and session.get(Document, body["document_id"]) is None:
         raise BankServiceError(422, "Unknown document")
+    if blocking_documents(session, payee.id, body.get("invoice_id"), body.get("document_id")):
+        raise BankServiceError(422, "Linked document is missing or flagged and uncleared")
     payment = Payment(id=_next_id(session, Payment, "PAY-"), **body,
                       created_sim_date=get_today(session), created_by=actor,
                       created_at=datetime.now(timezone.utc))
@@ -225,11 +227,8 @@ def advance(session: Session, days: int) -> dict:
             reason = "Payment amount is outside allowed bounds"
         else:
             # A document flagged after scheduling must still stop the payment.
-            invoice = session.get(Invoice, payment.invoice_id) if payment.invoice_id else None
-            for doc_id in {payment.document_id, invoice.document_id if invoice else None} - {None}:
-                doc = session.get(Document, doc_id, populate_existing=True)
-                if doc is None or (doc.flagged and not doc.cleared):
-                    reason = "Linked document is missing or flagged and uncleared"
+            if blocking_documents(session, payment.payee_id, payment.invoice_id, payment.document_id):
+                reason = "Linked document is missing or flagged and uncleared"
         if reason:
             payment.status = "failed"
             session.add(payment)

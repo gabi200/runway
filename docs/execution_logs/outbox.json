@@ -3,7 +3,7 @@
     "id": "MAIL-0001",
     "subject": "Payment overdue: invoice LUM-2026-0091",
     "invoice_id": "AR-1091",
-    "sent_at": "2026-10-19T20:24:57.615686Z",
+    "sent_at": "2026-10-19T22:15:38.580689Z",
     "body": "Dear Bergmann Toys,\n\nInvoice LUM-2026-0091 for \u20ac7,400.00, due on 2026-10-04, is 15 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
     "to": "ap@bergmann-toys.example",
     "kind": "reminder"
@@ -12,7 +12,7 @@
     "id": "MAIL-0002",
     "subject": "Payment overdue: invoice LUM-2026-0092",
     "invoice_id": "AR-1092",
-    "sent_at": "2026-10-19T20:24:57.649435Z",
+    "sent_at": "2026-10-19T22:15:38.622069Z",
     "body": "Dear Lindqvist Candles,\n\nInvoice LUM-2026-0092 for \u20ac5,200.00, due on 2026-10-11, is 8 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
     "to": "billing@lindqvist-candles.example",
     "kind": "reminder"
@@ -21,8 +21,8 @@
     "id": "MAIL-0003",
     "subject": "Fraud alert: document DOC-0001 flagged",
     "invoice_id": null,
-    "sent_at": "2026-10-19T20:24:58.134212Z",
-    "body": "Runway flagged document DOC-0001 (cartonia_invoice_A1.pdf, from unknown sender).\n\nReason: bank-detail change requested; contains an IBAN alongside a bank-detail change; asks to skip approval; contains instructions aimed at an AI assistant (ignore previous instructions); urgency combined with a payment request\n\nAny payment linked to it is blocked until you review and clear it.",
+    "sent_at": "2026-10-19T22:15:39.261460Z",
+    "body": "Runway flagged document DOC-0001 (cartonia_invoice_A1.pdf, from unknown sender).\n\nReason: bank-detail change requested; contains an IBAN alongside a bank-detail change; asks to skip approval; contains instructions aimed at an AI assistant (ignore previous instructions); urgency combined with a payment request\n\nAny payment linked to it, to the invoices it names or to its supplier is blocked until you review and clear it.",
     "to": "owner@lumen-packaging.example",
     "kind": "fraud_alert"
   },
@@ -30,8 +30,8 @@
     "id": "MAIL-0004",
     "subject": "Fraud alert: document DOC-0002 flagged",
     "invoice_id": null,
-    "sent_at": "2026-10-19T20:24:58.194519Z",
-    "body": "Runway flagged document DOC-0002 (owner_email_A2.txt, from unknown sender).\n\nReason: asks to skip approval; urgency combined with a payment request\n\nAny payment linked to it is blocked until you review and clear it.",
+    "sent_at": "2026-10-19T22:15:39.344230Z",
+    "body": "Runway flagged document DOC-0002 (owner_email_A2.txt, from unknown sender).\n\nReason: asks to skip approval; urgency combined with a payment request\n\nAny payment linked to it, to the invoices it names or to its supplier is blocked until you review and clear it.",
     "to": "owner@lumen-packaging.example",
     "kind": "fraud_alert"
   }

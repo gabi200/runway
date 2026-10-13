@@ -175,3 +175,18 @@ def test_wrap_untrusted_delimits_and_neutralises_terminator():
     block = wrap_untrusted(doc)
     assert block.startswith("<<<UNTRUSTED_DOCUMENT id=DOC-0001") and block.endswith(">>>")
     assert block.count(">>>") == 1
+
+
+def test_generated_demo_invoices_scan_as_expected(tmp_path, monkeypatch):
+    """The legitimate Cartonia invoice must not be flagged: once documents link to suppliers,
+    a false positive would block every real Cartonia payment."""
+    from data.generate import generate
+
+    monkeypatch.setenv("RUNWAY_DB", str(tmp_path / "g.db"))
+    db.reset_engines()
+    generate(out_dir=tmp_path / "sample")
+    db.reset_engines()
+    docs = tmp_path / "sample" / "docs"
+    assert scan_document(extract_pdf_text((docs / "cartonia_invoice_clean.pdf").read_bytes())) == []
+    assert "bank-detail change requested" in scan_document(
+        extract_pdf_text((docs / "cartonia_invoice_A1.pdf").read_bytes()))
