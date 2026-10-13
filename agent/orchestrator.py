@@ -12,9 +12,11 @@ from agent.prompts import REFUSAL_TEXT, SYSTEM_PROMPT, is_bypass_attempt
 from llm.pseudonym import Pseudonymizer
 
 MONDAY_PROMPT = (
-    "Give me the Monday cash brief. Check the 13-week forecast, explain any shortfall, then "
-    "propose and prepare a plan: reminders for overdue customer invoices, rescheduling a "
-    "non-critical payment, and the cheapest financing that arrives in time."
+    "Give me the Monday cash brief. Check the 13-week forecast and explain any shortfall. Then act on "
+    "the plan: send payment reminders (send_payment_reminder) for the overdue customer invoices; "
+    "request the reschedule (reschedule_payment) of a non-critical scheduled payment to its invoice due "
+    "date; get the financing need with that move applied; compare financing and prepare the "
+    "application for the cheapest option that arrives in time. Say what is waiting for approval."
 )
 _DOC_ID_RE = re.compile(r"DOC-\d+")
 
