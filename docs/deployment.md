@@ -137,7 +137,7 @@ The list also covers `config/llm.yaml`, whose `api_key_env` names one more varia
 **DeepSeek.**
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...        # your key
+cp .env.example .env                  # then set DEEPSEEK_API_KEY=sk-... in .env (or export it)
 .venv/bin/streamlit run ui/app.py
 ```
 

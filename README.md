@@ -43,7 +43,7 @@ Without `RUNWAY_BANK_URL` the bank runs in-process, which is enough for the demo
 ### Offline mode and DeepSeek mode
 
 - **Offline (default)**: with no API key, a deterministic planner (`llm/offline.py`) plays the language model and issues the real tool calls of the demo. No network needed. Force it with `RUNWAY_LLM=offline`.
-- **DeepSeek**: `export DEEPSEEK_API_KEY=...` before starting the UI. Provider, base URL and model are in `config/llm.yaml`; any OpenAI-compatible provider works by editing that file. Names (known counterparties, people found in headers and signatures), e-mails and IBANs are replaced by placeholders before the API call; amounts, dates and invoice numbers are sent as they are.
+- **DeepSeek**: copy `.env.example` to `.env` and put the key after `DEEPSEEK_API_KEY=` (or export the variable; the environment wins over `.env`, which git ignores). Provider, base URL and model are in `config/llm.yaml`; any OpenAI-compatible provider works by editing that file. Names (known counterparties, people found in headers and signatures), e-mails and IBANs are replaced by placeholders before the API call; amounts, dates and invoice numbers are sent as they are.
 
 ### Environment variables
 
