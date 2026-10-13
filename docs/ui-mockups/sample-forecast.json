@@ -1,0 +1,517 @@
+{
+  "start_date": "2026-10-19",
+  "currency": "EUR",
+  "opening_balance_cents": 4000000,
+  "weeks": [
+    {
+      "index": 1,
+      "start": "2026-10-19",
+      "end": "2026-10-25",
+      "opening_cents": 4000000,
+      "receipts_cents": 3910000,
+      "payments_cents": -6655166,
+      "closing_cents": 1254834,
+      "lines": [
+        {
+          "label": "Receipt LUM-2026-0091",
+          "kind": "receipt",
+          "amount_cents": 740000,
+          "expected_date": "2026-10-22",
+          "source_refs": [
+            "AR-1091"
+          ],
+          "note": "due 2026-10-04, adjusted +8 days for avg lateness; overdue, assumed paid 3 days from today"
+        },
+        {
+          "label": "Receipt LUM-2026-0092",
+          "kind": "receipt",
+          "amount_cents": 520000,
+          "expected_date": "2026-10-24",
+          "source_refs": [
+            "AR-1092"
+          ],
+          "note": "due 2026-10-11, adjusted +13 days for avg lateness"
+        },
+        {
+          "label": "Receipt LUM-2026-0095",
+          "kind": "receipt",
+          "amount_cents": 1450000,
+          "expected_date": "2026-10-24",
+          "source_refs": [
+            "AR-1095"
+          ],
+          "note": "due 2026-10-19, adjusted +5 days for avg lateness"
+        },
+        {
+          "label": "Receipt LUM-2026-0096",
+          "kind": "receipt",
+          "amount_cents": 1200000,
+          "expected_date": "2026-10-24",
+          "source_refs": [
+            "AR-1096"
+          ],
+          "note": "due 2026-10-22, adjusted +2 days for avg lateness"
+        },
+        {
+          "label": "Payroll (estimate)",
+          "kind": "payment",
+          "amount_cents": -5506000,
+          "expected_date": "2026-10-25",
+          "source_refs": [
+            "TX-000176",
+            "TX-000161",
+            "TX-000144"
+          ],
+          "note": "median of last 3 monthly payroll totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "VAT payment (estimate)",
+          "kind": "payment",
+          "amount_cents": -1149166,
+          "expected_date": "2026-10-25",
+          "source_refs": [
+            "TX-000177",
+            "TX-000162",
+            "TX-000145"
+          ],
+          "note": "median of last 3 monthly vat totals (bank-executed payments excluded)"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "start": "2026-10-26",
+      "end": "2026-11-01",
+      "opening_cents": 1254834,
+      "receipts_cents": 0,
+      "payments_cents": -800000,
+      "closing_cents": 454834,
+      "lines": [
+        {
+          "label": "Rent (estimate)",
+          "kind": "payment",
+          "amount_cents": -800000,
+          "expected_date": "2026-11-01",
+          "source_refs": [
+            "TX-000178",
+            "TX-000164",
+            "TX-000148"
+          ],
+          "note": "median of last 3 monthly rent totals (bank-executed payments excluded)"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "start": "2026-11-02",
+      "end": "2026-11-08",
+      "opening_cents": 454834,
+      "receipts_cents": 1200000,
+      "payments_cents": 0,
+      "closing_cents": 1654834,
+      "lines": [
+        {
+          "label": "Receipt LUM-2026-0097",
+          "kind": "receipt",
+          "amount_cents": 1200000,
+          "expected_date": "2026-11-03",
+          "source_refs": [
+            "AR-1097"
+          ],
+          "note": "due 2026-10-27, adjusted +7 days for avg lateness"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "start": "2026-11-09",
+      "end": "2026-11-15",
+      "opening_cents": 1654834,
+      "receipts_cents": 4100000,
+      "payments_cents": -1780000,
+      "closing_cents": 3974834,
+      "lines": [
+        {
+          "label": "Receipt LUM-2026-0098",
+          "kind": "receipt",
+          "amount_cents": 1400000,
+          "expected_date": "2026-11-09",
+          "source_refs": [
+            "AR-1098"
+          ],
+          "note": "due 2026-10-31, adjusted +9 days for avg lateness"
+        },
+        {
+          "label": "Receipt LUM-2026-0099",
+          "kind": "receipt",
+          "amount_cents": 1250000,
+          "expected_date": "2026-11-09",
+          "source_refs": [
+            "AR-1099"
+          ],
+          "note": "due 2026-11-07, adjusted +2 days for avg lateness"
+        },
+        {
+          "label": "Loan repayment (estimate)",
+          "kind": "payment",
+          "amount_cents": -300000,
+          "expected_date": "2026-11-10",
+          "source_refs": [
+            "TX-000182",
+            "TX-000168",
+            "TX-000154"
+          ],
+          "note": "median of last 3 monthly loan_repayment totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "Payable SWI-2026-0051",
+          "kind": "payment",
+          "amount_cents": -530000,
+          "expected_date": "2026-11-10",
+          "source_refs": [
+            "AP-2051"
+          ],
+          "note": "due 2026-11-10"
+        },
+        {
+          "label": "Payable INK-2026-0048",
+          "kind": "payment",
+          "amount_cents": -586000,
+          "expected_date": "2026-11-11",
+          "source_refs": [
+            "AP-2048"
+          ],
+          "note": "due 2026-11-11"
+        },
+        {
+          "label": "Utilities (estimate)",
+          "kind": "payment",
+          "amount_cents": -364000,
+          "expected_date": "2026-11-12",
+          "source_refs": [
+            "TX-000183",
+            "TX-000172",
+            "TX-000157"
+          ],
+          "note": "median of last 3 monthly utilities totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "Receipt LUM-2026-0100",
+          "kind": "receipt",
+          "amount_cents": 1450000,
+          "expected_date": "2026-11-14",
+          "source_refs": [
+            "AR-1100"
+          ],
+          "note": "due 2026-11-09, adjusted +5 days for avg lateness"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "start": "2026-11-16",
+      "end": "2026-11-22",
+      "opening_cents": 3974834,
+      "receipts_cents": 4800000,
+      "payments_cents": -6000000,
+      "closing_cents": 2774834,
+      "lines": [
+        {
+          "label": "Receipt LUM-2026-0090",
+          "kind": "receipt",
+          "amount_cents": 4800000,
+          "expected_date": "2026-11-16",
+          "source_refs": [
+            "AR-1090"
+          ],
+          "note": "due 2026-11-11, adjusted +5 days for avg lateness"
+        },
+        {
+          "label": "Payable CM-2026-0919",
+          "kind": "payment",
+          "amount_cents": -6000000,
+          "expected_date": "2026-11-18",
+          "source_refs": [
+            "AP-2050"
+          ],
+          "note": "due 2026-11-18"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "start": "2026-11-23",
+      "end": "2026-11-29",
+      "opening_cents": 2774834,
+      "receipts_cents": 3250000,
+      "payments_cents": -7855166,
+      "closing_cents": -1830332,
+      "lines": [
+        {
+          "label": "Receipt LUM-2026-0103",
+          "kind": "receipt",
+          "amount_cents": 900000,
+          "expected_date": "2026-11-23",
+          "source_refs": [
+            "AR-1103"
+          ],
+          "note": "due 2026-11-15, adjusted +8 days for avg lateness"
+        },
+        {
+          "label": "Receipt LUM-2026-0104",
+          "kind": "receipt",
+          "amount_cents": 1250000,
+          "expected_date": "2026-11-23",
+          "source_refs": [
+            "AR-1104"
+          ],
+          "note": "due 2026-11-16, adjusted +7 days for avg lateness"
+        },
+        {
+          "label": "Payroll (estimate)",
+          "kind": "payment",
+          "amount_cents": -5506000,
+          "expected_date": "2026-11-25",
+          "source_refs": [
+            "TX-000176",
+            "TX-000161",
+            "TX-000144"
+          ],
+          "note": "median of last 3 monthly payroll totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "VAT payment (estimate)",
+          "kind": "payment",
+          "amount_cents": -1149166,
+          "expected_date": "2026-11-25",
+          "source_refs": [
+            "TX-000177",
+            "TX-000162",
+            "TX-000145"
+          ],
+          "note": "median of last 3 monthly vat totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "Receipt LUM-2026-0102",
+          "kind": "receipt",
+          "amount_cents": 1100000,
+          "expected_date": "2026-11-26",
+          "source_refs": [
+            "AR-1102"
+          ],
+          "note": "due 2026-11-13, adjusted +13 days for avg lateness"
+        },
+        {
+          "label": "Scheduled payment PAY-0001",
+          "kind": "payment",
+          "amount_cents": -1200000,
+          "expected_date": "2026-11-26",
+          "source_refs": [
+            "PAY-0001",
+            "AP-2052"
+          ],
+          "note": "scheduled payment"
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "start": "2026-11-30",
+      "end": "2026-12-06",
+      "opening_cents": -1830332,
+      "receipts_cents": 9000000,
+      "payments_cents": -800000,
+      "closing_cents": 6369668,
+      "lines": [
+        {
+          "label": "Rent (estimate)",
+          "kind": "payment",
+          "amount_cents": -800000,
+          "expected_date": "2026-12-01",
+          "source_refs": [
+            "TX-000178",
+            "TX-000164",
+            "TX-000148"
+          ],
+          "note": "median of last 3 monthly rent totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "Receipt LUM-2026-0093",
+          "kind": "receipt",
+          "amount_cents": 9000000,
+          "expected_date": "2026-12-03",
+          "source_refs": [
+            "AR-1093"
+          ],
+          "note": "due 2026-11-28, adjusted +5 days for avg lateness"
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "start": "2026-12-07",
+      "end": "2026-12-13",
+      "opening_cents": 6369668,
+      "receipts_cents": 0,
+      "payments_cents": -664000,
+      "closing_cents": 5705668,
+      "lines": [
+        {
+          "label": "Loan repayment (estimate)",
+          "kind": "payment",
+          "amount_cents": -300000,
+          "expected_date": "2026-12-10",
+          "source_refs": [
+            "TX-000182",
+            "TX-000168",
+            "TX-000154"
+          ],
+          "note": "median of last 3 monthly loan_repayment totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "Utilities (estimate)",
+          "kind": "payment",
+          "amount_cents": -364000,
+          "expected_date": "2026-12-12",
+          "source_refs": [
+            "TX-000183",
+            "TX-000172",
+            "TX-000157"
+          ],
+          "note": "median of last 3 monthly utilities totals (bank-executed payments excluded)"
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "start": "2026-12-14",
+      "end": "2026-12-20",
+      "opening_cents": 5705668,
+      "receipts_cents": 0,
+      "payments_cents": 0,
+      "closing_cents": 5705668,
+      "lines": []
+    },
+    {
+      "index": 10,
+      "start": "2026-12-21",
+      "end": "2026-12-27",
+      "opening_cents": 5705668,
+      "receipts_cents": 0,
+      "payments_cents": -6655166,
+      "closing_cents": -949498,
+      "lines": [
+        {
+          "label": "Payroll (estimate)",
+          "kind": "payment",
+          "amount_cents": -5506000,
+          "expected_date": "2026-12-25",
+          "source_refs": [
+            "TX-000176",
+            "TX-000161",
+            "TX-000144"
+          ],
+          "note": "median of last 3 monthly payroll totals (bank-executed payments excluded)"
+        },
+        {
+          "label": "VAT payment (estimate)",
+          "kind": "payment",
+          "amount_cents": -1149166,
+          "expected_date": "2026-12-25",
+          "source_refs": [
+            "TX-000177",
+            "TX-000162",
+            "TX-000145"
+          ],
+          "note": "median of last 3 monthly vat totals (bank-executed payments excluded)"
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "start": "2026-12-28",
+      "end": "2027-01-03",
+      "opening_cents": -949498,
+      "receipts_cents": 9500000,
+      "payments_cents": -800000,
+      "closing_cents": 7750502,
+      "lines": [
+        {
+          "label": "Receipt LUM-2026-0101",
+          "kind": "receipt",
+          "amount_cents": 9500000,
+          "expected_date": "2026-12-31",
+          "source_refs": [
+            "AR-1101"
+          ],
+          "note": "due 2026-12-26, adjusted +5 days for avg lateness"
+        },
+        {
+          "label": "Rent (estimate)",
+          "kind": "payment",
+          "amount_cents": -800000,
+          "expected_date": "2027-01-01",
+          "source_refs": [
+            "TX-000178",
+            "TX-000164",
+            "TX-000148"
+          ],
+          "note": "median of last 3 monthly rent totals (bank-executed payments excluded)"
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "start": "2027-01-04",
+      "end": "2027-01-10",
+      "opening_cents": 7750502,
+      "receipts_cents": 0,
+      "payments_cents": -300000,
+      "closing_cents": 7450502,
+      "lines": [
+        {
+          "label": "Loan repayment (estimate)",
+          "kind": "payment",
+          "amount_cents": -300000,
+          "expected_date": "2027-01-10",
+          "source_refs": [
+            "TX-000182",
+            "TX-000168",
+            "TX-000154"
+          ],
+          "note": "median of last 3 monthly loan_repayment totals (bank-executed payments excluded)"
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "start": "2027-01-11",
+      "end": "2027-01-17",
+      "opening_cents": 7450502,
+      "receipts_cents": 0,
+      "payments_cents": -364000,
+      "closing_cents": 7086502,
+      "lines": [
+        {
+          "label": "Utilities (estimate)",
+          "kind": "payment",
+          "amount_cents": -364000,
+          "expected_date": "2027-01-12",
+          "source_refs": [
+            "TX-000183",
+            "TX-000172",
+            "TX-000157"
+          ],
+          "note": "median of last 3 monthly utilities totals (bank-executed payments excluded)"
+        }
+      ]
+    }
+  ],
+  "min_week": 6,
+  "min_closing_cents": -1830332,
+  "shortfall_weeks": [
+    6,
+    10
+  ],
+  "scenario": []
+}

@@ -1,9 +1,37 @@
-# Dark theme matching the Canary dashboard palette
+[client]
+toolbarMode = "viewer"
+
 [theme]
-base = "dark"
-primaryColor = "#2f81f7"
-backgroundColor = "#0f1419"
-secondaryBackgroundColor = "#1a212b"
-textColor = "#e6edf3"
-borderColor = "#2c3846"
-font = "sans serif"
+base = "light"
+font = "sans-serif"
+baseRadius = "0.5rem"
+buttonRadius = "0.4rem"
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#21644b"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f7f8f5"
+textColor = "#242b29"
+borderColor = "#dce1dc"
+dataframeHeaderBackgroundColor = "#f5f6f3"
+dataframeHeaderTextColor = "#626b66"
+chartCategoricalColors = ["#388365", "#86570f", "#b23932", "#626b66"]
+
+[theme.light.sidebar]
+backgroundColor = "#f5f6f3"
+secondaryBackgroundColor = "#ffffff"
+
+[theme.dark]
+primaryColor = "#a4d0b5"
+backgroundColor = "#191d1b"
+secondaryBackgroundColor = "#202622"
+textColor = "#e7ece7"
+borderColor = "#374139"
+dataframeHeaderBackgroundColor = "#202622"
+dataframeHeaderTextColor = "#a2afa5"
+chartCategoricalColors = ["#a4d0b5", "#e6be77", "#f49a8e", "#a2afa5"]
+
+[theme.dark.sidebar]
+backgroundColor = "#131714"
+secondaryBackgroundColor = "#202622"

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Runway · UI redesign mockups</title>
+  <link rel="stylesheet" href="mockups.css">
+</head>
+<body>
+  <div class="review-bar">
+    <span><strong>Design preview</strong><span class="review-note"> · Generated sample data. No live actions.</span></span>
+    <button id="theme-toggle" aria-pressed="false">View dark option</button>
+  </div>
+  <div class="workspace">
+    <aside class="sidebar">
+      <a class="brand" href="#chat">runway<span>.</span></a><button id="mobile-session" class="mobile-session">Session</button>
+      <div class="company"><span class="initials">LP</span><div><strong>Lumen Packaging</strong><small>Finance workspace</small></div></div>
+      <nav aria-label="Preview screens">
+        <a href="#chat" data-page="chat"><span class="nav-icon">◫</span> Finance copilot</a>
+        <a href="#forecast" data-page="forecast"><span class="nav-icon">⌁</span> Cash forecast</a>
+        <a href="#approvals" data-page="approvals"><span class="nav-icon">☑</span> Approvals <span class="count">2</span></a>
+      </nav>
+      <div class="sidebar-caption">Other existing workflows</div>
+      <div class="secondary-nav">Documents <span>Not in preview</span></div>
+      <div class="secondary-nav">Payees &amp; bank <span>Not in preview</span></div>
+      <div class="secondary-nav">Test inbox <span>Not in preview</span></div>
+      <div class="secondary-nav">Audit log <span>Not in preview</span></div>
+      <div class="sidebar-bottom">
+        <div class="agent-state"><span class="status-dot"></span> Agent within rules</div>
+        <p>Proposals are checked by policy.<br>Risky actions need your approval.</p>
+        <button id="session-toggle" class="session"><span class="initials">O</span><span><strong>Owner</strong><small>Demo session · Settings</small></span><span>⌘</span></button>
+      </div>
+    </aside>
+    <div class="main-shell">
+      <header class="topbar"><span id="breadcrumb">Workspace <span>/</span> Finance copilot</span><span class="clock">19 Oct 2026 <span>·</span> Simulated date <span class="currency">EUR</span></span></header>
+      <main id="main">
+        <section id="chat" class="screen" aria-labelledby="chat-title">
+          <div class="page-heading"><div><h1 id="chat-title">Your next move, made clear.</h1><p>Understand your cash. Prepare a plan. Stay in control.</p></div><button class="primary" id="brief-button">Run Monday brief</button></div>
+          <div class="copilot-layout">
+            <div class="conversation">
+              <div class="conversation-meta"><span>Monday cash review</span><span>Sample conversation</span></div>
+              <div class="user-message">What should I focus on this week?</div>
+              <article class="assistant-message">
+                <div class="assistant-label"><span class="assistant-mark">r.</span><strong>Runway</strong><span>Finance copilot</span></div>
+                <h2>There’s a cash gap ahead.<br>Let’s get in front of it.</h2>
+                <p>Your balance is projected to fall below zero in <strong>weeks 6 and 10</strong>. The lowest point is <strong class="danger-text">−€18,303.32</strong> in week 6, before Brightfield’s €90,000 receipt arrives on 3 December.</p>
+                <a class="source-link" href="#forecast">Source: 13-week forecast, weeks 6–7</a>
+                <h3>A practical plan</h3>
+                <ol class="plan-list">
+                  <li><div><strong>Follow up on overdue invoices</strong><p>Prepare reminders for the two overdue customers.</p></div><span class="state neutral">Within policy</span></li>
+                  <li><div><strong>Move the Inkworks payment</strong><p>Propose moving €12,000 to its last allowed day.</p></div><span class="state warning">Owner review</span></li>
+                  <li><div><strong>Compare short-term financing</strong><p>After the move, the demo financing need is €10,000 for 38 days.</p></div><span class="state warning">Two approvals</span></li>
+                </ol>
+                <div class="answer-actions"><a class="button primary" href="#approvals">Review proposed actions</a><details><summary>Policy &amp; source details</summary><p>Illustrative plan from the README demo scenario. No reminders, payments, or financing applications are executed by this preview.</p></details></div>
+              </article>
+              <div id="mock-replies" aria-live="polite"></div>
+              <div class="composer-area">
+                <div class="suggestions"><button data-prompt="Explain the week 6 shortfall">Explain the shortfall</button><button data-prompt="Compare financing options">Compare financing</button></div>
+                <form id="chat-form" class="composer"><label for="message" class="sr-only">Message the finance copilot</label><textarea id="message" placeholder="Ask about cash, invoices or your next move…" rows="2" required></textarea><div class="composer-bottom"><span>Demo interaction · No live agent</span><button class="send" type="submit" aria-label="Send preview message">↑</button></div></form>
+                <p class="composer-note">Forecasts are estimates. Review proposals before approving.</p>
+              </div>
+            </div>
+            <aside class="context-rail" aria-label="Cash context">
+              <div class="context-heading"><h2>Cash at a glance</h2><span>13 weeks</span></div>
+              <div class="balance"><span>Current bank balance</span><strong>€40,000<span>.00</span></strong><small>As of 19 October · Sample ledger</small></div>
+              <div class="mini-chart" id="mini-chart"></div>
+              <div class="cash-warning"><span class="warning-symbol">!</span><div><strong>First gap in week 6</strong><p>23–29 November<br>Projected low: −€18,303.32</p></div></div>
+              <a class="text-link" href="#forecast">Open cash forecast <span>↗</span></a>
+              <div class="rail-section"><h3>Coming into focus</h3><div class="event"><span class="event-date">23 NOV</span><div><strong>Cash shortfall begins</strong><small>Paperboard, payroll and VAT</small></div></div><div class="event"><span class="event-date">03 DEC</span><div><strong>Brightfield receipt</strong><small>€90,000 · Forecast assumption</small></div></div></div>
+              <div class="rail-section"><h3>Your review</h3><a class="review-link" href="#approvals"><span>Proposed actions</span><strong>2 <span>↗</span></strong></a><p class="fine-print">Illustrative approval state for this mockup.</p></div>
+            </aside>
+          </div>
+        </section>
+        <section id="forecast" class="screen" hidden aria-labelledby="forecast-title">
+          <div class="page-heading"><div><h1 id="forecast-title">See the gap before it arrives.</h1><p>13-week cash forecast · 19 Oct 2026 to 17 Jan 2027</p></div><a class="button" href="#chat">Discuss with copilot</a></div>
+          <div class="forecast-metrics"><div><span>Opening balance</span><strong>€40,000.00</strong></div><div><span>Lowest projected balance</span><strong class="danger-text">−€18,303.32</strong><small>Week 6 · 23–29 Nov</small></div><div><span>Weeks below zero</span><strong>2 <span>of 13</span></strong><small>Weeks 6 and 10</small></div></div>
+          <div class="chart-panel"><div class="panel-heading"><div><h2>How much cash will be available?</h2><p>Projected closing balance at the end of each week</p></div><div class="legend"><span class="legend-line"></span> Baseline <span class="legend-line scenario-legend" hidden></span><span id="scenario-label" hidden>With illustrative inflow</span></div></div><div id="full-chart"></div><div class="chart-footer"><span>Dashed line: €0 safety minimum</span><span>Computed from the sample ledger, not by AI</span></div></div>
+          <div class="forecast-detail"><div><div class="panel-heading"><h2>Week-by-week cash</h2><span>EUR</span></div><div class="table-scroll"><table><caption class="sr-only">Generated sample forecast. Select a week to inspect its cash flows.</caption><thead><tr><th>Week</th><th>Dates</th><th>Money in</th><th>Money out</th><th>Closing cash</th></tr></thead><tbody id="week-rows"></tbody></table></div></div><aside class="week-detail"><span class="state warning">Source inspection</span><h2 id="week-title">Week 6 explained</h2><p id="week-dates">23–29 November 2026</p><div id="week-lines"></div><p class="fine-print">Figures trace to invoice, payment and transaction rows. Select any week to inspect it.</p><details class="scenario-control"><summary>Try an illustrative scenario</summary><label for="inflow">Add inflow in week 6 (EUR)</label><input id="inflow" type="number" min="0" max="10000000" value="20000" step="1000"><button id="scenario-apply" class="primary">Compare scenario</button><button id="scenario-clear">Clear scenario</button><p class="fine-print">Preview only: adds an inflow without fees or repayment. No ledger data is changed.</p></details></aside></div>
+        </section>
+        <section id="approvals" class="screen" hidden aria-labelledby="approvals-title">
+          <div class="page-heading"><div><h1 id="approvals-title">You make the final call.</h1><p>Review the reason, the amount and the people needed to approve.</p></div><span class="state neutral">Illustrative workflow</span></div>
+          <div class="approval-layout"><div><div class="queue-heading"><h2>Needs your review <span>2</span></h2><span>Owner demo session</span></div>
+            <article class="approval-card" id="payment-card"><div class="approval-heading"><span class="state warning">Owner approval needed</span><span class="request-id">Example request · Payment change</span></div><h2>Give your cash a little more room.</h2><p>Reschedule the Inkworks supplier payment to its last allowed day.</p><div class="approval-facts"><div><span>Supplier</span><strong>Inkworks</strong></div><div><span>Payment amount</span><strong>€12,000.00</strong></div><div><span>Change</span><strong>Payment date</strong></div></div><div class="rationale"><strong>Why this is proposed</strong><p>The move reduces the demo financing need from €19,000 to €10,000. The exact proposed date and allowed window will come from the live request.</p></div><details><summary>Policy check &amp; source arguments</summary><p>Rescheduling requires owner review. Production details will use the existing request summary and rules engine, including the allowed date.</p></details><div class="approval-footer"><span id="payment-status">Required: Owner</span><div><button data-decision="reject" data-card="payment-card">Reject</button><button class="primary" data-decision="approve" data-card="payment-card">Approve change</button></div></div></article>
+            <article class="approval-card" id="finance-card"><div class="approval-heading"><span class="state warning">Two approvals needed</span><span class="request-id">Example request · Financing</span></div><h2>Prepare the financing application.</h2><p>Illustrative supply-chain financing from Runway’s demo scenario.</p><div class="approval-facts"><div><span>Financing amount</span><strong>€10,000.00</strong></div><div><span>Term</span><strong>38 days</strong></div><div><span>True cost</span><strong>€120.00</strong></div></div><div class="approvers"><span><span class="initials">O</span> Owner <small>Awaiting review</small></span><span><span class="initials">A</span> Accountant <small>Awaiting review</small></span></div><div class="approval-footer"><span>Prepares a PDF for human review</span><div><button data-decision="reject" data-card="finance-card">Reject</button><button class="primary" data-decision="approve" data-card="finance-card">Record owner approval</button></div></div></article>
+          </div><aside class="approval-guide"><h2>Built-in boundaries</h2><h3>Two people, two sessions</h3><p>Financing above €5,000 needs both the owner and accountant, signed in separately.</p><h3>Policy before execution</h3><p>The existing rules engine checks every agent tool call before anything runs.</p><h3>A record of every decision</h3><p>Approvals, refusals and actions remain in the audit trail.</p><div class="preview-note"><strong>Design preview only</strong><p>These controls demonstrate UI states. They cannot approve requests or move money.</p></div></aside></div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <dialog id="session-dialog"><div class="dialog-heading"><h2>Session controls</h2><button id="session-close" aria-label="Close session controls">×</button></div><p>Proposed home for sign-in, role switching, display currency, agent pause and demo reset.</p><p class="fine-print">The live application will retain its current authentication and confirmation rules. This preview has no live session controls.</p></dialog>
+  <script src="mockups.js"></script>
+</body>
+</html>

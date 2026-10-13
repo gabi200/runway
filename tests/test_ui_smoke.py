@@ -248,6 +248,26 @@ def test_brief_and_chat_need_sign_in(at):
     assert at.session_state["chat"] == []
 
 
+def test_copilot_suggestion_requires_sign_in(at):
+    goto(at, "Monday brief & chat")
+    at.button(key="prompt_shortfall").click().run()
+    assert not at.exception
+    assert at.session_state["chat"] == []
+    assert any("Sign in" in info.value for info in at.info)
+
+
+def test_copilot_suggestion_runs_a_real_agent_turn(at):
+    sign_in(at)
+    goto(at, "Monday brief & chat")
+    at.button(key="prompt_shortfall").click().run()
+    assert not at.exception
+    messages = at.session_state["chat"]
+    assert messages[-2][0] == "user" and "shortfall" in messages[-2][1].lower()
+    assert messages[-1][0] == "assistant"
+    assert messages[-1][2].reply
+    assert any(step["tool"] == "get_forecast" for step in messages[-1][2].steps)
+
+
 def test_pin_lockout_is_per_session_and_audited(at, tmp_path):
     from sqlmodel import select
     for _ in range(5):

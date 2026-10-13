@@ -58,7 +58,7 @@ Limit: the four basic files (trial balance, bank statement, open receivables, op
 
 Open the URL Streamlit prints (default http://localhost:8501). With no extra settings the UI runs the agent with the offline planner and talks to the mock bank in-process.
 
-Sign in first (top of the page): choose a role, type its PIN, press Sign in. Demo PINs are `1111` (owner) and `2222` (accountant); set `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` to change them. These are demo credentials, not production authentication. Without a sign-in you can read every page and chat, but you cannot approve, reject, clear a flag, change the kill switch, add or verify payees, advance the clock, reset or import data. An approval that needs two roles must be given from two different browser sessions (two windows, or one normal and one private window), because one session cannot fill both roles.
+Sign in first (sidebar, Session & sign-in): choose a role, type its PIN, press Sign in. Demo PINs are `1111` (owner) and `2222` (accountant); set `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` to change them. These are demo credentials, not production authentication. Without a sign-in you can read every page and chat, but you cannot approve, reject, clear a flag, change the kill switch, add or verify payees, advance the clock, reset or import data. An approval that needs two roles must be given from two different browser sessions (two windows, or one normal and one private window), because one session cannot fill both roles.
 
 ### Mock bank as a separate server (optional)
 

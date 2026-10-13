@@ -29,7 +29,9 @@ uv sync                                  # or: python -m venv .venv && .venv/bin
 .venv/bin/streamlit run ui/app.py        # the UI, http://localhost:8501
 ```
 
-In the UI, sign in at the top of the page before approving or changing anything. Demo PINs: owner `1111`, accountant `2222` (override with `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN`). A four-eyes approval needs the owner and the accountant in two different browser sessions (two windows).
+In the UI, sign in under **Session & sign-in** in the sidebar before approving or changing anything. Demo PINs: owner `1111`, accountant `2222` (override with `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN`). A four-eyes approval needs the owner and the accountant in two different browser sessions (two windows).
+
+The interface includes matching light and dark themes. Open the top-right menu and choose **Light** or **Dark**. The browser remembers your appearance as you navigate. Streamlit 1.65 or newer is required for the configured theme support.
 
 Optional separate mock bank server:
 

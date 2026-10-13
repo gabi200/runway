@@ -122,5 +122,5 @@ def require_login(what: str) -> bool:
     """For human-only actions: True if signed in, else show a hint and return False."""
     if signed_in():
         return True
-    st.info(f"Sign in (top of the page) to {what}.")
+    st.info(f"Sign in under Session & sign-in in the sidebar to {what}.")
     return False

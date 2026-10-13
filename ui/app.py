@@ -39,11 +39,14 @@ from data.generate import generate  # noqa: E402
 from forecast.engine import build_forecast, explain_figure  # noqa: E402
 from data.importer import ImportErrorReport, import_files  # noqa: E402
 from ui import auth  # noqa: E402
-from ui.helpers import BADGE_LEVELS, SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
+from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
 from ui.render import describe_approval, safe_text  # noqa: E402
 
-SECTIONS = ["Onboarding", "Monday brief & chat", "Forecast", "Approval queue", "Documents",
-            "Payees (humans only)", "Mock bank", "Test inbox", "Audit log"]
+SECTIONS = ["Monday brief & chat", "Forecast", "Approval queue", "Documents",
+            "Payees (humans only)", "Mock bank", "Test inbox", "Audit log", "Onboarding"]
+PAGE_LABELS = {"Monday brief & chat": "Finance copilot", "Forecast": "Cash forecast",
+               "Approval queue": "Approvals", "Payees (humans only)": "Payees",
+               "Mock bank": "Bank simulator", "Onboarding": "Import data"}
 
 st.set_page_config(page_title="Runway - AI finance copilot", page_icon=None, layout="wide")
 
@@ -144,20 +147,30 @@ def sign_in_box(col) -> None:
             st.rerun()
 
 
-def header() -> None:
+def header(page: str) -> None:
     """Page title row in the main area; session controls live in the sidebar."""
     with session_scope() as s:
-        acc = s.get(Account, "ACC-MAIN")
         today = db.get_today(s)
-    st.markdown(f'<div class="page-top"><span class="company">{esc(company_name(acc.name if acc else None))}</span>'
-                f'<span class="tag">Simulated today · {today:%a %d %b %Y}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-top"><span>Workspace <span class="separator">/</span> '
+                f'{esc(PAGE_LABELS.get(page, page))}</span><span class="clock">'
+                f'{today:%d %b %Y} · Simulated date <span class="currency">'
+                f'{esc(pack_for(st.session_state.pack).currency)}</span></span></div>', unsafe_allow_html=True)
+
+
+def page_heading(title: str, subtitle: str) -> None:
+    st.markdown(f'<div class="page-heading"><h1>{esc(title)}</h1><p>{esc(subtitle)}</p></div>',
+                unsafe_allow_html=True)
+
+
+def navigate(page: str) -> None:
+    st.session_state.page = page
 
 
 def controls() -> None:
     """Sidebar: sign-in, display currency, kill switch, reset."""
     sb = st.sidebar
-    sb.markdown('<div class="panel-label">Session</div>', unsafe_allow_html=True)
-    sign_in_box(sb)
+    with sb.expander("Session & sign-in", expanded=not auth.signed_in()):
+        sign_in_box(st)
     sb.markdown('<div class="panel-label">Agent</div>', unsafe_allow_html=True)
     sb.toggle("Kill switch", key="kill", on_change=on_kill_toggle,
               help="ON = the agent may only run read-only (T0) tools. Every toggle is audited.")
@@ -184,6 +197,7 @@ def controls() -> None:
             st.session_state.confirm_reset = False
             st.rerun()
     sb.caption("The agent proposes; rules and humans decide.")
+    sb.caption("Appearance: choose Light or Dark in the top-right menu.")
 
 # --------------------------------------------------------------------------- #
 # 1. Onboarding
@@ -200,7 +214,7 @@ def num(x: str | None) -> float:
 
 
 def page_onboarding() -> None:
-    st.header("Onboarding")
+    page_heading("Bring your books into focus.", "Import company data to build a traceable cash forecast.")
     st.caption("A **trial balance** lists every account in the books with its total; debits must equal "
                "credits. The **bank statement** is the list of real money movements.")
     tb = st.file_uploader("Trial balance CSV", type="csv", key="up_tb")
@@ -279,9 +293,10 @@ def page_onboarding() -> None:
                   "payees": len(s.exec(select(Payee)).all()),
                   "documents": len(s.exec(select(Document)).all()),
                   "balance": money(pack_for(st.session_state.pack), db.account_balance_cents(s, as_of=db.get_today(s)))}
-    cols = st.columns(len(counts))
-    for col, (k, v) in zip(cols, counts.items()):
-        col.metric(k, v, border=True)
+    for offset in range(0, len(counts), 3):
+        cols = st.columns(3)
+        for col, (k, v) in zip(cols, list(counts.items())[offset:offset + 3]):
+            col.metric(k, v, border=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -306,30 +321,85 @@ def render_turn(turn) -> None:
     if turn.refused:
         st.warning("The agent refused this request (logged in the audit trail).")
     st.markdown(safe_text(turn.reply))
-    with st.expander(f"Tool trace ({len(turn.steps)} steps)", expanded=True):
+    with st.expander(f"Policy & source details ({len(turn.steps)} steps)", expanded=False):
         st.caption("Every tool call is checked by the rules engine first: ALLOW runs, NEEDS_APPROVAL "
                    "waits for a human, DENY is blocked.")
         render_steps(turn.steps)
 
 
 def page_chat() -> None:
-    st.header("Monday brief & chat")
-    st.caption("The agent proposes and prepares; it cannot move money outside the rules. "
-               "Anything above its limits lands in the approval queue.")
-    if st.button("Run Monday brief", type="primary") and auth.require_login("run the Monday brief"):
-        with st.spinner("Agent is working..."):
-            st.session_state.brief = get_agent().monday_brief()
-    if st.session_state.brief is not None:
-        st.subheader("Monday brief")
-        render_turn(st.session_state.brief)
-    st.subheader("Chat")
-    for role, content, turn in st.session_state.chat:
-        with st.chat_message(role):
-            if turn is None:
-                st.markdown(safe_text(content))
+    with st.container(key="copilot-heading"):
+        title, action = st.columns([3, 1], vertical_alignment="center")
+        with title:
+            page_heading("Your next move, made clear.", "Understand your cash. Prepare a plan. Stay in control.")
+        with action:
+            if st.button("Run Monday brief", type="primary", width="stretch") and auth.require_login("run the Monday brief"):
+                with st.spinner("Reviewing cash and preparing checked proposals..."):
+                    st.session_state.brief = get_agent().monday_brief()
+    pack = pack_for(st.session_state.pack)
+    with session_scope() as s:
+        fc = build_forecast(s)
+        balance = db.account_balance_cents(s, as_of=db.get_today(s))
+        pending = len(executor.pending_approvals(s))
+    msg = None
+    with st.container(key="copilot-layout"):
+        conversation, context = st.columns([3, 1], gap="large")
+        with conversation, st.container(key="conversation"):
+            st.markdown('<div class="conversation-meta">Cash review <span>Grounded in your ledger</span></div>',
+                        unsafe_allow_html=True)
+            if st.session_state.brief is not None:
+                with st.chat_message("assistant", avatar=":material/account_balance:"):
+                    render_turn(st.session_state.brief)
+            elif not st.session_state.chat:
+                with st.container(key="copilot-welcome"):
+                    st.markdown('<div class="assistant-label"><span class="assistant-mark">r.</span> Runway '
+                                '<span>Finance copilot</span></div>', unsafe_allow_html=True)
+                    if fc.shortfall_weeks:
+                        st.subheader("There’s a cash gap ahead. Let’s get in front of it.")
+                        st.write(f"Your balance is projected to fall below zero in weeks "
+                                 f"{', '.join(map(str, fc.shortfall_weeks))}. The lowest point is "
+                                 f"**{money(pack, fc.min_closing_cents)}** in week {fc.min_week}.")
+                    else:
+                        st.subheader("Your cash stays above zero for 13 weeks.")
+                        st.write(f"The lowest projected balance is **{money(pack, fc.min_closing_cents)}** "
+                                 f"in week {fc.min_week}. Ask a question or run your Monday brief to review next steps.")
+                    st.caption("Source: current 13-week cash forecast. Every figure traces to ledger rows.")
+                    st.markdown('<div class="welcome-next"><strong>Start with your Monday brief</strong>'
+                                '<p>Runway reviews cash, follows up on overdue invoices and prepares proposals. '
+                                'Actions above its limits wait for human approval.</p></div>', unsafe_allow_html=True)
+            for role, content, turn in st.session_state.chat:
+                with st.chat_message(role, avatar=":material/account_balance:" if role == "assistant" else ":material/person:"):
+                    if turn is None:
+                        st.markdown(safe_text(content))
+                    else:
+                        render_turn(turn)
+            with st.container(key="prompt-actions"):
+                a, b = st.columns(2)
+                if a.button("Explain the shortfall", key="prompt_shortfall", width="stretch"):
+                    msg = "Explain the cash forecast and the shortfall weeks."
+                if b.button("Compare financing", key="prompt_financing", width="stretch"):
+                    msg = "Compare financing options for the forecast cash shortfall."
+            typed = st.chat_input("Ask about cash, invoices or your next move...", key="copilot_input")
+            msg = typed or msg
+            st.caption("Forecasts are estimates. Review proposals before approving.")
+        with context, st.container(key="cash-context"):
+            st.markdown('<div class="context-heading" role="heading" aria-level="2">Cash at a glance <span>13 weeks</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="context-balance"><span>Current bank balance</span>'
+                        f'<strong>{esc(money(pack, balance))}</strong><small>As of {fc.start_date:%d %B} · Ledger balance</small></div>',
+                        unsafe_allow_html=True)
+            st.altair_chart(closing_chart(fc, pack, compact=True), width="stretch")
+            if fc.shortfall_weeks:
+                first = fc.weeks[fc.shortfall_weeks[0] - 1]
+                st.markdown(f'<div class="cash-warning"><strong>First gap in week {first.index}</strong>'
+                            f'<p>{first.start:%d %b} to {first.end:%d %b}<br>13-week low (week {fc.min_week}): '
+                            f'{esc(money(pack, fc.min_closing_cents))}</p></div>', unsafe_allow_html=True)
             else:
-                render_turn(turn)
-    msg = st.chat_input("Ask about cash, invoices, financing...")
+                st.success("No shortfall in this forecast.")
+            st.button("Open cash forecast", on_click=navigate, args=("Forecast",), width="stretch")
+            st.markdown('<div class="context-section"><h3>Your review</h3></div>', unsafe_allow_html=True)
+            st.metric("Awaiting approval", pending)
+            st.button("Review proposed actions", on_click=navigate, args=("Approval queue",), width="stretch")
+            st.caption("The agent proposes. Rules and humans decide.")
     if msg and not auth.require_login("chat with the agent"):
         msg = None
     if msg:
@@ -352,7 +422,7 @@ def weeks_frame(fc, pack) -> pd.DataFrame:
     } for w in fc.weeks])
 
 
-def closing_chart(fc, pack, fc2=None):
+def closing_chart(fc, pack, fc2=None, *, compact=False):
     rows = []
     for w in fc.weeks:
         rows.append({"week": w.index, "closing": pack.convert_from_eur_cents(w.closing_cents) / 100,
@@ -363,48 +433,80 @@ def closing_chart(fc, pack, fc2=None):
                          "series": "With scenario", "short": w.index in fc2.shortfall_weeks})
     df = pd.DataFrame(rows)
     if fc2 is None:
-        base = alt.Chart(df).mark_bar().encode(
-            x=alt.X("week:O", title="Week"), y=alt.Y("closing:Q", title=f"Closing balance ({pack.currency})"),
-            color=alt.condition("datum.short", alt.value("#c62828"), alt.value("#2b6cb0")),
-            tooltip=["week", "closing"])
+        base = alt.Chart(df).mark_line(strokeWidth=2.5, color="#388365").encode(
+            x=alt.X("week:O", title=None if compact else "Week",
+                    axis=alt.Axis(labelAngle=0, labelExpr="'W' + datum.label", labelOverlap=True)),
+            y=alt.Y("closing:Q", title=None if compact else f"Closing balance ({pack.currency})",
+                    axis=alt.Axis(labels=not compact)),
+            tooltip=[alt.Tooltip("week:O", title="Week"), alt.Tooltip("closing:Q", title="Closing balance", format=",.2f")])
+        points = alt.Chart(df).mark_point(filled=True, size=65, opacity=1).encode(
+            x=alt.X("week:O", title=None if compact else "Week",
+                    axis=alt.Axis(labelAngle=0, labelExpr="'W' + datum.label", labelOverlap=True)),
+            y=alt.Y("closing:Q", title=None if compact else f"Closing balance ({pack.currency})",
+                    axis=alt.Axis(labels=not compact)),
+            color=alt.condition("datum.short", alt.value("#c95146"), alt.value("#388365")),
+            tooltip=[alt.Tooltip("week:O", title="Week"), alt.Tooltip("closing:Q", title="Closing balance", format=",.2f")])
+        base = base + points
     else:
         base = alt.Chart(df).mark_line(point=True).encode(
             x=alt.X("week:O", title="Week"), y=alt.Y("closing:Q", title=f"Closing balance ({pack.currency})"),
-            color=alt.Color("series:N", scale=alt.Scale(range=["#888888", "#1b7f3b"])),
+            color=alt.Color("series:N", scale=alt.Scale(domain=["Baseline", "With scenario"], range=["#388365", "#a67a26"]), title=None),
+            strokeDash=alt.StrokeDash("series:N", legend=None),
             tooltip=["series", "week", "closing"])
-    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="black", strokeDash=[4, 4]).encode(y="y:Q")
-    return (base + zero).properties(height=320)
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#818d84", strokeDash=[5, 5]).encode(y="y:Q")
+    chart = (base + zero).properties(height=155 if compact else 340).configure_view(stroke=None)
+    if compact:
+        chart = chart.configure_axis(title=None, grid=False, ticks=False, domain=False, labelFontSize=10).configure_axisY(labels=False)
+    else:
+        chart = chart.configure_axis(labelFontSize=12, titleFontSize=12, titlePadding=14, domain=False, gridOpacity=.2)
+    return chart
 
 
 def page_forecast() -> None:
     pack = pack_for(st.session_state.pack)
-    st.header("13-week cash forecast")
-    st.caption("A **cash-flow forecast** predicts the bank balance week by week. A **shortfall** is a week "
-               "where the balance drops below the safety minimum (0). It is computed by plain code "
-               "from ledger rows, no AI.")
     with session_scope() as s:
         fc = build_forecast(s)
-    if fc.shortfall_weeks:
-        st.error(f"Shortfall in week(s) {', '.join(map(str, fc.shortfall_weeks))}. "
-                 f"Lowest point: week {fc.min_week} at {money(pack, fc.min_closing_cents)}.")
-    else:
-        st.success(f"No shortfall. Lowest point: week {fc.min_week} at {money(pack, fc.min_closing_cents)}.")
-    st.altair_chart(closing_chart(fc, pack), width="stretch")
-    st.caption("Click a row (checkbox on the left) to choose the week to trace. "
-               f"Default: the lowest week ({fc.min_week}).")
-    sel = st.dataframe(weeks_frame(fc, pack), width="stretch", hide_index=True, key="fc_table",
-                       on_select="rerun", selection_mode="single-row")
-    rows = list(sel.selection.rows) if sel is not None and sel.selection else []
-    selected_week = rows[0] + 1 if rows else (fc.min_week or 1)
+    page_heading("See the gap before it arrives.",
+                 f"13-week cash forecast · {fc.start_date:%d %b %Y} to {fc.weeks[-1].end:%d %b %Y}")
+    with st.container(key="forecast-metrics"):
+        a, b, c = st.columns(3)
+        a.metric("Opening balance", money(pack, fc.opening_balance_cents))
+        b.metric("Lowest projected balance", money(pack, fc.min_closing_cents))
+        b.caption(f"Week {fc.min_week}")
+        c.metric("Weeks below zero", f"{len(fc.shortfall_weeks)} of 13")
+        c.caption(", ".join(f"Week {w}" for w in fc.shortfall_weeks) or "No shortfall")
+    with st.container(border=True, key="forecast-chart"):
+        st.subheader("How much cash will be available?")
+        st.caption("Projected closing balance at the end of each week. Red points mark balances below zero.")
+        st.altair_chart(closing_chart(fc, pack), width="stretch")
+        st.caption(f"Dashed line: {money(pack, 0)} safety minimum. Computed from ledger rows, not by AI.")
+    with st.container(key="forecast-detail"):
+        table, detail = st.columns([3, 1], gap="large")
+        with table:
+            st.subheader("Week-by-week cash")
+            st.caption(f"Select a row to trace its figures. Default: the lowest week ({fc.min_week}).")
+            sel = st.dataframe(weeks_frame(fc, pack), width="stretch", hide_index=True, key="fc_table",
+                              on_select="rerun", selection_mode="single-row",
+                              column_order=["Week", "Start", "Receipts (in)", "Payments (out)", "Closing", "Shortfall", "Opening", "End"])
+            rows = list(sel.selection.rows) if sel is not None and sel.selection else []
+            week = rows[0] + 1 if rows else (fc.min_week or 1)
+        with detail, st.container(key="week-detail"):
+            st.subheader(f"Week {week} explained")
+            field = st.radio("Figure", ["closing_cents", "receipts_cents", "payments_cents", "opening_cents"],
+                             key="fc_field", format_func=lambda f: {"closing_cents": "Closing cash", "receipts_cents": "Money in",
+                                 "payments_cents": "Money out", "opening_cents": "Opening cash"}[f])
+            with session_scope() as s:
+                ex = explain_figure(s, week, field)
+            st.caption(f"{ex['start']} to {ex['end']}")
+            st.metric("Selected figure", money(pack, ex["value_cents"]))
+            for line in ex["lines"]:
+                st.markdown(f'<div class="flow-line"><div>{esc(line["label"])}<small>'
+                            f'{esc(", ".join(line["source_refs"]))}</small></div>'
+                            f'<strong>{esc(money(pack, line["amount_cents"]))}</strong></div>', unsafe_allow_html=True)
+            if not ex["lines"]:
+                st.caption("No cash movements contribute to this figure. Inspect the opening cash or source rows below.")
 
     st.subheader("Where does a number come from?")
-    field = st.radio("Figure", ["closing_cents", "receipts_cents", "payments_cents", "opening_cents"],
-                     horizontal=True, key="fc_field")
-    week = selected_week
-    with session_scope() as s:
-        ex = explain_figure(s, week, field)
-    st.markdown(f"**Selected: week {week}** ({ex['start']} to {ex['end']}) - `{field}` = "
-                f"**{money(pack, ex['value_cents'])}**")
     if ex.get("note"):
         st.caption(ex["note"])
     if ex["lines"]:
@@ -482,7 +584,7 @@ def scenario_panel(fc, pack) -> None:
 # 4. Approval queue
 # --------------------------------------------------------------------------- #
 def page_approvals() -> None:
-    st.header("Approval queue")
+    page_heading("You make the final call.", "Review the reason, the amount and the people needed to approve.")
     role = st.session_state.role
     pack = pack_for(st.session_state.pack)
     can_act = auth.signed_in()
@@ -496,33 +598,52 @@ def page_approvals() -> None:
         pending_view = [(r.id, r.tool_name, json.loads(r.args_json), json.loads(r.required_roles_json),
                          [g['role'] if isinstance(g, dict) else g for g in json.loads(r.approvals_json)], r.reason,
                          describe_approval(s, r.tool_name, json.loads(r.args_json), pack)) for r in pending]
-    if not pending_view:
-        st.info("Nothing waiting for approval.")
-    for rid, tool, args, required, given, reason, summary in pending_view:
-        with st.container(border=True):
-            st.markdown(f"**{rid}** `{tool}` {badge('NEEDS_APPROVAL')}", unsafe_allow_html=True)
-            for line in summary:
-                st.markdown(safe_text(line))
-            st.caption(f"Why: {safe_text(reason)}")
-            st.write(f"Required roles: {', '.join(required)}  |  Approved so far: {', '.join(given) or 'nobody'}")
-            with st.expander("Raw arguments"):
-                st.json(args, expanded=True)
-            a, b, _ = st.columns([1, 1, 4])
-            if a.button("Approve", key=f"ap_{rid}", disabled=not can_act):
-                with session_scope() as s:
-                    res = executor.approve(s, rid, role, approver_id=auth.approver_id())
-                if res.status == "ok":
-                    st.rerun()
-                elif res.status == "needs_approval":
-                    st.success("Your approval is recorded. Waiting for the other role "
-                               "(it must be signed in from a different browser session).")
-                else:
-                    st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
-                             "of a four-eyes request.")
-            if b.button("Reject", key=f"rj_{rid}", disabled=not can_act):
-                with session_scope() as s:
-                    executor.reject(s, rid, role, "rejected in UI")
-                st.rerun()
+    with st.container(key="approval-layout"):
+        queue, guidance = st.columns([3, 1], gap="large")
+        with queue:
+            st.subheader(f"Needs your review ({len(pending_view)})")
+            if not pending_view:
+                st.info("Nothing waiting for approval. Run the Monday brief or ask the copilot to prepare a proposal.")
+            for rid, tool, args, required, given, reason, summary in pending_view:
+                with st.container(border=True, key=f"approval_{rid}"):
+                    st.markdown(f'<div class="approval-meta">{badge("NEEDS_APPROVAL")}<span>{esc(rid)}</span></div>', unsafe_allow_html=True)
+                    titles = {"reschedule_payment": "Move a supplier payment", "prepare_financing_application": "Prepare a financing application",
+                              "schedule_payment": "Schedule a payment", "send_payment_reminder": "Send a payment reminder"}
+                    st.subheader(titles.get(tool, tool.replace("_", " ").capitalize()))
+                    for line in summary:
+                        st.markdown(safe_text(line))
+                    st.markdown("**Why this is proposed**")
+                    st.write(safe_text(reason))
+                    st.markdown(f'<div class="approval-roles"><span>Required: {esc(", ".join(required))}</span>'
+                                f'<span>Recorded: {esc(", ".join(given) or "Awaiting review")}</span></div>', unsafe_allow_html=True)
+                    with st.expander("Policy & source arguments"):
+                        st.caption(tool)
+                        st.json(args, expanded=True)
+                    a, b = st.columns(2)
+                    if a.button("Approve", key=f"ap_{rid}", disabled=not can_act, type="primary", width="stretch"):
+                        with session_scope() as s:
+                            res = executor.approve(s, rid, role, approver_id=auth.approver_id())
+                        if res.status == "ok":
+                            st.rerun()
+                        elif res.status == "needs_approval":
+                            st.success("Your approval is recorded. Waiting for the other role "
+                                       "(it must be signed in from a different browser session).")
+                        else:
+                            st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
+                                     "of a four-eyes request.")
+                    if b.button("Reject", key=f"rj_{rid}", disabled=not can_act, width="stretch"):
+                        with session_scope() as s:
+                            executor.reject(s, rid, role, "rejected in UI")
+                        st.rerun()
+        with guidance, st.container(key="approval-guide"):
+            st.subheader("Built-in boundaries")
+            st.markdown("**Two people, two sessions**")
+            st.caption("Requests requiring both roles need separate owner and accountant sign-ins. Switching roles in one session cannot supply both approvals.")
+            st.markdown("**Policy before execution**")
+            st.caption("The rules engine checks the request again when it is approved.")
+            st.markdown("**A record of every decision**")
+            st.caption("Approvals, refusals and actions remain in the audit trail.")
+
     st.subheader("History")
     if history:
         st.dataframe(pd.DataFrame([{
@@ -537,7 +658,7 @@ def page_approvals() -> None:
 # 5. Documents
 # --------------------------------------------------------------------------- #
 def page_documents() -> None:
-    st.header("Documents")
+    page_heading("Review what comes in.", "Scan invoices and emails before they can influence a payment.")
     st.caption("Incoming PDFs and emails are **untrusted data**. They are scanned for hidden instructions "
                "and bank-detail-change tricks (a classic fraud). Flagged documents block any linked payment "
                "until the owner or accountant clears them.")
@@ -609,7 +730,7 @@ def page_documents() -> None:
 # 6. Payees
 # --------------------------------------------------------------------------- #
 def page_payees() -> None:
-    st.header("Payees (human only)")
+    page_heading("Know who you’re paying.", "Bank details and payee verification remain under human control.")
     st.info("A **payee** is someone we pay; it must be **verified** before any payment. The agent has "
             "**no tool** to add or change payees or IBANs, and the bank rejects its token on this endpoint. "
             "Only a human with the human bank token can do it here.")
@@ -679,7 +800,7 @@ def page_payees() -> None:
 # --------------------------------------------------------------------------- #
 def page_bank() -> None:
     pack = pack_for(st.session_state.pack)
-    st.header("Mock bank")
+    page_heading("Follow the money.", "Accounts and payments in the simulated bank.")
     st.caption("A simulated bank with its own checks: it independently refuses payments to unverified payees.")
     try:
         with human_bank() as bank:
@@ -723,7 +844,7 @@ def page_bank() -> None:
 # --------------------------------------------------------------------------- #
 def page_inbox() -> None:
     pack = pack_for(st.session_state.pack)
-    st.header("Test inbox")
+    page_heading("See what Runway prepared.", "Review test emails and financing documents in one place.")
     st.caption("Nothing is really sent. Emails the system would send (reminders, fraud alerts) land here.")
     with session_scope() as s:
         mails = list(s.exec(select(OutboxEmail).order_by(OutboxEmail.sent_at.desc())))
@@ -756,16 +877,16 @@ def page_inbox() -> None:
 # 9. Audit log
 # --------------------------------------------------------------------------- #
 def page_audit() -> None:
-    st.header("Audit log")
+    page_heading("Every decision, accounted for.", "Trace actions, approvals and refusals in the audit log.")
     st.caption("Every decision is recorded in a **hash chain**: each entry contains the hash of the previous "
                "one, so any edit or deletion breaks the chain and is detected.")
     if st.button("Verify chain", type="primary"):
         with session_scope() as s:
             rep = audit.verify_chain(s)
         if rep.ok:
-            st.success(f"✅ Chain intact - {rep.checked} entries verified.")
+            st.success(f"Chain intact - {rep.checked} entries verified.")
         else:
-            st.error(f"🚨 TAMPERING DETECTED - first bad entry id: {rep.first_bad_id} ({rep.message})")
+            st.error(f"TAMPERING DETECTED - first bad entry id: {rep.first_bad_id} ({rep.message})")
     with session_scope() as s:
         entries = audit.list_entries(s)
         rows = [{"id": e.id, "time": e.timestamp, "actor": e.actor, "action": e.action,
@@ -775,10 +896,7 @@ def page_audit() -> None:
     df = pd.DataFrame(rows[::-1])
     if not df.empty:
         df["time"] = pd.to_datetime(df["time"], utc=True, format="mixed").dt.strftime("%Y-%m-%d %H:%M:%S")
-    colors = {"ok": "#2ea043", "attention": "#d29922", "danger": "#f85149"}
-    st.dataframe(df.style.map(lambda d: f"color: {colors[BADGE_LEVELS[d]]}; font-weight: 700"
-                              if d in BADGE_LEVELS else "", subset=["decision"]) if not df.empty else df,
-                 width="stretch", hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -822,9 +940,15 @@ def status_banner() -> None:
 
 
 def sidebar() -> str:
-    st.sidebar.markdown('<div class="brand">Runway<span class="dot">.</span></div>', unsafe_allow_html=True)
-    st.sidebar.caption("AI finance copilot for SMEs")
-    page = st.sidebar.radio("Navigation", SECTIONS, key="page", label_visibility="collapsed")
+    st.sidebar.markdown('<div class="brand">runway<span>.</span></div>', unsafe_allow_html=True)
+    with session_scope() as s:
+        acc = s.get(Account, "ACC-MAIN")
+    name = company_name(acc.name if acc else None)
+    st.sidebar.markdown(f'<div class="workspace-company"><span class="company-initials">'
+                        f'{esc("".join(w[0] for w in name.split()[:2]))}</span>'
+                        f'<div><strong>{esc(name)}</strong><small>Finance workspace</small></div></div>', unsafe_allow_html=True)
+    page = st.sidebar.radio("Navigation", SECTIONS, key="page", label_visibility="collapsed",
+                            format_func=lambda p: PAGE_LABELS.get(p, p))
     controls()
     return page
 
@@ -834,8 +958,9 @@ def main() -> None:
     ensure_data()
     init_state()
     page = sidebar()
-    header()
-    status_banner()
+    header(page)
+    if page not in ("Monday brief & chat", "Forecast", "Approval queue"):
+        status_banner()
     PAGES[page]()
 
 
