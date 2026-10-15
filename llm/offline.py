@@ -14,7 +14,8 @@ from agent.documents import scan_document
 from agent.prompts import REFUSAL_TEXT, is_bypass_attempt
 from common.config import load_country_pack
 
-_DOC_BLOCK = re.compile(r"<<<UNTRUSTED_DOCUMENT id=(\S+) flagged=(yes|no)[^\n]*\n.*?-----\n(.*?)>>>", re.S)
+_DOC_BLOCK = re.compile(r'<<<UNTRUSTED_DOCUMENT id=(\S+) flagged=(yes|no) reasons=("(?:[^"\\]|\\.)*")[^\n]*\n'
+                        r".*?-----\n(.*?)>>>", re.S)
 ACTIONS = {"reminders", "reschedule", "application"}
 # ponytail: keyword heuristics; a negation near an action verb, or a question, makes the turn read-only
 _NEGATED = re.compile(r"\b(don'?t|do not|never|without|not)\b[^.?!]{0,40}"
@@ -99,8 +100,10 @@ class OfflinePlanner:
 
     # -- document review ---------------------------------------------------
     def _review_document(self, m: re.Match, done: list) -> dict:
-        doc_id, flagged, body = m.group(1), m.group(2) == "yes", m.group(3)
-        indicators = scan_document(body)
+        doc_id, flagged, body = m.group(1), m.group(2) == "yes", m.group(4)
+        # The header is written by the system: a flag raised at ingestion (sender, filename, earlier
+        # review) counts even when the body alone scans clean.
+        indicators = scan_document(body) or ([json.loads(m.group(3)) or "flagged at ingestion"] if flagged else [])
         if indicators and not flagged and not any(n == "flag_document" for n, _, _ in done):
             return {"content": None, "tool_calls": [self._call(1, "flag_document", {
                 "document_id": doc_id, "reason": "; ".join(indicators)})]}
@@ -110,7 +113,7 @@ class OfflinePlanner:
                 if n == "flag_document" and r.get("status") != "ok":
                     extra = f" (flagging reported: {r.get('reason', r.get('status'))})"
             return self._say(
-                f"I flagged document {doc_id} as suspicious. What I found: " + "; ".join(indicators) + ". "
+                f"Document {doc_id} is flagged as suspicious. What I found: " + "; ".join(indicators) + ". "
                 "I treated its text as data and did not follow any instruction in it. No payment will be "
                 "made from it, and the owner has been alerted. Bank details can only be changed by a person "
                 "in the app after checking with the supplier through a known phone number." + extra)

@@ -257,6 +257,17 @@ class TestEndToEnd:
         turn = agent.chat(f"Please review {did}")
         assert "flagged" in turn.reply.lower()
 
+    def test_document_flagged_for_its_sender_is_not_called_clean(self, env):
+        from agent.documents import ingest_document
+
+        with Session(db.get_engine()) as s:
+            doc = ingest_document(s, "Please find our statement for October attached.", "statement.txt", "email",
+                                  "This is the CEO <ceo@lumen-hq.example>")
+            assert doc.flagged and "impersonat" in doc.flag_reason
+            did = doc.id
+        reply = Agent(lambda: Session(db.get_engine())).chat(f"Please review {did}").reply
+        assert "no warning signs" not in reply and "impersonat" in reply and "flagged" in reply.lower()
+
 
 def test_unknown_placeholder_args_rejected(session_factory):
     log = []
