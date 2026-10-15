@@ -507,3 +507,18 @@ def test_expired_requests_leave_the_queue_and_are_not_reused(session):
     again = run_tool(session, "schedule_payment", _pay_args(150_000, execute_date="2026-11-30"))
     assert again.status == "needs_approval" and again.approval_id != first.approval_id
     assert approve(session, again.approval_id, "owner").status == "ok"
+
+
+def test_pdf_and_scenario_report_the_running_low(session):
+    """The PDF and run_scenario still quoted the week-end low (-18,303.32), not the real low (-29,303.32)."""
+    from pypdf import PdfReader
+
+    from agent.pdf import prepare_application
+
+    row = prepare_application(session, "supply_chain_finance", 1_800_000, date(2026, 11, 25), 36)
+    text = " ".join(page.extract_text() for page in PdfReader(row.pdf_path).pages)
+    assert "-€29,303.32 on 2026-11-26" in text
+    moved = run_tool(session, "run_scenario", {"changes": [
+        {"type": "move_payment", "payment_id": "PAY-0001", "new_date": "2026-12-14"}]})
+    assert moved.status == "ok" and moved.data["min_running_delta_cents"] == 1_200_000
+    assert moved.data["scenario_min_running_cents"] == -1_730_332

@@ -80,7 +80,8 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
         return ledger_money(cents, cur)
 
     shortfall = ("none" if not fc.shortfall_weeks else
-                 f"lowest balance {m(fc.min_closing_cents)} in week {fc.min_week}; "
+                 f"lowest balance {m(fc.min_running_cents)} on {fc.min_running_date.isoformat()} "
+                 f"(week {fc.min_running_week}); "
                  f"weeks below minimum: {', '.join(map(str, fc.shortfall_weeks))}")
 
     cell = ParagraphStyle("cell", parent=st["Normal"], fontSize=10, leading=12)

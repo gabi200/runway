@@ -251,6 +251,8 @@ def run_scenario(session: Session, args: dict, ctx: dict) -> dict:
     return {"baseline_min_week": base.min_week, "baseline_min_closing_cents": base.min_closing_cents,
             "scenario_min_week": scen.min_week, "scenario_min_closing_cents": scen.min_closing_cents,
             "min_closing_delta_cents": scen.min_closing_cents - base.min_closing_cents,
+            "baseline_min_running_cents": base.min_running_cents, "scenario_min_running_cents": scen.min_running_cents,
+            "min_running_delta_cents": scen.min_running_cents - base.min_running_cents,
             "scenario": _forecast_view(scen, False)}
 
 
