@@ -211,9 +211,14 @@ def _sqlite_pragmas(dbapi_connection, _record) -> None:  # pragma: no cover - gl
 _engines: dict[str, Engine] = {}
 
 
+def db_path(path: str | Path | None = None) -> Path:
+    """Path of the SQLite file: `path`, else RUNWAY_DB, else var/runway.db."""
+    return Path(path or os.environ.get("RUNWAY_DB", DEFAULT_DB_PATH))
+
+
 def db_url(path: str | Path | None = None) -> str:
     """Return the SQLAlchemy URL. Override with RUNWAY_DB env var or `path`."""
-    p = Path(path or os.environ.get("RUNWAY_DB", DEFAULT_DB_PATH))
+    p = db_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{p}"
 

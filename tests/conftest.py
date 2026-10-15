@@ -14,3 +14,10 @@ def no_live_llm(monkeypatch):
     """A real key loaded from .env must never make a test call the API."""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
+
+
+@pytest.fixture(autouse=True)
+def no_live_anchor(monkeypatch):
+    """A .env pointing at a real chain must never make a test publish or read an anchor."""
+    for name in ("RUNWAY_ANCHOR", "RUNWAY_NOTARY_PATH", "RUNWAY_EVM_RPC_URL", "RUNWAY_EVM_PRIVATE_KEY"):
+        monkeypatch.delenv(name, raising=False)
