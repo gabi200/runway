@@ -119,8 +119,10 @@ class Pseudonymizer:
                 self._cap.add(_key(word))
 
     def _add_id(self, ph: str, label: str, ident: str, tag: str = "ID") -> None:
-        # Plain-word IDs (PAYROLL, LANDLORD) would mask ordinary prose; only structured IDs are masked.
-        if not ("-" in ident or any(c.isdigit() for c in ident)) or ident in self._ids:
+        # Plain-word IDs (PAYROLL, LANDLORD) would mask ordinary prose and bare or short numbers (CSV ids 1, 2)
+        # would mask amounts; only structured IDs with a letter and at least 4 characters are masked.
+        structured = "-" in ident or any(c.isdigit() for c in ident)
+        if not structured or not any(c.isalpha() for c in ident) or len(ident) < 4 or ident in self._ids:
             return
         idph = ph[:-1] + f"_{tag}>"
         while idph in self._rev:  # name shared with another entity: that ID keeps its placeholder, this one gets its own
@@ -206,7 +208,7 @@ class Pseudonymizer:
         if self._regex is None and (self._fwd or self._ids):
             ids = "|".join(re.escape(a) for a in sorted(self._ids, key=len, reverse=True))
             names = "|".join(self._rx(k) for k in sorted(self._lit, key=lambda k: len(self._lit[k]), reverse=True))
-            alts = ([f"(?-i:{ids})"] if ids else []) + ([names] if names else [])
+            alts = ([rf"(?<!\d[,.])(?-i:{ids})(?![,.]\d)"] if ids else []) + ([names] if names else [])
             # An existing placeholder is matched first and kept, so no name inside it (IBAN, PERSON) is rewritten.
             self._regex = re.compile(rf"(?P<ph>(?-i:{_PH_RX}))|(?<![A-Za-z0-9])(?:{'|'.join(alts)})(?![A-Za-z0-9])",
                                      re.IGNORECASE)

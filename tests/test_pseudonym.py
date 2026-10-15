@@ -175,6 +175,19 @@ def test_common_words_are_not_aliases_and_placeholders_are_never_rewritten(sessi
     assert p.mask(f"pay {ph} and <IBAN_99>") == f"pay {ph} and <IBAN_99>"
 
 
+def test_numeric_and_short_ids_do_not_mask_amounts(session):
+    # CSV imports can carry plain numeric counterparty ids; masking them would rewrite amounts.
+    for cid, name in (("1", "Alpha Trading"), ("2", "Beta Supplies"), ("C12", "Gamma Foods"), ("V100", "Delta Mills")):
+        session.add(db.Counterparty(id=cid, name=name, kind="customer"))
+    session.commit()
+    p = Pseudonymizer(session)
+    text = "EUR 1,250.00 for 2 pallets, 12.5 kg, C12 and V100,5; IBAN GB82WEST12345698765432"
+    masked = p.mask(text)
+    assert masked.startswith("EUR 1,250.00 for 2 pallets, 12.5 kg, C12 and V100,5; IBAN <IBAN_"), masked
+    assert p.unmask(masked) == text
+    assert p.mask("V100") != "V100"  # a structured id with a letter is still masked
+
+
 def test_learn_still_learns_real_two_token_person(session):
     p = Pseudonymizer(session)
     p.learn("Hi\n\nBest regards,\nHans Muller")
