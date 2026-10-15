@@ -214,6 +214,24 @@ def test_role_switch_needs_pin(at):
     assert at.session_state["role"] == "accountant"
 
 
+def test_pins_do_not_stay_in_the_fields(at):
+    sign_in(at, "owner")
+    at.selectbox(key="sw_role").set_value("accountant")
+    at.text_input(key="sw_pin").set_value("2222")
+    at.button(key="sw_btn").click().run()
+    assert at.session_state["role"] == "accountant"
+    assert at.text_input(key="sw_pin").value == ""
+    goto(at, "Forecast")
+    assert at.text_input(key="sw_pin").value == ""
+    at.button(key="signout_btn").click().run()
+    assert at.session_state["role"] is None
+    assert at.text_input(key="login_pin").value == ""
+    at.text_input(key="login_pin").set_value("0000")
+    at.button(key="login_btn").click().run()
+    assert any("Wrong PIN" in e.value for e in at.error)
+    assert at.text_input(key="login_pin").value == ""
+
+
 def test_one_session_cannot_fill_both_roles(at):
     from agent.executor import run_tool
     with db.session_scope() as s:

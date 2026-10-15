@@ -118,30 +118,32 @@ def reset_demo() -> None:
 # --------------------------------------------------------------------------- #
 # Header
 # --------------------------------------------------------------------------- #
+def pin_sign_in(role_key: str, pin_key: str) -> None:
+    """Button callback: try the PIN, then empty the field so the PIN does not stay in the page."""
+    err = auth.sign_in(st.session_state[role_key], st.session_state[pin_key])
+    st.session_state[pin_key] = ""
+    if err:
+        st.session_state.auth_error = err
+
+
 def sign_in_box(col) -> None:
     """Demo-only PIN sign-in; switching role needs the other role's PIN."""
     if not auth.signed_in():
         col.selectbox("Sign in as", auth.ROLES, key="login_role")
         col.text_input("PIN (demo only)", type="password", key="login_pin",
                        help="Demo PINs from RUNWAY_OWNER_PIN / RUNWAY_ACCOUNTANT_PIN (defaults 1111 / 2222).")
-        if col.button("Sign in", key="login_btn"):
-            err = auth.sign_in(st.session_state.login_role, st.session_state.login_pin)
-            if err:
-                col.error(err)
-            else:
-                st.rerun()
+        col.button("Sign in", key="login_btn", on_click=pin_sign_in, args=("login_role", "login_pin"))
+        if err := st.session_state.pop("auth_error", None):
+            col.error(err)
         return
     col.markdown(f'<span class="pill ok">{esc(auth.identity())}</span>', unsafe_allow_html=True)
     other = [r for r in auth.ROLES if r != st.session_state.role]
     with col.expander("Switch role / sign out"):
         st.selectbox("Switch to", other, key="sw_role")
         st.text_input("PIN of that role", type="password", key="sw_pin")
-        if st.button("Switch role", key="sw_btn"):
-            err = auth.sign_in(st.session_state.sw_role, st.session_state.sw_pin)
-            if err:
-                st.error(err)
-            else:
-                st.rerun()
+        st.button("Switch role", key="sw_btn", on_click=pin_sign_in, args=("sw_role", "sw_pin"))
+        if err := st.session_state.pop("auth_error", None):
+            st.error(err)
         if st.button("Sign out", key="signout_btn"):
             auth.sign_out()
             st.rerun()
