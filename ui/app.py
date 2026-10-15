@@ -634,9 +634,15 @@ def page_approvals() -> None:
                         elif res.status == "needs_approval":
                             st.success("Your approval is recorded and signed with your role's key. Waiting for "
                                        "the other role (it must be signed in from a different browser session).")
-                        else:
+                        elif res.reason.endswith("; the request stays pending"):  # e.g. kill switch on
+                            st.warning(f"Your approval is recorded, but the action did not run: "
+                                       f"{res.reason.removesuffix('; the request stays pending')}. "
+                                       "The request stays in the queue until it can run.")
+                        elif res.reason == "Same approver cannot fill two roles":
                             st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
                                      "of a four-eyes request.")
+                        else:
+                            st.error(f"Not approved: {res.reason}.")
                     if b.button("Reject", key=f"rj_{rid}", disabled=not can_act, width="stretch"):
                         with session_scope() as s:
                             executor.reject(s, rid, role, "rejected in UI")

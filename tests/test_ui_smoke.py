@@ -274,9 +274,31 @@ def test_one_session_cannot_fill_both_roles(at):
     at.button(key="sw_btn").click().run()
     goto(at, "Approval queue")
     at.button(key=f"ap_{rid}").click().run()
-    assert any("Not approved" in e.value for e in at.error)
+    assert any("Not approved" in e.value and "four-eyes" in e.value for e in at.error)
     with db.session_scope() as s:
         assert s.get(db.ApprovalRequest, rid).status == "pending"
+
+
+def test_approve_under_kill_switch_says_the_approval_is_recorded(at):
+    import json
+    from sqlmodel import select
+    from agent.executor import run_tool
+    with db.session_scope() as s:
+        pay = s.exec(select(db.Payment).where(db.Payment.status == "scheduled")).first()
+        res = run_tool(s, "reschedule_payment", {"payment_id": pay.id, "new_date": "2026-12-01"}, actor="agent")
+    assert res.status == "needs_approval", res
+    sign_in(at, "owner")
+    at.toggle(key="kill").set_value(True).run()
+    goto(at, "Approval queue")
+    at.button(key=f"ap_{res.approval_id}").click().run()
+    assert not at.exception
+    shown = [m.value for m in at.error] + [m.value for m in at.warning]
+    assert not any("four-eyes" in t for t in shown), shown
+    assert any("approval is recorded" in t and "Kill switch" in t for t in shown), shown
+    with db.session_scope() as s:
+        req = s.get(db.ApprovalRequest, res.approval_id)
+        assert req.status == "pending"
+        assert [g["role"] for g in json.loads(req.approvals_json)] == ["owner"]
 
 
 def test_model_markdown_is_neutralised():
