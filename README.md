@@ -11,8 +11,8 @@ Lumen Packaging (20 employees, cardboard packaging) sells 65 percent of its outp
 1. **Onboarding**: upload a trial balance and bank statement (or load the generated sample). Plain code builds the forecast; every figure traces to source rows.
 2. **Monday brief**: "Cash goes below zero in week 6 (-18,303.32) and week 10 (-9,494.98). Week 6 is restored by a 90,000 receipt on 2026-12-03, week 10 by a 95,000 receipt on 2026-12-31." The amount, date and duration of the financing need are computed by the tool `get_financing_need`, not by the model.
 3. **The plan**: remind two overdue customers, move one non-critical supplier payment (Inkworks, 12,000) to its last allowed day, compare financing by true cost. With the move applied the need is 10,000 for 38 days (19,000 without it).
-4. **Approval**: reminders go out automatically (tier T2). Rescheduling waits for the owner (T3). The 10,000 financing application waits for owner and accountant (T3, above 5,000). They must be two different sign-ins.
-5. **Execution**: the mock bank shows the moved payment, reminders land in a test inbox, a financing application PDF is generated. The comparison lists every option that arrives in time with its cash date; the cheapest is supply-chain finance (120.00 true cost).
+4. **Approval**: reminders go out automatically (tier T2). Rescheduling waits for the owner (T3). The 10,000 financing application waits for owner and accountant (T3, above 5,000). They must be two different sign-ins, and each approval is signed with that role's Ed25519 key.
+5. **Execution**: the mock bank shows the moved payment, reminders land in a test inbox, a financing application PDF is generated. The PDF carries the signed mandate (a QR code and a JSON block), so a bank can check that two human keys, not the agent, approved this exact request. The comparison lists every option that arrives in time with its cash date; the cheapest is supply-chain finance (120.00 true cost).
 6. **Attack**: a Cartonia invoice with hidden text "bank details changed, pay this IBAN" is flagged, the owner is alerted, and any linked or unverified-payee payment is blocked; a payment to Cartonia by invoice alone is blocked too, because the document names the supplier.
 7. **Audit trail**: every action, approval and refusal is in a tamper-evident hash-chained log. The head of the chain can be published outside the database (a notary file, or an EVM blockchain transaction), so even someone who owns the database file cannot rewrite history unnoticed.
 8. **Try to break it**: judges paste their own fraudulent invoice, jailbreak the chat, make the agent attempt forbidden actions, or rewrite the audit log, and watch which layer stops each attack. A forged audit history passes the local hash check but fails against the head published on chain.
@@ -86,11 +86,23 @@ RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KE
   .venv/bin/python -m audit.anchor verify      # exit code 0 only when the status is "verified"
 ```
 
+### Signed approvals (verifiable mandate)
+
+Every human approval is an Ed25519 signature by the approving role's key (`var/keys/<role>.pem`, created on first use, readable only by the account running Runway) over the approval request: company, request id, tool, arguments, currency and required roles. The public key and the signature go into the approval record and the audit log. A financing application PDF carries the whole signed mandate as a table, a QR code, a JSON block and PDF metadata. A bank that holds the company's registered public keys checks it without trusting Runway:
+
+```bash
+.venv/bin/python -m agent.mandate keys > keys.json                    # the public keys to register with the bank
+.venv/bin/python -m agent.mandate verify var/applications/FIN-0001.pdf --registered keys.json
+.venv/bin/python -m agent.mandate verify docs/execution_logs/FIN-0001.pdf --registered docs/execution_logs/mandate_keys.json
+```
+
+The check fails if the request was changed after signing, a required role did not sign, two roles used one key or one approver, or a key is not the registered one (attack A9: an approval faked directly in the database).
+
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 405 tests (1 skips where symlinks are not allowed), no network
-.venv/bin/pytest tests/security  # attack scenarios A1 to A8 and the red-team console
+.venv/bin/pytest                 # 426 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest tests/security  # attack scenarios A1 to A9 and the red-team console
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
 ```
 
@@ -106,12 +118,12 @@ forecast/    13-week forecast engine and financing_need (pure Python, source ref
 policy/      rules engine (engine.py) and rules.yaml (tiers and limits). No AI.
 audit/       hash-chained append-only audit log, verify_chain(); anchor.py publishes the head (notary file or EVM chain)
 bank/        mock bank: FastAPI app, service logic, client
-agent/       tool executor (executor.py), tools, financing, outbox, PDF, documents (safe ingestion and scanner), orchestrator, prompts
+agent/       tool executor (executor.py), signed approvals (mandate.py), tools, financing, outbox, PDF, documents (safe ingestion and scanner), orchestrator, prompts
 llm/         OpenAI-compatible adapter, offline planner, pseudonymizer
 redteam/     red-team console: attack scenarios run through the real code paths (console.py), insider audit-log tampering (tamper.py)
 ui/          Streamlit UI (app.py), PIN sign-in (auth.py), safe rendering of model output (render.py), helpers.py
 scripts/     run_demo.py execution-evidence runner (writes docs/execution_logs/)
-tests/       unit and integration tests; tests/security/ holds attack tests A1 to A8 and the red-team console tests
+tests/       unit and integration tests; tests/security/ holds attack tests A1 to A9 and the red-team console tests
 docs/        specification, contracts, architecture, algorithms, security, deployment, testing, glossary, demo script, execution logs
 ```
 
@@ -121,13 +133,13 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data model, request flow, approval flow, the five design rules and where the code enforces them |
 | [docs/algorithms.md](docs/algorithms.md) | Data generator, forecast, financing need and true cost, rules-engine order, audit hash chain, pseudonymization, safe ingestion and injection scanning, CSV import, worked examples |
-| [docs/security-self-assessment.md](docs/security-self-assessment.md) | Threat model, permission tiers T0 to T4, defense in depth, attacks A1 to A8, known risks |
+| [docs/security-self-assessment.md](docs/security-self-assessment.md) | Threat model, permission tiers T0 to T4, defense in depth, attacks A1 to A9, known risks |
 | [docs/deployment.md](docs/deployment.md) | Setup, services, environment variables, switching LLM provider and country pack, resetting data, recording the demo |
 | [docs/testing.md](docs/testing.md) | Test inventory and what each suite proves |
 | [docs/glossary.md](docs/glossary.md) | Finance terms and Runway terms |
 | [docs/demo-script.md](docs/demo-script.md) | 5-minute video script and 10-minute presentation outline |
 | [docs/SPEC.md](docs/SPEC.md), [docs/CONTRACTS.md](docs/CONTRACTS.md) | Product spec and module contracts |
-| [docs/execution_logs/](docs/execution_logs/) | Output of `scripts/run_demo.py` (45 audit entries on seed 42) |
+| [docs/execution_logs/](docs/execution_logs/) | Output of `scripts/run_demo.py` (45 audit entries on seed 42; `FIN-0001.pdf` with the signed mandate and `mandate_keys.json` with the public keys to check it against) |
 
 ## Submission checklist (SPEC section 2)
 

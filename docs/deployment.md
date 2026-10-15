@@ -146,6 +146,10 @@ The default `notary` backend needs nothing. For `evm`, the payload goes into the
 
 Verification fetches each receipt's transaction, refuses one that is unmined or sent by another account, and compares the published head with the log. Publishing and verifying with different backends reports "unavailable" for the receipts of the other backend. FISCO BCOS exposes a different RPC and has not been tried.
 
+### Approval signing keys
+
+Each approving role signs its approvals with an Ed25519 key in `<RUNWAY_VAR_DIR>/keys/<role>.pem` (default `var/keys/`), created on first use with mode 0600. `var/` is git-ignored; never commit the keys. Reset and import keep them, so the public keys registered with a bank stay valid. Deleting a key makes the next approval create a new one, which no longer matches the registered key. Print the public keys with `python -m agent.mandate keys` and check a financing PDF with `python -m agent.mandate verify <pdf> --registered keys.json`.
+
 For anything beyond a demo, set both bank tokens to long random values and replace the PINs with real authentication. The defaults are public in the repository (see KNOWN RISKS in `docs/security-self-assessment.md`).
 
 The list also covers `config/llm.yaml`, whose `api_key_env` names one more variable (`DEEPSEEK_API_KEY` by default).
@@ -223,6 +227,6 @@ Also useful before recording: `.venv/bin/pytest` should be green.
 ## 9. Operational notes
 
 - Concurrency: SQLite with the writer lock is enough for one Streamlit server with a few browser sessions (the two-window approval needs two). Do not point several app instances at the same file.
-- Backup: copy `var/runway.db` while no write is in progress. The stored audit head and count (`audit_head`, `audit_count`) are inside the same file; the published heads are not (notary file or chain), so keep the receipts' references (transaction hashes) somewhere else too.
+- Backup: copy `var/runway.db` while no write is in progress, and `var/keys/` (the approval signing keys) separately and privately. The stored audit head and count (`audit_head`, `audit_count`) are inside the same file; the published heads are not (notary file or chain), so keep the receipts' references (transaction hashes) somewhere else too.
 - Logs: uvicorn and Streamlit print to the terminal. The audit log is in the database; export it with `scripts/run_demo.py` or read it on the Audit log page.
 - Time: "today" is the `today` setting, not the system clock.

@@ -1,12 +1,12 @@
 # Testing
 
-Runway has 405 automated tests (a symlink test skips itself where the OS does not allow symlinks, as on default Windows) (counted with `pytest --collect-only -q -o addopts=""`). All of them run offline: no network, no API key, no running server. Every test uses its own temporary SQLite database, so tests never touch `var/runway.db`.
+Runway has 426 automated tests (a symlink test skips itself where the OS does not allow symlinks, as on default Windows) (counted with `pytest --collect-only -q -o addopts=""`). All of them run offline: no network, no API key, no running server. Every test uses its own temporary SQLite database, so tests never touch `var/runway.db`.
 
 ## How to run
 
 ```bash
 .venv/bin/pytest                      # everything (about 15 seconds on Linux, 95 on Windows)
-.venv/bin/pytest tests/security       # the attack scenarios A1 to A8 and the red-team console
+.venv/bin/pytest tests/security       # the attack scenarios A1 to A9 and the red-team console
 .venv/bin/pytest tests/test_policy.py # one file
 .venv/bin/pytest -k a3                # by name
 ```
@@ -18,7 +18,7 @@ Isolation: fixtures set `RUNWAY_DB` to a path in `tmp_path`, call `common.db.res
 ## Latest result
 
 ```
-405 passed in 32.8 s   (Python 3.12.8, macOS, run on 2026-10-15 with `pytest`; on default Windows the symlink test skips itself)
+426 passed in 49.7 s   (Python 3.12.8, macOS, run on 2026-10-15 with `pytest`; on default Windows the symlink test skips itself)
 ```
 
 Re-run `pytest` before submitting; counts below are from this run.
@@ -41,10 +41,11 @@ Re-run `pytest` before submitting; counts below are from this run.
 | `test_pseudonym.py` | 10 | Mask and unmask round trip; placeholders are stable and unknown IBANs are masked; ids are masked and restored in tool arguments; unknown placeholders are left alone; substrings of other words are not masked; plain-word ids are not masked and structured ids are matched case-sensitively; all e-mail addresses are masked and person names are learned from headers and signatures; a counterparty e-mail local part registers a person. |
 | `test_orchestrator.py` | 25 | Replies get a visible "Check by Runway" note for money amounts no tool result, message or document contains and for claimed actions (also with a curly apostrophe) that no tool call backs; history records each turn's tool calls; The LLM sees only masked data and its tool arguments are unmasked; the step limit stops the loop; a crashing tool does not crash the agent; bypass patterns are detected and normal messages are not; a refusal is logged without calling the LLM; the adapter parses an OpenAI-format response; `get_adapter()` returns the offline planner without an API key; tool arguments with an unknown placeholder are rejected; an e-mail pasted into chat leaks no real names to the LLM; end to end with the offline planner: Monday brief (forecast, two reminders, reschedule and financing application pending approval), jailbreak refused and logged, malicious document flagged and discussed. |
 | `test_importer.py` | 13 | Importing all six CSV files reproduces the source database's 13 weekly closings (including the week-6 shortfall); the four basic files build a 13-week forecast and unverified payees with the right opening balance; an unbalanced trial balance is rejected and leaves the database untouched; missing columns are rejected. |
-| `test_ui_smoke.py` | 26 | Streamlit `AppTest` clicks through the real `ui/app.py` on a temp database: all ten pages render; Monday brief, approval queue, inbox, Verify chain; the kill switch is refused when not signed in and works after sign-in; currency switch to CNY; ingesting a demo document; approve, clear a flag (audited as `clear_document_flag`), advance the clock, add a scenario change; payee verify and unverify are owner-only and audited; human actions need sign-in and a wrong PIN is rejected; five wrong PINs lock only that browser session, 20 lock the role everywhere, and both lockouts expire; the owner can fill in a missing IBAN once; switching role needs the other PIN; one browser session cannot fill both approval roles; model markdown (links, images) is neutralised; publishing the audit head needs sign-in and verification then matches; the Red team page needs sign-in, stops a forbidden action, holds a paraphrased fraud e-mail for approval, reports a forged audit history as not detected before publishing and detected after, and neutralises links and images in trace text. |
+| `test_ui_smoke.py` | 27 | Streamlit `AppTest` clicks through the real `ui/app.py` on a temp database: all ten pages render; Monday brief, approval queue, inbox, Verify chain; the kill switch is refused when not signed in and works after sign-in; currency switch to CNY; ingesting a demo document; approve, clear a flag (audited as `clear_document_flag`), advance the clock, add a scenario change; payee verify and unverify are owner-only and audited; human actions need sign-in and a wrong PIN is rejected; five wrong PINs lock only that browser session, 20 lock the role everywhere, and both lockouts expire; the owner can fill in a missing IBAN once; switching role needs the other PIN; one browser session cannot fill both approval roles; model markdown (links, images) is neutralised; publishing the audit head needs sign-in and verification then matches; the Red team page needs sign-in, stops a forbidden action, holds a paraphrased fraud e-mail for approval, reports a forged audit history as not detected before publishing and detected after, and neutralises links and images in trace text; an approval made in the UI is signed (history shows "owner (signed)", the audit entry holds the signature). |
 | `test_env.py` | 1 | `.env` loading: comments, `export` and quotes handled; a variable already in the environment wins. (`tests/conftest.py` also blanks `DEEPSEEK_API_KEY` for every test, so a real key never reaches the API.) |
 | `test_anchor.py` | 28 | Audit anchoring: the payload format round-trips and rejects bad counts, hashes and foreign payloads; the notary file publishes and fetches by reference; backend selection from the environment; publishing stores a receipt and audits it; a log never published reads "unanchored", not "verified"; a forged history that fools `verify_chain` and a truncation with a fixed-up head are both caught by the published head; a broken or empty chain is not published; a missing notary record is "unavailable"; deleted receipts read as "unanchored"; entries after the last publish are reported; the CLI publishes and verifies (exit code 1 after tampering). |
 | `test_anchor_evm.py` | 8 | The EVM backend against a fake JSON-RPC node that recovers the signer from the raw transaction: the payload is signed by the anchor account and read back; transactions from other senders, unmined and unknown transactions are refused; node errors are reported; connection errors do not leak the RPC URL; a forgery is caught against the on-chain head; a failed publish stores no receipt and no audit entry; `RUNWAY_ANCHOR=evm` needs a URL and a valid key and never echoes the key. |
+| `test_mandate.py` | 18 | Signed approvals: two distinct role keys verify, also against the registered keys; a changed request, relabelled roles, a missing second signature, one key for both roles, one approver for both roles and an unregistered key are refused; foreign documents and malformed or unhashable signature entries are rejected without crashing; key files are private (0600) and reused; the CLI prints the keys and verifies a mandate (exit code 1 when tampered). |
 
 ### Security scenarios (`tests/security/`)
 
@@ -60,6 +61,7 @@ Shared fixture `stack` in `tests/security/conftest.py` generates a fresh databas
 | `test_a6_audit_tamper.py` | 4 | A6: untouched chain verifies; an edit, a middle deletion and a tail deletion (with triggers dropped) are detected with the right `first_bad_id`; tail deletion reports truncation. |
 | `test_a7_unlinked_flagged_invoice.py` | 8 | A7: with a flagged document naming the supplier, a payment by `invoice_id` alone is denied, the bank refuses it (422), and a payment scheduled before the flag fails at execution; clearing the flag unblocks it; approvals are re-checked; a clean invoice is linked and not blocked; link matching uses whole tokens; `list_documents` exposes the links. |
 | `test_a8_forged_audit_history.py` | 1 | A8: after real agent activity and a published head, an insider recomputes every hash and the stored head; `verify_chain` passes and `verify_anchors` reports "tampered". |
+| `test_a9_forged_approval.py` | 2 | A9: owner and accountant sign the financing mandate, the signatures are in the audit log and the PDF carries the same mandate; an accountant approval faked in the database leaves the mandate without the accountant's signature, so the bank-side check refuses it. |
 | `test_redteam_console.py` | 24 | Red-team console: the verdict priority; the hidden-text invoice is stopped (scanner flags, rules engine blocks); a paraphrased fraud e-mail passes the scanner but is held for approval, with no approval request or payment created; a document naming nobody does nothing; the four forbidden actions are stopped by the rules engine and, where tried, refused by the bank (422 or 403), with no payment and no IBAN change; repeating an attack is harmless; a jailbreak is stopped before the model; a harmless question takes no privileged action; runs are audited as `redteam_run`; on a copy of the database a forgery is not detected without a published head and detected with one, edit and truncation are detected, the live log stays untouched, and a log shorter than three entries is reported. |
 
 The mapping from attack to code path is in `docs/security-self-assessment.md` section 5.
@@ -76,6 +78,8 @@ The mapping from attack to code path is in `docs/security-self-assessment.md` se
 - Two physical browsers: the UI test simulates the approver identity with one `AppTest` session; the two-window case relies on Streamlit giving each session its own state.
 
 ## Execution evidence
+
+`FIN-0001.pdf` carries the signed mandate (owner and accountant); `mandate_keys.json` holds the public keys it verifies against: `python -m agent.mandate verify docs/execution_logs/FIN-0001.pdf --registered docs/execution_logs/mandate_keys.json`.
 
 On-chain anchoring evidence (`docs/execution_logs/anchor_receipt.json`) was not produced: no local EVM chain (Anvil or Hardhat) was available when this was written. The commands are in `README.md` under "Anchoring the audit log on a blockchain".
 
