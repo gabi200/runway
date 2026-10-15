@@ -279,3 +279,20 @@ def test_open_item_in_another_currency_rejected(tmp_path):
     with pytest.raises(ImportErrorReport, match="open receivables row 1: currency 'USD'.*EUR"):
         import_files(tmp_path / "t.db", TB, BS, ar)
     assert import_files(tmp_path / "u.db", TB, BS, ar.replace("USD", "EUR"))["open_receivables"] == 1
+
+
+def test_counterparty_ids_do_not_collide_and_one_name_is_one_counterparty(tmp_path):
+    names = ["Müller GmbH", "Möller GmbH", "Acme Ltd", "ACME LTD.",
+             "International Widget Manufacturers North", "International Widget Manufacturers South",
+             "北京公司", "上海公司"]
+    ar = "number,counterparty,issue_date,due_date,amount\n" + "".join(
+        f"A{k},{nm},2026-09-01,2026-10-01,100\n" for k, nm in enumerate(names))
+    paid = "number,counterparty,due_date,paid_date,amount,direction\nP1,Acme Ltd,2026-08-01,2026-08-01,50,AP\n"
+    import_files(tmp_path / "t.db", TB, BS, ar, paid_invoices_csv=paid)
+    with db.session_scope(tmp_path / "t.db") as s:
+        cps = {c.id: c for c in s.exec(select(db.Counterparty))}
+        inv = {i.number: i for i in s.exec(select(db.Invoice))}
+    assert sorted(c.name for c in cps.values() if c.kind == "customer") == sorted(set(names) - {"ACME LTD."})
+    assert inv["A2"].counterparty_id == inv["A3"].counterparty_id  # "Acme Ltd" and "ACME LTD."
+    assert cps[inv["P1"].counterparty_id].kind == "supplier"  # same name as a customer, paid as supplier
+    assert cps[inv["INV1"].counterparty_id].kind == "customer"  # the receipt stays with the customer

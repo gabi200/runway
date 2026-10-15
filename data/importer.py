@@ -21,6 +21,7 @@ and ledger APIs):
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 import re
@@ -128,6 +129,11 @@ def _days(v: str, where: str) -> int:
 
 def _slug(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "-", name.upper()).strip("-")[:30] or "UNKNOWN"
+
+
+def _key(name: str) -> str:
+    """Name for matching: "Acme Ltd" and "ACME LTD." are one counterparty."""
+    return re.sub(r"[\W_]+", "", name.casefold())
 
 
 def _canonical() -> dict[str, tuple]:
@@ -275,21 +281,26 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
     # ---- counterparties ------------------------------------------------------ #
     canon = _canonical()
     cps: dict[str, dict] = {}
-    for o in opens:
-        cid = o["cp_id"] or next((k for k, c in canon.items() if c[1] == o["cp_name"]), "") \
-            or ("CUST-" if o["direction"] == "AR" else "SUP-") + _slug(o["cp_name"])
-        o["cp_id"] = cid
-        entry = cps.setdefault(cid, dict(name=o["cp_name"], direction=o["direction"], terms=[]))
-        if entry["name"] != o["cp_name"] or entry["direction"] != o["direction"]:
+    known: dict[tuple[str, str], str] = {}  # (direction, name key) -> counterparty id
+
+    def counterparty(item: dict) -> dict:
+        key = (item["direction"], _key(item["cp_name"]))
+        cid = item["cp_id"] or known.get(key) or next((k for k, c in canon.items() if c[1] == item["cp_name"]), "")
+        if not cid:
+            cid = ("CUST-" if item["direction"] == "AR" else "SUP-") + _slug(item["cp_name"])
+            if cid in cps:  # the slug belongs to another name: add a short stable hash of this one
+                cid += "-" + hashlib.sha256(key[1].encode()).hexdigest()[:6].upper()
+        entry = cps.setdefault(cid, dict(name=item["cp_name"], direction=item["direction"], terms=[]))
+        if _key(entry["name"]) != key[1] or entry["direction"] != item["direction"]:
             raise ImportErrorReport(f"counterparties: conflicting id {cid}")
-        entry["terms"].append((o["due"] - o["issue"]).days)
+        known.setdefault(key, cid)
+        item["cp_id"] = cid
+        return entry
+
+    for o in opens:
+        counterparty(o)["terms"].append((o["due"] - o["issue"]).days)
     for h in hist:
-        h["cp_id"] = h["cp_id"] or next((k for k, c in canon.items() if c[1] == h["cp_name"]), "") \
-            or next((k for k, c in cps.items() if c["name"] == h["cp_name"]), "") \
-            or ("CUST-" if h["direction"] == "AR" else "SUP-") + _slug(h["cp_name"])
-        entry = cps.setdefault(h["cp_id"], dict(name=h["cp_name"], direction=h["direction"], terms=[]))
-        if entry["name"] != h["cp_name"] or entry["direction"] != h["direction"]:
-            raise ImportErrorReport(f"counterparties: conflicting id {h['cp_id']}")
+        counterparty(h)
     for sp in sched:
         cid = next((k for k, c in cps.items() if c["name"] == sp["cp_name"] or k == sp["cp_name"]), None)
         if cid is None or cps[cid]["direction"] != "AP" or (cid in canon and canon[cid][2] == "customer"):
@@ -304,7 +315,7 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         if t["cat"] != "sales_receipt" or t["amount"] <= 0:
             continue
         m = re.match(r"Payment from (.+) (\S+)$", t["desc"])
-        cid = by_name.get(m.group(1)) if m else None
+        cid = known.get(("AR", _key(m.group(1)))) if m else None
         if not cid:
             continue
         t["cp"] = cid
