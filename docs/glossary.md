@@ -7,7 +7,7 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Term | Plain meaning | Example in the demo |
 |---|---|---|
 | Cash flow | Money actually moving in and out of the bank account, and when. A profitable company can still run out of cash. | Sales look good, but the money arrives 75 days after the invoice and wages are due sooner. |
-| Cash-flow forecast | A prediction of the bank balance week by week. The standard horizon is 13 weeks (one quarter). | "Week 6 balance: -18,303.32." |
+| Cash-flow forecast | A prediction of the bank balance week by week. The standard horizon is 13 weeks (one quarter). | "Week 6 closes at -18,303.32; the balance is lowest at -29,303.32 on 2026-11-26." |
 | Shortfall / cash gap | A week where the forecast balance goes below zero. | Week 6 and week 10 in the default data. |
 | Invoice | A bill a company sends to a customer, or receives from a supplier. | Invoice `AR-1101`, 95,000, due 2026-12-26. |
 | Accounts receivable (AR) | Invoices we sent that customers have not paid yet. Money owed to us. | Brightfield owes us 95,000 + 90,000 + 48,000. |
@@ -29,8 +29,8 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Invoice financing (factoring) | A financier advances most of an unpaid invoice now, for a fee, and is repaid when the customer pays. | Advance 80% of an invoice at 1.5% per 30 days. |
 | Supply-chain finance | Like invoice financing, but the large customer's bank backs it, so it is cheaper. The customer must confirm the invoice. | Brightfield programme, 0.6% per 30 days. |
 | Term loan | Borrow a fixed amount and repay over months with interest. | The 6-month loan at 9% a year plus 1% setup. |
-| State-guaranteed SME loan | A bank loan partly guaranteed by the government. Cheap per year but slow to approve, and with no prepayment the interest runs for the whole term. | 6% a year plus 1% guarantee fee, 21 days to cash. With today 2026-10-19 it arrives 2026-11-09, in time for week 6, but costs 700.00 on 10,000 against 120.00 for supply-chain finance, so it ranks last. |
-| Effective / true cost | What financing really costs once interest and all fees are counted, for the actual amount and number of days. | 120.00 for 10,000 over 38 days with supply-chain finance (two started 30-day periods at 0.6%). |
+| State-guaranteed SME loan | A bank loan partly guaranteed by the government. Cheap per year but slow to approve, and with no prepayment the interest runs for the whole term. | 6% a year plus 1% guarantee fee, 21 days to cash. With today 2026-10-19 it arrives 2026-11-09, in time for the 2026-11-25 need, but costs 1,260.00 on 18,000 against 216.00 for supply-chain finance, so it ranks last. |
+| Effective / true cost | What financing really costs once interest and all fees are counted, for the actual amount and number of days. | 216.00 for 18,000 over 36 days with supply-chain finance (two started 30-day periods at 0.6%). |
 | Advance rate | The share of an invoice's value that a financier pays up front. | 80%. |
 | BEC (business email compromise) | Fraud where an attacker pretends to be a supplier or the boss and asks for payment to a new account. | Attack A1 and A2. |
 | Prompt injection | Text inside data (a PDF, an e-mail) written to trick an AI into following it as if it were an instruction. | Hidden white text in the Cartonia invoice. |
@@ -46,7 +46,7 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Agent | The AI part of Runway. It reads data, writes explanations and requests actions through tools. It cannot act outside the rules engine. |
 | Offline planner | A deterministic stand-in for the language model (`llm/offline.py`), used when no API key is set. It runs the demo story without network access. |
 | Tool | A single action the agent may request, for example `get_forecast` or `schedule_payment`. There are 16; none can change payees, limits or the kill switch. |
-| Financing need | The amount, the date and the number of days of financing the forecast calls for, computed in code by `forecast.engine.financing_need` and returned by the tool `get_financing_need`. Amount = worst deficit rounded up to a whole 1,000; needed from the first shortfall week; term ends at the receipt that restores the balance (at least 30 days). | Demo: 19,000.00 for 38 days from 2026-11-23, or 10,000.00 if the Inkworks payment is moved. |
+| Financing need | The amount, the date and the number of days of financing the forecast calls for, computed in code by `forecast.engine.financing_need` and returned by the tool `get_financing_need`. Amount = lowest running balance (inside the week, same-day payments before receipts) rounded up to a whole 1,000; needed from the first day below zero; term ends at the receipt that brings the balance back above zero (at least 30 days). | Demo: 30,000.00 for 36 days from 2026-11-25, or 18,000.00 if the Inkworks payment is moved. |
 | Permission tier | The risk class of a tool: T0 read, T1 analyse, T2 low-risk automatic action, T3 needs human approval, T4 forbidden. Defined in `policy/rules.yaml`. See `docs/security-self-assessment.md`. |
 | T0 / T1 / T2 / T3 / T4 | T0 reads data. T1 analyses (forecast, scenarios, financing comparison, drafts). T2 acts automatically within limits (payment reminders, small payments). T3 waits for human approval. T4 does not exist as a tool and is always denied. |
 | Rules engine | `policy/engine.py`. Plain Python that returns ALLOW, NEEDS_APPROVAL (with required roles) or DENY for every tool call. |
@@ -62,14 +62,14 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Tool executor | `agent/executor.py`. The only code that turns an allowed tool call into a side effect. It owns the audit calls and the approval workflow. |
 | Executor token / human token | The two bearer tokens of the mock bank. The executor token is held only by the tool executor and has the scopes `read` and `payments`: it cannot create or verify payees or advance the clock. The human token also has `payees` and `simulate` and is used by the UI. |
 | Idempotency key | A unique string attached to each payment request. The bank returns the original payment for a repeated key with the same body and rejects (409) a repeated key with a different body. |
-| Flagged document | A document the scanner or the agent marked suspicious. Payments linked to it are denied until a human clears it. |
+| Flagged document | A document the scanner or the agent marked suspicious. Payments linked to it are denied until the owner and the accountant together clear it, or release one named supplier from it. |
 | Untrusted data block | The delimiter format `<<<UNTRUSTED_DOCUMENT ... >>>` that wraps any document text shown to the model. |
 | Hash chain | Each audit entry stores the hash of the previous one; changing any entry breaks every later hash. |
 | Anchor | The stored head hash and entry count (`audit_head`, `audit_count` in `setting`). They detect deletion of the newest entries. |
 | `verify_chain()` | Recomputes the whole chain and the anchors and reports the first bad entry. Shown in the UI audit page. |
 | Simulated clock | The `today` setting (default 2026-10-19). The demo moves it with `POST /simulate/advance`. |
 | Country pack | A YAML file in `config/` with currency, VAT rate, VAT day and a display FX factor. `eu` (EUR) and `cn` (CNY). Display only: the ledger and the bank stay in EUR and `CountryPack.display` formats amounts for people. |
-| CSV import | `data/importer.py`: builds the database from a company's trial balance, bank statement and open items, optionally with paid-invoice history and scheduled payments. Imported payees are unverified. |
+| CSV import | `data/importer.py`: builds the database from a company's trial balance, bank statement and open items, optionally with paid-invoice history. Imported payees are unverified, so a scheduled-payments file is rejected. |
 | Safe ingestion | Documents enter only through `ingest_text` (a string is data), `ingest_file` (path must be inside an allowed folder) or `ingest_document` (bytes or text); sender and filename are sanitised and scanned. |
 | Mock bank | The FastAPI service in `bank/` that imitates an open-banking API. |
 | Test inbox / outbox | Where "sent" e-mails land: table `outboxemail` and `var/outbox/*.eml`. Nothing leaves the machine. |

@@ -66,7 +66,8 @@ class WeekBucket(BaseModel):
 class Forecast(BaseModel):
     start_date: date; currency: str; opening_balance_cents: int
     weeks: list[WeekBucket]; min_week: int; min_closing_cents: int
-    shortfall_weeks: list[int]       # weeks with closing < safety minimum (0)
+    shortfall_weeks: list[int]       # weeks whose running balance (opening included) goes below 0
+    min_running_week: int; min_running_cents: int; min_running_date: date  # lowest point inside any week
     scenario: list[dict] = []
 def build_forecast(session, weeks: int = 13, scenario: list[dict] | None = None) -> Forecast
 def explain_figure(session, week: int, field: str = "closing_cents",

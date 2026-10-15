@@ -6,14 +6,14 @@ Entry for the 2026 Shenzhen International FinTech Competition, International Tra
 
 ## The demo story
 
-Lumen Packaging (20 employees, cardboard packaging) sells 65 percent of its output to Brightfield Appliances, which pays 75 days after invoice. The 13-week forecast shows two shortfalls: the bank balance falls to -18,303.32 EUR in week 6 (the paperboard bill, payroll and VAT fall before Brightfield's money arrives) and to -9,494.98 EUR in week 10 (payroll and VAT of 25 December).
+Lumen Packaging (20 employees, cardboard packaging) sells 65 percent of its output to Brightfield Appliances, which pays 75 days after invoice. The 13-week forecast walks the bank balance day by day (on the same day, payments are counted before receipts) and finds two stretches below zero. After the paperboard bill (60,000 on 18 November), payroll and VAT on 25 November and the 12,000 Inkworks payment on 26 November take the balance to -29,303.32 EUR; it stays below zero until Brightfield's 90,000 arrives on 3 December (weeks 6 and 7). Payroll and VAT of 25 December take it to -9,494.98 EUR until Brightfield's 95,000 arrives on 31 December (weeks 10 and 11). The week-end closings are -18,303.32 (week 6) and -9,494.98 (week 10); weeks 7 and 11 close positive but dip below zero inside the week.
 
 1. **Onboarding**: upload a trial balance and bank statement (or load the generated sample). Plain code builds the forecast; every figure traces to source rows.
-2. **Monday brief**: "Cash goes below zero in week 6 (-18,303.32) and week 10 (-9,494.98). Week 6 is restored by a 90,000 receipt on 2026-12-03, week 10 by a 95,000 receipt on 2026-12-31." The amount, date and duration of the financing need are computed by the tool `get_financing_need`, not by the model.
-3. **The plan**: remind two overdue customers, move one non-critical supplier payment (Inkworks, 12,000) to its last allowed day, compare financing by true cost. With the move applied the need is 10,000 for 38 days (19,000 without it).
-4. **Approval**: reminders go out automatically (tier T2). Rescheduling waits for the owner (T3). The 10,000 financing application waits for owner and accountant (T3, above 5,000). They must be two different sign-ins, and each approval is signed with that role's Ed25519 key.
-5. **Execution**: the mock bank shows the moved payment, reminders land in a test inbox, a financing application PDF is generated. The PDF carries the signed mandate (a QR code and a JSON block), so a bank can check that two human keys, not the agent, approved this exact request. The comparison lists every option that arrives in time with its cash date; the cheapest is supply-chain finance (120.00 true cost).
-6. **Attack**: a Cartonia invoice with hidden text "bank details changed, pay this IBAN" is flagged, the owner is alerted, and any linked or unverified-payee payment is blocked; a payment to Cartonia by invoice alone is blocked too, because the document names the supplier.
+2. **Monday brief**: "The balance is below zero from 2026-11-25 (week 6) and lowest at -€29,303.32 on 2026-11-26. ... It ends with Receipt LUM-2026-0093 (€90,000.00, AR-1093), expected 2026-12-03 in week 7 ..." and the same for the stretch from 2026-12-25 (week 10), which ends with the 95,000 receipt on 2026-12-31. The amount, date and duration of the financing need are computed by the tool `get_financing_need`, not by the model.
+3. **The plan**: remind two overdue customers, move one non-critical supplier payment (Inkworks, 12,000) to its last allowed day, compare financing by true cost. With the move applied the need is 18,000 from 25 November for 36 days (30,000 without it).
+4. **Approval**: reminders go out automatically (tier T2). Rescheduling waits for the owner (T3). The 18,000 financing application waits for owner and accountant (T3, above 5,000). They must be two different sign-ins, and each approval is signed with that role's Ed25519 key. A request that nobody approves expires after 7 simulated days.
+5. **Execution**: the mock bank shows the moved payment, reminders land in a test inbox, a financing application PDF is generated. The PDF carries the signed mandate (a QR code and a JSON block), so a bank can check that two human keys, not the agent, approved this exact request. The comparison lists every option that arrives in time with its cash date; the cheapest is supply-chain finance (216.00 true cost).
+6. **Attack**: a Cartonia invoice with hidden text "bank details changed, pay this IBAN" is flagged, the owner is alerted, and any linked or unverified-payee payment is blocked; a payment to Cartonia by invoice alone is blocked too, because the document names the supplier. Lifting such a block (clearing the flag, releasing one named supplier, or verifying a payee) needs the owner and the accountant, from two sessions.
 7. **Audit trail**: every action, approval and refusal is in a tamper-evident hash-chained log. The head of the chain can be published outside the database (a notary file, or an EVM blockchain transaction), so even someone who owns the database file cannot rewrite history unnoticed.
 8. **Try to break it**: judges paste their own fraudulent invoice, jailbreak the chat, make the agent attempt forbidden actions, or rewrite the audit log, and watch which layer stops each attack. A forged audit history passes the local hash check but fails against the head published on chain.
 
@@ -58,7 +58,7 @@ Without `RUNWAY_BANK_URL` the bank runs in-process, which is enough for the demo
 | `RUNWAY_OWNER_EMAIL` | `owner@lumen-packaging.example` | Recipient of fraud alerts |
 | `RUNWAY_BANK_URL` | unset (in-process) | URL of a running mock bank |
 | `RUNWAY_BANK_EXECUTOR_TOKEN` | `executor-dev-token` | Bank token held by the tool executor (change outside the demo) |
-| `RUNWAY_BANK_HUMAN_TOKEN` | `human-dev-token` | Bank token used by the UI for human-only actions (payees, clock). Also read by `scripts/run_demo.py` (change outside the demo) |
+| `RUNWAY_BANK_HUMAN_TOKEN` | `human-dev-token` | Bank token for human-only actions (payees, clock), used by the UI and, once owner and accountant approved a payee verification, by the executor. Also read by `scripts/run_demo.py` (change outside the demo) |
 | `RUNWAY_OWNER_PIN` | `1111` | UI sign-in PIN of the owner role (demo-grade) |
 | `RUNWAY_ACCOUNTANT_PIN` | `2222` | UI sign-in PIN of the accountant role (demo-grade) |
 | `DEEPSEEK_API_KEY` | unset | LLM key (variable name set by `api_key_env` in `config/llm.yaml`) |
@@ -101,7 +101,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 426 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 547 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A9 and the red-team console
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
 ```
@@ -156,4 +156,4 @@ Deadline: 20 October 2026, 23:59 Beijing time (19:00 Bucharest, 16:00 UTC).
 
 ## Limits to know about
 
-The demo uses a simulated clock (default 2026-10-19), default demo tokens, a single SQLite file, and PIN sign-in (per-role PINs from environment variables, not real authentication; one person holding both PINs can open two browsers and approve both roles). Attack tests run against the offline planner, not a live model. Keyword detection of hostile documents can be evaded. Importing only the four basic CSVs does not reproduce customer lateness or already-scheduled payments, so the week-6 shortfall does not appear for the sample company unless the optional history files are added. The full list is in section 7 of the security self-assessment.
+The demo uses a simulated clock (default 2026-10-19), default demo tokens, a single SQLite file, and PIN sign-in (per-role PINs from environment variables, not real authentication; one person holding both PINs can open two browsers and approve both roles). The two-person rule for verifying payees and clearing flags is enforced in the app; the mock bank's payee endpoint still accepts the shared human token directly. Attack tests run against the offline planner, not a live model (one scripted DeepSeek session was checked for data leaks, outside the test suite). Keyword detection of hostile documents can be evaded. Importing only the four basic CSVs does not reproduce customer lateness or already-scheduled payments, so the forecast looks better than it is: for the sample company the lowest balance becomes -9,494.98 on 25 December instead of -29,303.32 on 26 November. An optional paid-invoices file (not offered in the UI) restores the lateness; scheduled payments cannot be imported, because imported payees are unverified. The full list is in section 7 of the security self-assessment.
