@@ -18,6 +18,8 @@ MONDAY_PROMPT = (
     "date; get the financing need with that move applied; compare financing and prepare the "
     "application for the cheapest option that arrives in time. Say what is waiting for approval."
 )
+MASK_FAILED = ("I could not pseudonymise this message, so nothing was sent to the language model. "
+               "Please rephrase it (for example without unusual characters in names) and try again.")
 _DOC_ID_RE = re.compile(r"DOC-\d+")
 # First-person claims of an action, and the tool that must have run in the same turn to back each one.
 _CLAIM_RE = re.compile(r"\bI(?:['’]ve| have)?\s+(?:just\s+|already\s+|now\s+)?(flagged|sent|scheduled|rescheduled|moved|prepared)\b", re.I)
@@ -139,8 +141,11 @@ class Agent:
             pseudo.learn(m["content"])
         pseudo.learn(full_user)
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages += [{"role": m["role"], "content": pseudo.mask(m["content"])} for m in self.history]
-        messages.append({"role": "user", "content": pseudo.mask(full_user)})
+        try:
+            messages += [{"role": m["role"], "content": pseudo.mask(m["content"])} for m in self.history]
+            messages.append({"role": "user", "content": pseudo.mask(full_user)})
+        except Exception:  # fail closed: never send text that could not be masked
+            return AgentTurn(reply=MASK_FAILED, steps=[])
         steps: list[dict] = []
         reply = ""
         for _ in range(self.max_steps):
@@ -169,8 +174,12 @@ class Agent:
                 safe = json.loads(json.dumps(payload, default=str))
                 self._evidence |= amounts_in(json.dumps(safe))
                 pseudo.learn_obj(safe)
-                messages.append({"role": "tool", "tool_call_id": c["id"],
-                                 "content": json.dumps(pseudo.mask_obj(safe), default=str)})
+                try:
+                    content = json.dumps(pseudo.mask_obj(safe), default=str)
+                except Exception:  # fail closed: withhold a result that could not be masked
+                    content = json.dumps({"status": "error", "tool": c["name"],
+                                          "reason": "result withheld: it could not be pseudonymised"})
+                messages.append({"role": "tool", "tool_call_id": c["id"], "content": content})
         else:
             reply = ("I stopped after reaching the step limit. Here is what was done so far: "
                      + (", ".join(f"{s['tool']} ({s['status']})" for s in steps) or "nothing"))

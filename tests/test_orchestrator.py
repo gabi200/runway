@@ -287,6 +287,35 @@ class TestEndToEnd:
         assert "no warning signs" not in reply and "impersonat" in reply and "flagged" in reply.lower()
 
 
+def test_masking_failure_fails_closed(session_factory, monkeypatch):
+    from llm.pseudonym import Pseudonymizer
+
+    def boom(self, text):
+        raise RuntimeError("mask broke")
+    monkeypatch.setattr(Pseudonymizer, "mask", boom)
+    adapter = ScriptedAdapter([{"content": "hi", "tool_calls": []}])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([]))
+    turn = agent.chat("What do we owe Cartonia Packaging GmbH?")
+    assert adapter.seen == [] and "nothing was sent" in turn.reply
+    assert agent.history == []  # the message that could not be masked does not poison later turns
+
+
+def test_tool_result_masking_failure_withholds_result(session_factory, monkeypatch):
+    from llm.pseudonym import Pseudonymizer
+
+    def boom(self, obj):
+        raise RuntimeError("mask broke")
+    monkeypatch.setattr(Pseudonymizer, "mask_obj", boom)
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "list_payables", "arguments": {}}]},
+        {"content": "done", "tool_calls": []},
+    ])
+    Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([])).chat("what do we owe?")
+    tool_msg = adapter.seen[1][-1]
+    assert tool_msg["role"] == "tool" and "withheld" in tool_msg["content"]
+    assert "Cartonia" not in json.dumps(adapter.seen) and "DE89" not in json.dumps(adapter.seen)
+
+
 def test_unknown_placeholder_args_rejected(session_factory):
     log = []
     adapter = ScriptedAdapter([

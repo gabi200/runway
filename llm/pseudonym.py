@@ -40,6 +40,7 @@ class Pseudonymizer:
 
     def __init__(self, session=None, people: list[str] | None = None) -> None:
         self._fwd: dict[str, str] = {}  # lowercase name literal -> placeholder (case-insensitive)
+        self._lit: dict[str, str] = {}  # same keys -> literal in its original case (the regex is built from these)
         self._ids: dict[str, str] = {}  # identifier literal -> placeholder (case-sensitive)
         self._rev: dict[str, str] = {}  # placeholder -> original literal
         self._counters: dict[str, int] = {}
@@ -65,18 +66,24 @@ class Pseudonymizer:
         else:
             ph = f"<{label}_{self._next(label)}>"
             self._fwd[key] = ph
+            self._lit[key] = literal.strip()
             self._rev[ph] = literal.strip()
             self._regex = None
             words = re.findall(r"[A-Za-z][A-Za-z0-9&'-]+", literal)
             if label == "PERSON":
                 for w in words:
                     if len(w) >= 3 and w.lower() not in _SIGN_OFFS:
-                        self._fwd.setdefault(w.lower(), ph)
+                        self._alias(w, ph)
             elif label not in ("EMAIL", "IBAN") and words and words[0].lower() not in _LEGAL_SUFFIXES and len(words[0]) >= _MIN_ALIAS_LEN:
-                self._fwd.setdefault(words[0].lower(), ph)
+                self._alias(words[0], ph)
         if ident:
             self._add_id(ph, label, ident, id_tag)
         return ph
+
+    def _alias(self, word: str, ph: str) -> None:
+        if word.lower() not in self._fwd:
+            self._fwd[word.lower()] = ph
+            self._lit[word.lower()] = word
 
     def _add_id(self, ph: str, label: str, ident: str, tag: str = "ID") -> None:
         # Plain-word IDs (PAYROLL, LANDLORD) would mask ordinary prose; only structured IDs are masked.
@@ -165,7 +172,7 @@ class Pseudonymizer:
     def _pattern(self) -> re.Pattern[str] | None:
         if self._regex is None and (self._fwd or self._ids):
             ids = "|".join(re.escape(a) for a in sorted(self._ids, key=len, reverse=True))
-            names = "|".join(re.escape(a) for a in sorted(self._fwd, key=len, reverse=True))
+            names = "|".join(re.escape(a) for a in sorted(self._lit.values(), key=len, reverse=True))
             alts = ([f"(?-i:{ids})"] if ids else []) + ([names] if names else [])
             self._regex = re.compile(rf"(?<![A-Za-z0-9])(?:{'|'.join(alts)})(?![A-Za-z0-9])", re.IGNORECASE)
         return self._regex
@@ -189,8 +196,16 @@ class Pseudonymizer:
         text = IBAN_RE.sub(iban_sub, text)
         pat = self._pattern()
         if pat is not None:
-            text = pat.sub(lambda m: self._ids.get(m.group(0)) or self._fwd[m.group(0).lower()], text)
+            text = pat.sub(lambda m: self._lookup(m.group(0)), text)
         return text
+
+    def _lookup(self, found: str) -> str:
+        """Placeholder for a regex match. Never raises: masking must not crash a turn."""
+        ph = self._ids.get(found) or self._fwd.get(found.lower())
+        if ph is None:  # re.IGNORECASE also pairs i/I with ı/İ and s with ſ, which lower() does not
+            ph = next((self._fwd[k] for k, lit in self._lit.items()
+                       if re.fullmatch(re.escape(lit), found, re.IGNORECASE)), "<REDACTED_0>")
+        return ph
 
     def unmask(self, text: str) -> str:
         """Replace placeholders with the original literals; unknown ones are left as is."""

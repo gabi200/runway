@@ -112,6 +112,20 @@ def test_same_name_entities_get_distinct_id_placeholders(session):
     assert [p.unmask(m) for m in masked] == ids
 
 
+def test_turkish_i_and_long_s_never_crash_and_are_masked(session):
+    # Under re.IGNORECASE i/I also match ı/İ and s matches ſ, which str.lower() does not map back.
+    session.add(db.Counterparty(id="SUP-INKWORKS", name="Inkworks GmbH", kind="supplier"))
+    session.add(db.Counterparty(id="SUP-YILDIZ", name="Yıldız Tekstil", kind="supplier"))
+    session.add(db.Counterparty(id="SUP-IZMIR", name="İzmir Lojistik A.Ş.", kind="supplier"))
+    session.add(db.Counterparty(id="SUP-SWIFTLOG", name="Swiftlog Logistics", kind="supplier"))
+    session.commit()
+    p = Pseudonymizer(session)
+    out = p.mask("İnkworks faturası; YILDIZ TEKSTIL; pay İzmir Lojistik A.Ş. now; ſwiftlog")
+    for secret in ("nkworks", "YILDIZ", "zmir", "wiftlog"):
+        assert secret not in out, out
+    assert p.mask("yıldız tekstil") == p.mask("Yıldız Tekstil")
+
+
 def test_learn_still_learns_real_two_token_person(session):
     p = Pseudonymizer(session)
     p.learn("Hi\n\nBest regards,\nHans Muller")
