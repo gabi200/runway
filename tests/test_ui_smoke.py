@@ -569,3 +569,11 @@ def test_approval_in_ui_is_signed(at):
         from sqlmodel import select
         entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.decision == "APPROVED")).first()
         assert entry.actor == "owner" and "signature" in entry.args_json
+
+
+def test_forecast_page_shows_the_running_low_and_a_valid_default_move(at):
+    goto(at, "Forecast")
+    assert any("29,303.32" in str(m.value) for m in at.metric), [m.value for m in at.metric]
+    next(b for b in at.button if b.label == "Add move").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert not at.error, [e.value for e in at.error]

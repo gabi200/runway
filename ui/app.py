@@ -364,11 +364,12 @@ def page_chat() -> None:
                         st.subheader("There’s a cash gap ahead. Let’s get in front of it.")
                         st.write(f"Your balance is projected to fall below zero in weeks "
                                  f"{', '.join(map(str, fc.shortfall_weeks))}. The lowest point is "
-                                 f"**{money(pack, fc.min_closing_cents)}** in week {fc.min_week}.")
+                                 f"**{money(pack, fc.min_running_cents)}** on {fc.min_running_date:%d %b} (week {fc.min_running_week}).")
                     else:
                         st.subheader("Your cash stays above zero for 13 weeks.")
-                        st.write(f"The lowest projected balance is **{money(pack, fc.min_closing_cents)}** "
-                                 f"in week {fc.min_week}. Ask a question or run your Monday brief to review next steps.")
+                        st.write(f"The lowest projected balance is "
+                                 f"**{money(pack, fc.min_running_cents)}** on {fc.min_running_date:%d %b} (week {fc.min_running_week}). "
+                                 "Ask a question or run your Monday brief to review next steps.")
                     st.caption("Source: current 13-week cash forecast. Every figure traces to ledger rows.")
                     st.markdown('<div class="welcome-next"><strong>Start with your Monday brief</strong>'
                                 '<p>Runway reviews cash, follows up on overdue invoices and prepares proposals. '
@@ -397,8 +398,8 @@ def page_chat() -> None:
             if fc.shortfall_weeks:
                 first = fc.weeks[fc.shortfall_weeks[0] - 1]
                 st.markdown(f'<div class="cash-warning"><strong>First gap in week {first.index}</strong>'
-                            f'<p>{first.start:%d %b} to {first.end:%d %b}<br>13-week low (week {fc.min_week}): '
-                            f'{esc(money(pack, fc.min_closing_cents))}</p></div>', unsafe_allow_html=True)
+                            f'<p>{first.start:%d %b} to {first.end:%d %b}<br>13-week low ({fc.min_running_date:%d %b}, week {fc.min_running_week}): '
+                            f'{esc(money(pack, fc.min_running_cents))}</p></div>', unsafe_allow_html=True)
             else:
                 st.success("No shortfall in this forecast.")
             st.button("Open cash forecast", on_click=navigate, args=("Forecast",), width="stretch")
@@ -424,6 +425,7 @@ def weeks_frame(fc, pack) -> pd.DataFrame:
         "Week": w.index, "Start": w.start, "End": w.end,
         "Opening": money(pack, w.opening_cents), "Receipts (in)": money(pack, w.receipts_cents),
         "Payments (out)": money(pack, w.payments_cents), "Closing": money(pack, w.closing_cents),
+        "Lowest in week": money(pack, w.min_running_cents),
         "Shortfall": "SHORTFALL" if w.index in fc.shortfall_weeks else "",
     } for w in fc.weeks])
 
@@ -477,8 +479,9 @@ def page_forecast() -> None:
     with st.container(key="forecast-metrics"):
         a, b, c = st.columns(3)
         a.metric("Opening balance", money(pack, fc.opening_balance_cents))
-        b.metric("Lowest projected balance", money(pack, fc.min_closing_cents))
-        b.caption(f"Week {fc.min_week}")
+        b.metric("Lowest projected balance", money(pack, fc.min_running_cents))
+        b.caption(f"{fc.min_running_date:%d %b}, week {fc.min_running_week} (lowest week-end: "
+                  f"{money(pack, fc.min_closing_cents)})")
         c.metric("Weeks below zero", f"{len(fc.shortfall_weeks)} of 13")
         c.caption(", ".join(f"Week {w}" for w in fc.shortfall_weeks) or "No shortfall")
     with st.container(border=True, key="forecast-chart"):
@@ -490,12 +493,12 @@ def page_forecast() -> None:
         table, detail = st.columns([3, 1], gap="large")
         with table:
             st.subheader("Week-by-week cash")
-            st.caption(f"Select a row to trace its figures. Default: the lowest week ({fc.min_week}).")
+            st.caption(f"Select a row to trace its figures. Default: the lowest week ({fc.min_running_week}).")
             sel = st.dataframe(weeks_frame(fc, pack), width="stretch", hide_index=True, key="fc_table",
                               on_select="rerun", selection_mode="single-row",
                               column_order=["Week", "Start", "Receipts (in)", "Payments (out)", "Closing", "Shortfall", "Opening", "End"])
             rows = list(sel.selection.rows) if sel is not None and sel.selection else []
-            week = rows[0] + 1 if rows else (fc.min_week or 1)
+            week = rows[0] + 1 if rows else (fc.min_running_week or 1)
         with detail, st.container(key="week-detail"):
             st.subheader(f"Week {week} explained")
             field = st.radio("Figure", ["closing_cents", "receipts_cents", "payments_cents", "opening_cents"],
@@ -535,9 +538,11 @@ def scenario_panel(fc, pack) -> None:
     with session_scope() as s:
         customers = [(c.id, c.name) for c in s.exec(select(Counterparty).where(Counterparty.kind == "customer"))]
         ledger_cur = (s.get(Account, "ACC-MAIN").currency if s.get(Account, "ACC-MAIN") else "")
-        pays = [(p.id, f"{p.id} - {p.payee_id} - {pack.display(p.amount_cents)} on {p.execute_date}")
+        pays = [(p.id, f"{p.id} - {p.payee_id} - {pack.display(p.amount_cents)} on {p.execute_date}",
+                 # default move: the invoice due date (the latest the rules allow), else two weeks later
+                 inv.due_date if (inv := s.get(Invoice, p.invoice_id) if p.invoice_id else None)
+                 else p.execute_date + timedelta(days=14))
                 for p in s.exec(select(Payment).where(Payment.status == "scheduled"))]
-        today = db.get_today(s)
     t1, t2, t3 = st.tabs(["Delay a customer", "Add an inflow", "Move a payment"])
     with t1:
         cid = st.selectbox("Customer", customers, format_func=lambda c: c[1], key="sc_cust")
@@ -554,7 +559,7 @@ def scenario_panel(fc, pack) -> None:
     with t3:
         if pays:
             pay = st.selectbox("Scheduled payment", pays, format_func=lambda p: p[1], key="sc_pay")
-            nd = st.date_input("New date", today + timedelta(days=35), key="sc_date")
+            nd = st.date_input("New date", pay[2], key=f"sc_date_{pay[0]}")
             if st.button("Add move"):
                 st.session_state.scenario.append({"type": "move_payment", "payment_id": pay[0],
                                                   "new_date": nd.isoformat()})
@@ -575,9 +580,10 @@ def scenario_panel(fc, pack) -> None:
         st.error(f"Scenario could not be applied: {exc}")
         return
     m1, m2 = st.columns(2)
-    m1.metric("Lowest balance before", money(pack, fc.min_closing_cents), f"week {fc.min_week}", delta_color="off", border=True)
-    m2.metric("Lowest balance after", money(pack, fc2.min_closing_cents),
-              money(pack, fc2.min_closing_cents - fc.min_closing_cents), border=True)
+    m1.metric("Lowest balance before", money(pack, fc.min_running_cents), f"{fc.min_running_date:%d %b}",
+              delta_color="off", border=True)
+    m2.metric("Lowest balance after", money(pack, fc2.min_running_cents),
+              money(pack, fc2.min_running_cents - fc.min_running_cents), border=True)
     st.altair_chart(closing_chart(fc, pack, fc2), width="stretch")
     st.dataframe(pd.DataFrame({
         "Week": [w.index for w in fc.weeks],
@@ -1036,8 +1042,8 @@ def status_banner() -> None:
         level, status, headline = "attention", "Action needed", "Cash stays positive for 13 weeks"
     else:
         level, status, headline = "ok", "All clear", "Cash stays positive for 13 weeks"
-    sub = f"Lowest point: week {fc.min_week} at {money(pack, fc.min_closing_cents)}"
-    low = "danger" if fc.min_closing_cents < 0 else ""
+    sub = f"Lowest point: {fc.min_running_date:%d %b} (week {fc.min_running_week}) at {money(pack, fc.min_running_cents)}"
+    low = "danger" if fc.min_running_cents < 0 else ""
 
     def metric(n, label, cls=""):
         return f'<div><div class="n {cls}">{esc(str(n))}</div><div class="l">{label}</div></div>'
@@ -1046,7 +1052,7 @@ def status_banner() -> None:
         f'<div class="banner {level}"><div class="grow"><div class="status">{status}</div>'
         f'<div class="headline">{esc(headline)}</div><div class="sub">{esc(sub)}</div></div>'
         + metric(money(pack, balance), "Bank balance")
-        + metric(money(pack, fc.min_closing_cents), "13-week low", low)
+        + metric(money(pack, fc.min_running_cents), "13-week low", low)
         + metric(pending, "Awaiting approval", "attention" if pending else "")
         + metric(flagged, "Flagged documents", "danger" if flagged else "")
         + "</div>", unsafe_allow_html=True)
