@@ -44,6 +44,21 @@ def test_week6_trough(s):
     assert 6 in fc.shortfall_weeks
 
 
+def test_running_balance_dips_inside_weeks_are_shortfalls(s):
+    """Regression (B1): a week whose running balance goes below zero is a shortfall, even if it closes higher."""
+    fc = build_forecast(s)
+    w6, w7 = fc.weeks[5], fc.weeks[6]
+    # 11-26: the Inkworks payment (12,000) is counted before the same-day receipt (11,000)
+    assert (w6.min_running_cents, w6.min_running_date) == (-2_930_332, date(2026, 11, 26))
+    # 12-01: rent (8,000) before the 90,000 Brightfield receipt of 12-03; the week closes positive
+    assert (w7.min_running_cents, w7.min_running_date) == (-2_630_332, date(2026, 12, 1))
+    assert w6.closing_cents == -1_830_332 and w7.closing_cents == 6_369_668  # closings unchanged
+    assert fc.shortfall_weeks == [6, 7, 10, 11]  # week 11 opens below zero until the 12-31 receipt
+    assert (fc.min_running_cents, fc.min_running_date, fc.min_running_week) == (-2_930_332, date(2026, 11, 26), 6)
+    for b in fc.weeks:
+        assert b.min_running_cents <= min(b.opening_cents, b.closing_cents)
+
+
 def test_brightfield_lands_week_11_and_week6_pressure(s):
     fc = build_forecast(s)
     bf = [(b.index, ln) for b in fc.weeks for ln in b.lines if ln.amount_cents >= 90_000_00]

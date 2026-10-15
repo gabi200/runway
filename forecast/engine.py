@@ -3,7 +3,9 @@
 Every line carries ``source_refs`` (Transaction / Invoice / Payment IDs) so each
 figure can be traced back to ledger rows. ``payments_cents`` and every payment
 line amount are signed (negative = money out), so
-``closing = opening + receipts + payments``.
+``closing = opening + receipts + payments``. The balance is also walked line by
+line: ``min_running_cents`` is the lowest point inside a week, which can be far
+below the week's closing, and shortfalls are judged on it.
 """
 
 from __future__ import annotations
@@ -57,7 +59,9 @@ class WeekBucket(BaseModel):
     receipts_cents: int
     payments_cents: int  # negative
     closing_cents: int
-    lines: list[ForecastLine]
+    min_running_cents: int  # lowest running balance in the week (the opening included)
+    min_running_date: date  # day it is reached (the week start when it is the opening)
+    lines: list[ForecastLine]  # in walk order: by date, payments before receipts, then label
 
 
 class Forecast(BaseModel):
@@ -65,9 +69,12 @@ class Forecast(BaseModel):
     currency: str
     opening_balance_cents: int
     weeks: list[WeekBucket]
-    min_week: int
+    min_week: int  # week with the lowest CLOSING balance
     min_closing_cents: int
-    shortfall_weeks: list[int]  # weeks with closing < 0
+    min_running_week: int  # week with the lowest running balance
+    min_running_cents: int
+    min_running_date: date
+    shortfall_weeks: list[int]  # weeks whose running balance goes below 0 at any point
     scenario: list[dict] = Field(default_factory=list)
 
 
@@ -249,7 +256,10 @@ def build_forecast(session: Session, weeks: int = 13, scenario: list[dict] | Non
     end = start + timedelta(days=7 * weeks - 1)
     pack = load_country_pack(get_setting(session, "country", None))
     opening = account_balance_cents(session, ACCOUNT_ID, as_of=start)
-    lines = sorted(_collect_lines(session, start, end, scenario), key=lambda ln: (ln.expected_date, ln.label))
+    # ponytail: the time of day of a movement is unknown, so on the same day payments are counted
+    # before receipts (conservative): a same-day receipt never hides a dip. No intraday model beyond that.
+    lines = sorted(_collect_lines(session, start, end, scenario),
+                   key=lambda ln: (ln.expected_date, ln.amount_cents >= 0, ln.label))
 
     buckets: list[WeekBucket] = []
     bal = opening
@@ -258,22 +268,33 @@ def build_forecast(session: Session, weeks: int = 13, scenario: list[dict] | Non
         wl = [ln for ln in lines if ws <= ln.expected_date <= we]
         rec = sum(ln.amount_cents for ln in wl if ln.amount_cents > 0)
         pay = sum(ln.amount_cents for ln in wl if ln.amount_cents < 0)
+        run = low = bal
+        low_date = ws
+        for ln in wl:
+            run += ln.amount_cents
+            if run < low:
+                low, low_date = run, ln.expected_date
         buckets.append(
             WeekBucket(
                 index=i + 1, start=ws, end=we, opening_cents=bal, receipts_cents=rec,
-                payments_cents=pay, closing_cents=bal + rec + pay, lines=wl,
+                payments_cents=pay, closing_cents=bal + rec + pay, min_running_cents=low,
+                min_running_date=low_date, lines=wl,
             )
         )
         bal += rec + pay
-    low = min(buckets, key=lambda b: (b.closing_cents, b.index))
+    low_close = min(buckets, key=lambda b: (b.closing_cents, b.index))
+    low_run = min(buckets, key=lambda b: (b.min_running_cents, b.index))
     return Forecast(
         start_date=start,
         currency=pack.currency,
         opening_balance_cents=opening,
         weeks=buckets,
-        min_week=low.index,
-        min_closing_cents=low.closing_cents,
-        shortfall_weeks=[b.index for b in buckets if b.closing_cents < 0],
+        min_week=low_close.index,
+        min_closing_cents=low_close.closing_cents,
+        min_running_week=low_run.index,
+        min_running_cents=low_run.min_running_cents,
+        min_running_date=low_run.min_running_date,
+        shortfall_weeks=[b.index for b in buckets if b.min_running_cents < 0],
         scenario=scenario,
     )
 
@@ -344,33 +365,36 @@ MIN_FINANCING_DAYS = 30  # shortest term quoted: products are priced per started
 def financing_need(session: Session, scenario: list[dict] | None = None) -> dict:
     """How much cash is needed, by when and for how long, computed in code (no AI).
 
-    amount = deficit of the worst week, rounded up to a whole 1,000;
-    needed_by = first day of the first shortfall week;
-    days_needed = days from needed_by until the first receipt that brings the balance back
-    to >= 0 after the LAST shortfall week (at least MIN_FINANCING_DAYS).
+    The balance is walked line by line (same-day payments before receipts, see build_forecast):
+    amount = the lowest running balance as a deficit, rounded up to a whole 1,000;
+    needed_by = the first day the running balance is below zero;
+    days_needed = days from needed_by until the receipt that brings the balance back to >= 0
+    after its LAST dip, or the horizon end if it does not recover (at least MIN_FINANCING_DAYS).
     """
     fc = build_forecast(session, scenario=scenario)
     pack = load_country_pack(get_setting(session, "country", None))
-    base = {"currency": fc.currency, "shortfall_weeks": fc.shortfall_weeks, "scenario": scenario or []}
+    base = {"currency": fc.currency, "shortfall_weeks": fc.shortfall_weeks, "scenario": scenario or [],
+            "worst_week": fc.min_running_week, "worst_date": fc.min_running_date.isoformat(),
+            "worst_balance_cents": fc.min_running_cents,
+            "worst_balance_display": pack.display(fc.min_running_cents)}
     if not fc.shortfall_weeks:
-        return {**base, "amount_cents": 0, "needed_by": None, "days_needed": 0, "worst_week": fc.min_week,
-                "worst_closing_cents": fc.min_closing_cents, "recovery_week": None, "recovery_refs": [],
-                "explanation": f"No shortfall: the lowest balance is {pack.display(fc.min_closing_cents)} "
-                               f"in week {fc.min_week}. No financing is needed."}
-    worst = min((w for w in fc.weeks if w.closing_cents < 0), key=lambda w: (w.closing_cents, w.index))
-    amount = -(-(-worst.closing_cents) // FINANCING_ROUNDING_CENTS) * FINANCING_ROUNDING_CENTS
-    first = fc.weeks[fc.shortfall_weeks[0] - 1]
-    last = fc.weeks[fc.shortfall_weeks[-1] - 1]
-    needed_by = first.start
+        return {**base, "amount_cents": 0, "needed_by": None, "days_needed": 0, "recovery_week": None,
+                "recovery_refs": [],
+                "explanation": f"No shortfall: the lowest balance is {pack.display(fc.min_running_cents)} "
+                               f"on {fc.min_running_date.isoformat()} (week {fc.min_running_week}). "
+                               "No financing is needed."}
+    amount = -(-(-fc.min_running_cents) // FINANCING_ROUNDING_CENTS) * FINANCING_ROUNDING_CENTS
+    bal = fc.opening_balance_cents
+    needed_by = fc.start_date if bal < 0 else None
     recovery = None
-    if last.index < len(fc.weeks):
-        nxt = fc.weeks[last.index]
-        bal = last.closing_cents
-        for ln in sorted(nxt.lines, key=lambda ln: (ln.expected_date, -ln.amount_cents)):
+    for w in fc.weeks:
+        for ln in w.lines:  # already in walk order
+            was_negative = bal < 0
             bal += ln.amount_cents
-            if ln.kind == "receipt" and bal >= 0:
-                recovery = (nxt, ln)
-                break
+            if bal < 0:
+                needed_by, recovery = needed_by or ln.expected_date, None
+            elif was_negative:
+                recovery = (w, ln)
     if recovery:
         rw, rl = recovery
         end, refs, rec_week = rl.expected_date, list(rl.source_refs), rw.index
@@ -381,12 +405,12 @@ def financing_need(session: Session, scenario: list[dict] | None = None) -> dict
         rec_text = "no receipt within the forecast horizon brings the balance back above zero"
     days = max(MIN_FINANCING_DAYS, (end - needed_by).days)
     return {
-        **base, "amount_cents": amount, "amount_display": pack.display(amount), "needed_by": needed_by.isoformat(), "days_needed": days,
-        "worst_week": worst.index, "worst_closing_cents": worst.closing_cents,
-        "worst_closing_display": pack.display(worst.closing_cents), "recovery_week": rec_week, "recovery_refs": refs,
+        **base, "amount_cents": amount, "amount_display": pack.display(amount), "needed_by": needed_by.isoformat(),
+        "days_needed": days, "recovery_week": rec_week, "recovery_refs": refs,
         "explanation": (
-            f"Shortfall in week(s) {', '.join(map(str, fc.shortfall_weeks))}; the worst is week {worst.index} at "
-            f"{pack.display(worst.closing_cents)}. Amount = that deficit rounded up to a whole 1,000: "
-            f"{pack.display(amount)}. Needed from {needed_by.isoformat()} (start of week {first.index}) for "
-            f"{days} days: {rec_text}."),
+            f"Shortfall in week(s) {', '.join(map(str, fc.shortfall_weeks))}: the balance first goes below zero "
+            f"on {needed_by.isoformat()} and is lowest at {pack.display(fc.min_running_cents)} on "
+            f"{fc.min_running_date.isoformat()} (week {fc.min_running_week}; same-day payments counted before "
+            f"receipts). Amount = that deficit rounded up to a whole 1,000: {pack.display(amount)}. "
+            f"Needed from {needed_by.isoformat()} for {days} days: {rec_text}."),
     }

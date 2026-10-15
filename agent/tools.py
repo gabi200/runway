@@ -222,9 +222,11 @@ def _forecast_view(fc: Any, include_lines: bool) -> dict:
     d = jsonable(fc)
     disp = load_country_pack().display
     d["min_closing_display"] = disp(d["min_closing_cents"])
+    d["min_running_display"] = disp(d["min_running_cents"])
     d["opening_balance_display"] = disp(d["opening_balance_cents"])
     for w in d["weeks"]:
         w["closing_display"] = disp(w["closing_cents"])
+        w["min_running_display"] = disp(w["min_running_cents"])
     if not include_lines:
         for w in d["weeks"]:
             w.pop("lines", None)
