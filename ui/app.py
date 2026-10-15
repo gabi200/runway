@@ -755,7 +755,7 @@ def page_payees() -> None:
         return
     for payee in payees:
         details, action = st.columns([4, 1])
-        details.write(f"{payee['name']} ({payee['id']})")
+        details.write(safe_text(f"{payee['name']} ({payee['id']})"))
         if not payee["iban"].strip():  # imported payees arrive without bank details
             new_iban = details.text_input("IBAN (can be set once)", key=f"iban_{payee['id']}")
             if details.button("Set IBAN", key=f"set_iban_{payee['id']}") and new_iban:
@@ -862,7 +862,7 @@ def page_inbox() -> None:
         st.caption("No emails yet. Run the Monday brief to create reminders.")
     for mid, kind, to, subj, body, inv, sent in mview:
         with st.expander(safe_text(f"[{kind}] {subj}  ->  {to}")):
-            st.caption(f"{mid} | invoice: {inv or '-'} | {sent}")
+            st.caption(safe_text(f"{mid} | invoice: {inv or '-'} | {sent}"))
             st.text(body)
     st.subheader(f"Financing applications ({len(aview)})")
     st.caption("Prepared, never submitted. A human reviews and signs the PDF.")

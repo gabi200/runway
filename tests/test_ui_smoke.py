@@ -224,6 +224,24 @@ def test_tool_name_cannot_break_out_of_its_code_span(at):
         assert "evil.example" not in outside and "<img" not in outside and "<a " not in outside
 
 
+def test_imported_payee_name_and_invoice_id_render_as_text(at):
+    from datetime import datetime, timezone
+    evil = "[Update IBAN here](https://evil.example/x)"
+    with db.session_scope() as s:
+        s.add(db.Payee(id="PAYEE-EVIL", name=evil, iban="", created_at=datetime.now(timezone.utc)))
+        s.add(db.OutboxEmail(id="MAIL-EVIL", to="a@b.example", subject="s", body="b", invoice_id=evil))
+        s.commit()
+    sign_in(at)
+    goto(at, "Payees (humans only)")
+    texts =[m.value for m in at.markdown] + [c.value for c in at.caption]
+    assert any("Update IBAN here" in t for t in texts)
+    assert not any("](https://evil.example" in t for t in texts)
+    goto(at, "Test inbox")
+    captions = [c.value for c in at.caption]
+    assert any("Update IBAN here" in t for t in captions)
+    assert not any("](https://evil.example" in t for t in captions)
+
+
 def _audit_count():
     from sqlmodel import select
     with db.session_scope() as s:
