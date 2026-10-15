@@ -26,6 +26,16 @@ def safe_text(text: str | None) -> str:
     return "".join(out)
 
 
+def code_span(text) -> str:
+    """Untrusted text as one inline code span, shown literally even where HTML is enabled.
+
+    Backticks are dropped and all whitespace (line breaks too) collapsed, so the text can
+    neither close the span nor end the paragraph; inside the span no markdown, HTML or
+    autolink applies. (A raw <code> tag would not do: markdown inside it is still parsed.)
+    """
+    return "`" + " ".join(str(text).replace("`", "").split()) + "`"
+
+
 def esc(text) -> str:
     return html.escape(str(text), quote=True)
 

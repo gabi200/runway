@@ -207,6 +207,23 @@ def test_model_markdown_is_neutralised():
     assert "`http://a.example`" in out
 
 
+def test_tool_name_cannot_break_out_of_its_code_span(at):
+    import re
+    from agent.orchestrator import AgentTurn
+    evil = ('get_forecast\n\n<img src="https://evil.example/p.png">'
+            '<a href="https://evil.example/login">Re-approve here</a>')
+    link = "[Re-approve here](https://evil.example/login)"
+    at.session_state["brief"] = AgentTurn(reply="ok", steps=[
+        {"tool": evil, "status": "DENY", "args": {}}, {"tool": link, "status": "DENY", "args": {}}])
+    goto(at, "Monday brief & chat")
+    lines = [m.value for m in at.markdown if m.value.startswith(("1. ", "2. "))]
+    assert len(lines) == 2
+    for line in lines:
+        assert "\n" not in line  # a line break would end the code span
+        outside = re.sub(r"`[^`\n]*`", "", line)
+        assert "evil.example" not in outside and "<img" not in outside and "<a " not in outside
+
+
 def _audit_count():
     from sqlmodel import select
     with db.session_scope() as s:

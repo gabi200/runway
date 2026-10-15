@@ -42,7 +42,7 @@ from data.importer import ImportErrorReport, import_files  # noqa: E402
 import redteam.console as redteam  # noqa: E402
 from ui import auth  # noqa: E402
 from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
-from ui.render import describe_approval, format_step, safe_text  # noqa: E402
+from ui.render import code_span, describe_approval, format_step, safe_text  # noqa: E402
 
 SECTIONS = ["Monday brief & chat", "Forecast", "Approval queue", "Documents",
             "Payees (humans only)", "Mock bank", "Test inbox", "Audit log", "Red team", "Onboarding"]
@@ -310,7 +310,7 @@ def render_steps(steps: list[dict]) -> None:
         return
     for i, step in enumerate(steps, 1):
         st.markdown(
-            f"{i}. `{str(step['tool']).replace(chr(96), '')}` {badge(step['status'])}"
+            f"{i}. {code_span(step['tool'])} {badge(step['status'])}"
             + (f" approval **{safe_text(step['approval_id'])}**" if step.get("approval_id") else ""),
             unsafe_allow_html=True)
         if step.get("reason"):
