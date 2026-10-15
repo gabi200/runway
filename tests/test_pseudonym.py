@@ -1,5 +1,6 @@
 """Pseudonymizer: stable, reversible masking of names, IDs and IBANs."""
 
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -124,6 +125,25 @@ def test_turkish_i_and_long_s_never_crash_and_are_masked(session):
     for secret in ("nkworks", "YILDIZ", "zmir", "wiftlog"):
         assert secret not in out, out
     assert p.mask("yıldız tekstil") == p.mask("Yıldız Tekstil")
+
+
+@pytest.mark.parametrize("spelling", [
+    "de89 3704 0044 0532 0130 00", "DE89 3704 0044 0532 0130 00",
+    "DE89  3704  0044  0532  0130  00", "DE89-3704-0044-0532-0130-00", "DE89.3704.0044.0532.0130.00",
+    "DE 89 3704 0044 0532 0130 00", "DE89 3704 0044\n0532 0130 00", "de89370400440532013000",
+])
+def test_known_iban_masked_in_any_spelling(session, spelling):
+    p = Pseudonymizer(session)
+    ph = p.mask("DE89370400440532013000")
+    assert p.mask(f"pay {spelling} today") == f"pay {ph} today"
+
+
+def test_loose_iban_match_keeps_following_words_and_ignores_lookalikes(session):
+    p = Pseudonymizer(session)
+    out = p.mask("send to be68 5390 0754 7034 from Monday")
+    assert re.fullmatch(r"send to <IBAN_\d+> from Monday", out), out
+    for text in ("on 12 March 2026 at 10am", "ab12 3456 7890 1234 5678", "room b2 12 seats"):
+        assert p.mask(text) == text
 
 
 def test_learn_still_learns_real_two_token_person(session):

@@ -14,6 +14,11 @@ from typing import Any
 IBAN_RE = re.compile(
     r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?(?![A-Za-z0-9])"
 )
+# Any case, groups split by up to 3 spaces (NBSP, tab, line break), dots or hyphens. Matches only count
+# when they pass the mod-97 check, so look-alike prose is left alone.
+_SEP = r"[\s.\-]{1,3}"
+_IBAN_LOOSE_RE = re.compile(rf"(?<![A-Za-z0-9])[A-Za-z]{{2}}(?:{_SEP})?\d{{2}}(?:(?:{_SEP})?[A-Za-z0-9]{{4}}){{2,7}}"
+                            rf"(?:(?:{_SEP})?[A-Za-z0-9]{{1,3}})?(?![A-Za-z0-9])")
 EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 _NAME = r"[A-Z][a-zA-Z'\-]+"
 _HEADER_NAME_RE = re.compile(rf"^(?:From|To|Cc|Bcc|Reply-To|Sender)\s*:\s*\"?({_NAME}(?: {_NAME}){{0,3}})\"?\s*<", re.M)
@@ -32,7 +37,13 @@ _LEGAL_SUFFIXES = {"gmbh", "ltd", "llc", "inc", "corp", "bv", "sa", "ag", "co", 
 
 
 def _norm_iban(s: str) -> str:
-    return re.sub(r"\s+", "", s).upper()
+    return re.sub(r"[^A-Za-z0-9]", "", s).upper()
+
+
+def _iban_ok(compact: str) -> bool:
+    """ISO 13616 mod-97 check (the rule of bank.service.iban_is_valid) on a normalised IBAN."""
+    return (15 <= len(compact) <= 34 and compact[:2].isalpha() and compact[2:4].isdigit()
+            and int("".join(str(int(c, 36)) for c in compact[4:] + compact[:4])) % 97 == 1)
 
 
 class Pseudonymizer:
@@ -186,14 +197,18 @@ class Pseudonymizer:
             return self.add("EMAIL", m.group(0))
 
         def iban_sub(m: re.Match[str]) -> str:
-            n = _norm_iban(m.group(0))
-            ph = self._fwd.get(n.lower())
-            if ph is None:
-                ph = self.add("IBAN", n)
-            return ph
+            return self.add("IBAN", _norm_iban(m.group(0)))
+
+        def loose_iban_sub(m: re.Match[str]) -> str:
+            s = m.group(0)  # may run on into following words: keep the longest valid IBAN prefix
+            for end in reversed([t.end() for t in re.finditer(r"[A-Za-z0-9]+", s)]):
+                if _iban_ok(_norm_iban(s[:end])):
+                    return self.add("IBAN", _norm_iban(s[:end])) + s[end:]
+            return s
 
         text = EMAIL_RE.sub(email_sub, text)
-        text = IBAN_RE.sub(iban_sub, text)
+        text = _IBAN_LOOSE_RE.sub(loose_iban_sub, text)
+        text = IBAN_RE.sub(iban_sub, text)  # IBAN-shaped but failing the checksum: masked as before
         pat = self._pattern()
         if pat is not None:
             text = pat.sub(lambda m: self._lookup(m.group(0)), text)
