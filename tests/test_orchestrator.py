@@ -283,3 +283,45 @@ def test_a2_email_chat_leaks_no_real_names_to_llm(tmp_path, monkeypatch):
                        "finance@lumen-packaging.example", "GB29NWBK60161331926819", "GB29 NWBK 6016 1331 9268 19"] + ibans
     for secret in secrets:
         assert secret.lower().replace(" ", "") not in blob.replace(" ", ""), secret
+
+
+def test_unbacked_action_claims_are_marked_and_history_records_tool_calls(session_factory):
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "send_payment_reminder", "arguments": {"invoice_id": "AR-1"}}]},
+        {"content": "I've sent the reminder and I have flagged the invoice.", "tool_calls": []},
+        {"content": "Done.", "tool_calls": []},
+    ])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([]))
+    turn = agent.chat("remind them")
+    assert "Check by Runway" in turn.reply and "flagged" in turn.reply.split("Check by Runway")[1]
+    assert "sent" not in turn.reply.split("Check by Runway")[1]
+    agent.chat("what did you do?")
+    previous = adapter.seen[-1][-2]["content"]  # last assistant message sent to the model
+    assert "send_payment_reminder" in previous and "-> ok" in previous
+
+
+def test_unbacked_claims_helper():
+    from agent.orchestrator import unbacked_claims
+    steps = [{"tool": "flag_document", "status": "ok"}, {"tool": "reschedule_payment", "status": "denied"}]
+    assert unbacked_claims("I flagged it. I've rescheduled PAY-1. The payment was sent.", steps) == ["rescheduled"]
+
+
+def test_curly_apostrophe_claim_is_caught():
+    from agent.orchestrator import unbacked_claims
+    assert unbacked_claims("It\u2019s fraud and I\u2019ve flagged it.", []) == ["flagged"]
+
+
+def test_unbacked_figures_are_marked(session_factory):
+    def runner(session, name, args, actor="agent"):  # tool result carries 1149166 cents = 11,491.66
+        return types.SimpleNamespace(model_dump=lambda mode="json": {"status": "ok", "tool": name,
+                                                                     "data": {"vat_cents": 1149166}})
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "get_forecast", "arguments": {}}]},
+        {"content": "VAT is 11,491.66 and you mentioned 9,800.00; payroll is 11,149.66.", "tool_calls": []},
+        {"content": "Still 11,491.66.", "tool_calls": []},
+    ])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=runner)
+    turn = agent.chat("Can we pay 9,800 this week?")
+    note = turn.reply.split("Check by Runway")[1]
+    assert "11,149.66" in note and "11,491.66" not in note and "9,800.00" not in note
+    assert "Check by Runway" not in agent.chat("and VAT?").reply  # evidence carries over to later turns
