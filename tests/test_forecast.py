@@ -117,11 +117,12 @@ def test_explain_figure(s):
 
 
 def test_payment_originated_transactions_do_not_change_estimates(db):
-    """Regression (H2): small automatic payments booked as payroll/rent must not move the forecast."""
+    """Regression (H2): small automatic payments booked as payroll/rent must not move the estimates."""
     from datetime import datetime, timezone
     from common.db import Payee
     with Session(get_engine(db)) as s:
-        before = [w.closing_cents for w in build_forecast(s).weeks]
+        base = build_forecast(s)
+        before = [w.closing_cents for w in base.weeks]
         s.add(Payee(id="PAYEE-PROBE", name="Probe", counterparty_id="LANDLORD", iban="DE00", verified=True,
                     created_at=datetime.now(timezone.utc)))
         for n, (cat, cp) in enumerate([("rent", "LANDLORD"), ("payroll", "PAYROLL")], 1):
@@ -133,9 +134,12 @@ def test_payment_originated_transactions_do_not_change_estimates(db):
                           status="executed", automatic=True, transaction_id=f"TX-PROBE{n}"))
         s.commit()
         after = build_forecast(s)
-        # opening balance drops by the two real payments; recurring estimates stay the same
-        shift = -190_000
-        assert [w.closing_cents for w in after.weeks] == [c + shift for c in before]
+        # opening balance drops by the two real payments; the medians stay the same. The payroll one only
+        # counts toward October's payroll (B2: booked this month), so that estimate is 950.00 smaller.
+        assert after.opening_balance_cents == base.opening_balance_cents - 190_000
+        assert [w.closing_cents for w in after.weeks] == [c - 95_000 for c in before]
+        payroll = [ln.amount_cents for w in after.weeks for ln in w.lines if ln.label == "Payroll (estimate)"]
+        assert payroll == [-5_506_000 + 95_000, -5_506_000, -5_506_000]
         refs = {r for w in after.weeks for ln in w.lines for r in ln.source_refs}
         assert not refs & {"TX-PROBE1", "TX-PROBE2"}
         s.rollback()
@@ -144,6 +148,72 @@ def test_payment_originated_transactions_do_not_change_estimates(db):
             for i in ids:
                 s.delete(s.get(model, i))
         s.commit()
+
+
+def _estimate_dates(fc, label):
+    return [ln.expected_date for w in fc.weeks for ln in w.lines if ln.label == f"{label} (estimate)"]
+
+
+@pytest.mark.parametrize("from_payment", [False, True])
+def test_recurring_estimate_not_repeated_when_booked_this_month(s, from_payment):
+    """Regression (B2a): payroll already booked this month (bank row or bank-executed payment) is not estimated again."""
+    s.add(Transaction(id="TX-EARLYPAY", account_id="ACC-MAIN", booking_date=date(2026, 10, 16), amount_cents=-5_506_000,
+                      currency="EUR", description="payroll paid early", category="payroll", counterparty_id="PAYROLL"))
+    if from_payment:
+        s.add(Payment(id="PAY-EARLYPAY", idempotency_key="early-pay", payee_id="PAYEE-PAYROLL", amount_cents=5_506_000,
+                      currency="EUR", execute_date=date(2026, 10, 16), status="executed", transaction_id="TX-EARLYPAY"))
+    s.flush()
+    assert _estimate_dates(build_forecast(s), "Payroll") == [date(2026, 11, 25), date(2026, 12, 25)]
+    s.rollback()
+
+
+def test_scheduled_tax_payment_replaces_vat_estimate(s):
+    """Regression (B2b): a scheduled payment to the tax office covers that month's VAT estimate."""
+    s.add(Payment(id="PAY-VATPROBE", idempotency_key="vat-probe", payee_id="PAYEE-TAX", amount_cents=1_149_166,
+                  currency="EUR", execute_date=date(2026, 10, 23), status="scheduled"))
+    s.flush()
+    fc = build_forecast(s)
+    assert _estimate_dates(fc, "VAT payment") == [date(2026, 11, 25), date(2026, 12, 25)]
+    assert any("PAY-VATPROBE" in ln.source_refs for ln in fc.weeks[0].lines)
+    s.rollback()
+
+
+def test_open_tax_payable_replaces_vat_estimate(s):
+    """Regression (B2c): an open payable to the tax office due in a month covers that month's VAT estimate."""
+    s.add(Invoice(id="AP-TAXPROBE", number="VAT-2026-11", direction="AP", counterparty_id="TAX-OFFICE",
+                  issue_date=date(2026, 10, 15), due_date=date(2026, 11, 25), amount_cents=1_200_000,
+                  currency="EUR", critical=True))
+    s.flush()
+    fc = build_forecast(s)
+    assert _estimate_dates(fc, "VAT payment") == [date(2026, 10, 25), date(2026, 12, 25)]
+    assert any("AP-TAXPROBE" in ln.source_refs for ln in fc.weeks[5].lines)
+    s.rollback()
+
+
+def test_small_known_item_only_tops_up_the_estimate(s):
+    """A 10.00 payment to the tax office must not wipe out the 11,491.66 VAT estimate of its month."""
+    before = [w.closing_cents for w in build_forecast(s).weeks]
+    s.add(Payment(id="PAY-TINY", idempotency_key="tiny", payee_id="PAYEE-TAX", amount_cents=1_000,
+                  currency="EUR", execute_date=date(2026, 11, 25), status="scheduled"))
+    s.flush()
+    fc = build_forecast(s)
+    assert [w.closing_cents for w in fc.weeks] == before
+    vat = [ln for ln in fc.weeks[5].lines if ln.label == "VAT payment (estimate)"]
+    assert [ln.amount_cents for ln in vat] == [-1_148_166]
+    s.rollback()
+
+
+def test_unbooked_recurring_item_carried_forward_after_its_day(s):
+    """Regression (B2d): once the clock passes the 25th with nothing booked, payroll and VAT are still due."""
+    from common.db import Setting
+    s.get(Setting, "today").value = "2026-10-27"
+    s.flush()
+    fc = build_forecast(s)
+    assert fc.start_date == date(2026, 10, 27)
+    for label in ("Payroll", "VAT payment"):
+        assert _estimate_dates(fc, label)[:2] == [date(2026, 10, 30), date(2026, 11, 25)]
+    assert _estimate_dates(fc, "Rent")[0] == date(2026, 11, 1)  # October rent is booked
+    s.rollback()
 
 
 def test_explain_opening_balance_has_sources(s):

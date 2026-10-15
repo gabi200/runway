@@ -22,7 +22,9 @@ from sqlmodel import Session, select
 from common.config import load_country_pack
 from common.db import (
     Account,
+    Counterparty,
     Invoice,
+    Payee,
     Payment,
     Transaction,
     account_balance_cents,
@@ -40,6 +42,13 @@ RECURRING = {  # ledger category -> label
     "vat": "VAT payment",
 }
 RECURRING_SAMPLE = 3  # number of recent monthly totals whose median is used per category
+KIND_CATEGORY = {  # counterparty kind -> recurring category (the mapping bank/service.py advance() books with)
+    "payroll": "payroll",
+    "landlord": "rent",
+    "utility": "utilities",
+    "tax": "vat",
+    "lender": "loan_repayment",
+}
 
 
 class ForecastLine(BaseModel):
@@ -105,12 +114,19 @@ def _month_iter(start: date, end: date):
             y, m = y + 1, 1
 
 
-def _recurring_lines(session: Session, start: date, end: date, vat_day: int) -> list[ForecastLine]:
+def _recurring_lines(session: Session, start: date, end: date, vat_day: int,
+                     known: dict[tuple[str, int, int], int]) -> list[ForecastLine]:
     """Estimate each recurring item from the monthly totals of seeded/booked recurring rows.
 
     Transactions created from a Payment (``Payment.transaction_id``) are excluded, so small
     automatic payments booked under a recurring category can never change the estimate.
     The estimate is the median of the last RECURRING_SAMPLE monthly totals.
+
+    A month's estimate only tops up what is already known for that category and month:
+    ``known`` (scheduled payments and open payables, keyed by (category, year, month)) and,
+    for the current month, what is already booked (bank-executed payments included). If the
+    current month's day has passed and part of it is still missing, the rest is expected
+    OVERDUE_ASSUMED_DAYS after today, like an overdue receipt.
     """
     from_payments = {t for t in session.exec(select(Payment.transaction_id)).all() if t}
     lines: list[ForecastLine] = []
@@ -133,17 +149,34 @@ def _recurring_lines(session: Session, start: date, end: date, vat_day: int) -> 
         used = [t for k in recent for t in months[k]]
         day = vat_day if cat == "vat" else round(median(t.booking_date.day for t in used))
         refs = [t.id for t in used]
+        booked = -sum(t.amount_cents for t in session.exec(
+            select(Transaction).where(Transaction.account_id == ACCOUNT_ID, Transaction.category == cat,
+                                      Transaction.amount_cents < 0, Transaction.booking_date <= start,
+                                      Transaction.booking_date >= start.replace(day=1))))
         for y, m in _month_iter(start, end):
             d = date(y, m, min(day, calendar.monthrange(y, m)[1]))
-            if start <= d <= end:
+            # ponytail: anything booked, scheduled or invoiced for the category counts toward its month (any
+            # amount, by booking/execute/due month), and the estimate only adds the rest, so a small item never
+            # removes a large estimate; a real bill below the estimate leaves the difference (conservative).
+            already = known.get((cat, y, m), 0) + (booked if (y, m) == (start.year, start.month) else 0)
+            rest = -amount - already
+            if rest <= 0:
+                continue
+            note = f"median of last {len(recent)} monthly {cat} totals (bank-executed payments excluded)"
+            if already:
+                note += f", less {already / 100:.2f} already booked, scheduled or invoiced for {y}-{m:02d}"
+            if d < start:
+                d = start + timedelta(days=OVERDUE_ASSUMED_DAYS)
+                note += f"; its day has passed unpaid, assumed paid {OVERDUE_ASSUMED_DAYS} days from today"
+            if d <= end:
                 lines.append(
                     ForecastLine(
                         label=f"{label} (estimate)",
                         kind="payment",
-                        amount_cents=amount,
+                        amount_cents=-rest,
                         expected_date=d,
                         source_refs=refs,
-                        note=f"median of last {len(recent)} monthly {cat} totals (bank-executed payments excluded)",
+                        note=note,
                     )
                 )
     return lines
@@ -193,12 +226,22 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
         )
 
     # Scheduled payments have their own lines; AP lines cover only the residual balance.
+    # Both count toward the recurring estimate of their category and month (``known``).
+    known: dict[tuple[str, int, int], int] = defaultdict(int)
+
+    def category_of(counterparty_id: str | None) -> str | None:
+        cp = session.get(Counterparty, counterparty_id) if counterparty_id else None
+        return KIND_CATEGORY.get(cp.kind) if cp else None
+
     scheduled = session.exec(select(Payment).where(Payment.status == "scheduled")).all()
     committed: dict[str, list[Payment]] = defaultdict(list)
     for payment in session.exec(select(Payment).where(Payment.status.in_(["scheduled", "executed"]))):
         if payment.invoice_id:
             committed[payment.invoice_id].append(payment)
     for p in scheduled:
+        payee = session.get(Payee, p.payee_id)
+        if cat := category_of(payee.counterparty_id if payee else None):
+            known[(cat, p.execute_date.year, p.execute_date.month)] += p.amount_cents
         d = moves.get(p.id, p.execute_date)
         refs = [p.id] + ([p.invoice_id] if p.invoice_id else [])
         note = "scheduled payment" + (f", moved from {p.execute_date}" if p.id in moves else "")
@@ -218,6 +261,8 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
         remaining = max(0, inv.amount_cents - sum(p.amount_cents for p in payments))
         if remaining == 0:
             continue
+        if cat := category_of(inv.counterparty_id):
+            known[(cat, inv.due_date.year, inv.due_date.month)] += remaining
         lines.append(
             ForecastLine(
                 label=f"Payable {inv.number}",
@@ -229,7 +274,7 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
             )
         )
 
-    lines += _recurring_lines(session, start, end, pack.vat_day_of_month)
+    lines += _recurring_lines(session, start, end, pack.vat_day_of_month, known)
 
     for ch in inflows:
         wk = max(1, int(ch["week"]))
