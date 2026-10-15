@@ -28,6 +28,9 @@ LOCKOUT_SECONDS = 300
 # Per role across all sessions: a reload gives a new session, so this bounds brute force.
 ROLE_MAX_FAILURES = 20
 ROLE_WINDOW_SECONDS = 900
+# Work of the person signed in (transcript, agent memory, armed reset, results): dropped when
+# the role changes or on sign-out, so the next person does not see or continue it.
+SESSION_DATA_KEYS = ("chat", "agent", "brief", "confirm_reset", "rt_trace", "doc_result")
 
 
 def pin_for(role: str) -> str:
@@ -110,11 +113,19 @@ def sign_in(role: str, pin: str) -> str | None:
         _record(role, False)
         return "Wrong PIN."
     _record(role, True)
+    if st.session_state.get("role") != role:
+        _forget_session_data()
     st.session_state.role = role
     return None
 
 
+def _forget_session_data() -> None:
+    for key in SESSION_DATA_KEYS:
+        st.session_state.pop(key, None)
+
+
 def sign_out() -> None:
+    _forget_session_data()
     st.session_state.role = None
 
 

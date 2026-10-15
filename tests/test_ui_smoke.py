@@ -232,6 +232,31 @@ def test_pins_do_not_stay_in_the_fields(at):
     assert at.text_input(key="login_pin").value == ""
 
 
+def _chat_and_arm_reset(at):
+    goto(at, "Monday brief & chat")
+    at.button(key="prompt_shortfall").click().run()
+    next(b for b in at.button if b.label == "Reset demo data").click().run()
+    assert at.session_state["chat"] and at.session_state["confirm_reset"] is True
+    assert "agent" in at.session_state
+
+
+def test_sign_out_and_role_switch_drop_the_conversation(at):
+    sign_in(at, "owner")
+    _chat_and_arm_reset(at)
+    at.button(key="signout_btn").click().run()
+    assert at.session_state["chat"] == [] and at.session_state["confirm_reset"] is False
+    assert "agent" not in at.session_state
+    sign_in(at, "owner")
+    _chat_and_arm_reset(at)
+    at.selectbox(key="sw_role").set_value("accountant")
+    at.text_input(key="sw_pin").set_value("2222")
+    at.button(key="sw_btn").click().run()
+    assert at.session_state["role"] == "accountant"
+    assert at.session_state["chat"] == [] and at.session_state["confirm_reset"] is False
+    assert "agent" not in at.session_state
+    assert not [b for b in at.button if b.label == "Confirm reset"]
+
+
 def test_one_session_cannot_fill_both_roles(at):
     from agent.executor import run_tool
     with db.session_scope() as s:
