@@ -123,8 +123,28 @@ Complete list, found by searching the code for `os.environ` and `os.getenv`:
 | `RUNWAY_LLM_BASE_URL` | `base_url` in `config/llm.yaml` | `llm/adapter.py` | Override the API base URL. |
 | `RUNWAY_LLM_THINKING` | unset | `llm/adapter.py:chat` | Set to `on` to stop sending `thinking: disabled` to DeepSeek. Leave it unset: the adapter does not echo `reasoning_content` between tool turns. |
 | `RUNWAY_SAMPLE_DIR` | `data/sample` | `ui/helpers.py` | Where the UI writes and reads sample CSVs and demo documents. The demo documents are ingested with this folder's `docs/` subfolder as the allowed root. |
+| `RUNWAY_ANCHOR` | `notary` | `audit/anchor.py:get_backend` | Where the audit head is published: `notary` (an append-only JSON-lines file) or `evm` (any EVM JSON-RPC chain). |
+| `RUNWAY_NOTARY_PATH` | `<db>.notary.jsonl` | `audit/anchor.py:get_backend` | Notary file. Default: the database path with the suffix `.notary.jsonl` (`var/runway.notary.jsonl`). |
+| `RUNWAY_EVM_RPC_URL` | unset | `audit/anchor.py:get_backend` | JSON-RPC URL of the chain, for `RUNWAY_ANCHOR=evm`. Error messages never include it, since provider URLs often carry an API key. |
+| `RUNWAY_EVM_PRIVATE_KEY` | unset | `audit/anchor.py:get_backend` | Funded key that signs the anchor transactions, for `RUNWAY_ANCHOR=evm`. A hot key: use a throwaway key with only gas money. |
 
 Never commit keys. `.gitignore` already excludes `.env` and `var/`.
+
+### Audit anchoring
+
+`audit/anchor.py` publishes `runway-audit:v1:<count>:<head hash>` outside the database, stores a receipt row (`auditanchor` table) and audits the act as `anchor_audit_head`. Use **Publish head now** and **Verify against published heads** on the Audit log page, or the CLI (actor `system`):
+
+```bash
+.venv/bin/python -m audit.anchor publish   # prints the receipt as JSON
+.venv/bin/python -m audit.anchor verify    # prints the report; exit code 1 unless "verified"
+```
+
+The default `notary` backend needs nothing. For `evm`, the payload goes into the calldata of a zero-value transaction from the anchor account to itself; no contract is deployed. Any EVM JSON-RPC node works:
+
+- Local dev chain: start Anvil (Foundry) or Hardhat Network on `127.0.0.1:8545` (chain id 31337) and use one of its pre-funded dev keys. `RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KEY=<dev key>`.
+- Public testnet (for example Sepolia): a provider URL and a faucet-funded throwaway key.
+
+Verification fetches each receipt's transaction, refuses one that is unmined or sent by another account, and compares the published head with the log. Publishing and verifying with different backends reports "unavailable" for the receipts of the other backend. FISCO BCOS exposes a different RPC and has not been tried.
 
 For anything beyond a demo, set both bank tokens to long random values and replace the PINs with real authentication. The defaults are public in the repository (see KNOWN RISKS in `docs/security-self-assessment.md`).
 
@@ -187,6 +207,8 @@ Reset and import both drop every table, including the audit log. Neither deletes
 
 The simulated date returns to 2026-10-19 on reset. If you advance the clock (Mock bank page, "Advance"), reset before the next take.
 
+Reset also drops the anchor receipts, so "Verify against published heads" reads "unanchored" until the next publish. The notary file is not deleted; new publishes append to it. Documents ingested and actions attempted on the "Try to break it" page are real (a flagged document blocks payments to the suppliers it names), so reset before a recorded take.
+
 ## 8. Recording the demo video (5 minutes or less)
 
 1. Run in offline mode for a repeatable take: `unset DEEPSEEK_API_KEY` (or `export RUNWAY_LLM=offline`).
@@ -201,6 +223,6 @@ Also useful before recording: `.venv/bin/pytest` should be green.
 ## 9. Operational notes
 
 - Concurrency: SQLite with the writer lock is enough for one Streamlit server with a few browser sessions (the two-window approval needs two). Do not point several app instances at the same file.
-- Backup: copy `var/runway.db` while no write is in progress. The audit anchors (`audit_head`, `audit_count`) are inside the same file.
+- Backup: copy `var/runway.db` while no write is in progress. The stored audit head and count (`audit_head`, `audit_count`) are inside the same file; the published heads are not (notary file or chain), so keep the receipts' references (transaction hashes) somewhere else too.
 - Logs: uvicorn and Streamlit print to the terminal. The audit log is in the database; export it with `scripts/run_demo.py` or read it on the Audit log page.
 - Time: "today" is the `today` setting, not the system clock.
