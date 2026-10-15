@@ -15,6 +15,11 @@ from agent.prompts import REFUSAL_TEXT, is_bypass_attempt
 from common.config import load_country_pack
 
 _DOC_BLOCK = re.compile(r"<<<UNTRUSTED_DOCUMENT id=(\S+) flagged=(yes|no)[^\n]*\n.*?-----\n(.*?)>>>", re.S)
+ACTIONS = {"reminders", "reschedule", "application"}
+# ponytail: keyword heuristics; a negation near an action verb, or a question, makes the turn read-only
+_NEGATED = re.compile(r"\b(don'?t|do not|never|without|not)\b[^.?!]{0,40}"
+                      r"\b(send|remind|chase|move|resched|postpone|delay|apply|prepare|change|act)")
+_QUESTION = re.compile(r"^\s*(should|shall|do|does|would|is|are|what|which|how|when|why|who)\b[^?]*\?")
 HELP = ("I can explain your cash forecast, send reminders on overdue invoices, suggest moving a "
         "non-critical payment, compare financing options and review incoming documents. "
         "Try: 'Give me the Monday brief'.")
@@ -72,11 +77,13 @@ class OfflinePlanner:
 
     @staticmethod
     def _wants(low: str) -> set[str]:
-        plan = re.search(r"\b(plan|brief|monday|fix|propose|go ahead|do it|action)\b", low)
+        plan = re.search(r"\b(plan|brief|monday|go ahead|do it)\b", low)
         w: set[str] = set()
         if plan:
-            return {"forecast", "reminders", "reschedule", "financing", "application"}
+            w = {"forecast", "reminders", "reschedule", "financing", "application"}
         if re.search(r"remind|overdue|chase|late customer", low):
+            w.add("overdue")
+        if re.search(r"\b(send|chase)\b|^\s*remind", low) and "overdue" in w:
             w.add("reminders")
         if re.search(r"financ|loan|credit|borrow", low):
             w |= {"forecast", "financing"}
@@ -86,6 +93,8 @@ class OfflinePlanner:
             w.add("forecast")
         if re.search(r"resched|postpone|delay payment|move (the )?payment", low):
             w |= {"forecast", "reschedule"}
+        if w & ACTIONS and (_NEGATED.search(low) or _QUESTION.search(low)):
+            w -= ACTIONS  # asked about, or told not to: report only
         return w
 
     # -- document review ---------------------------------------------------
@@ -120,7 +129,7 @@ class OfflinePlanner:
         calls = []
         if "forecast" in wants and "get_forecast" not in by:
             calls.append(self._call(1, "get_forecast", {"include_lines": True}))
-        if "reminders" in wants and "list_receivables" not in by:
+        if "overdue" in wants and "list_receivables" not in by:
             calls.append(self._call(1, "list_receivables", {"overdue_only": True}))
         if "reschedule" in wants and "list_payables" not in by:
             calls.append(self._call(1, "list_payables", {"status": "open"}))
@@ -249,8 +258,14 @@ class OfflinePlanner:
                 parts.append(f"{a['invoice_id']}: " + ("reminder sent" if r["status"] == "ok" else
                              f"not sent ({r.get('reason') or r['status']})"))
             out.append("Reminders for overdue customer invoices (low risk, allowed automatically): " + "; ".join(parts) + ".")
-        elif "reminders" in wants and "list_receivables" in by:
-            out.append("There are no overdue customer invoices to chase.")
+        elif "overdue" in wants and "list_receivables" in by:
+            overdue = (by["list_receivables"][0][1] or {}).get("data") or []
+            if not overdue:
+                out.append("There are no overdue customer invoices to chase.")
+            else:
+                out.append("Overdue customer invoices: " + "; ".join(
+                    f"{i['id']} {i['number']} ({_money(i['amount_cents'])}, due {i['due_date']})" for i in overdue)
+                    + ". Ask me to send payment reminders when you want them chased.")
         if cand:
             r = (by.get("reschedule_payment") or [(0, None)])[0][1]
             what = f"Move the payment for {cand['label']} ({_money(cand['amount_cents'])}) from {cand['from']} to {cand['args']['new_date']}, its due date"

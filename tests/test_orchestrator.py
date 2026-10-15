@@ -184,6 +184,25 @@ class TestEndToEnd:
             from sqlmodel import select
             assert len(s.exec(select(db.OutboxEmail).where(db.OutboxEmail.kind == "reminder")).all()) == 2
 
+    @pytest.mark.parametrize("message", [
+        "Which customer invoices are overdue?",
+        "Don't send any reminders yet, just list the overdue invoices.",
+        "What is our plan for the Inkworks payment? Do not change anything.",
+        "Should I apply for a loan? Just tell me, don't prepare anything.",
+        "Do not move the payment to Inkworks.",
+    ])
+    def test_questions_and_negations_take_no_privileged_action(self, env, message):
+        privileged = {"send_payment_reminder", "reschedule_payment", "prepare_financing_application", "schedule_payment"}
+        turn = Agent(lambda: Session(db.get_engine())).chat(message)
+        assert not privileged & {s["tool"] for s in turn.steps}, turn.steps
+
+    def test_overdue_question_lists_and_explicit_request_sends(self, env):
+        agent = Agent(lambda: Session(db.get_engine()))
+        listed = agent.chat("Which customer invoices are overdue?")
+        assert "AR-1091" in listed.reply and "AR-1092" in listed.reply
+        sent = agent.chat("Send payment reminders for the overdue invoices.")
+        assert [s["status"] for s in sent.steps if s["tool"] == "send_payment_reminder"] == ["ok", "ok"]
+
     def test_cn_display_documents_keep_ledger_currency(self, env, monkeypatch):
         import re
         from sqlmodel import select
