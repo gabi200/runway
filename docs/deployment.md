@@ -143,10 +143,10 @@ Never commit keys. `.gitignore` already excludes `.env` and `var/`.
 
 The default `notary` backend needs nothing. For `evm`, the payload goes into the calldata of a zero-value transaction from the anchor account to itself; no contract is deployed. Any EVM JSON-RPC node works:
 
-- Local dev chain: start Anvil (Foundry) or Hardhat Network on `127.0.0.1:8545` (chain id 31337) and use one of its pre-funded dev keys. `RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KEY=<dev key>`.
+- Local dev chain: install Foundry (`brew install foundry` on macOS, or `curl -L https://foundry.paradigm.xyz | bash && foundryup`), then run `anvil`, which listens on `127.0.0.1:8545` (chain id 31337) and use one of its pre-funded dev keys. `RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KEY=<dev key>`.
 - Public testnet (for example Sepolia): a provider URL and a faucet-funded throwaway key.
 
-Verification fetches each receipt's transaction, refuses one that is unmined or sent by another account, and compares the published head with the log. Publishing and verifying with different backends reports "unavailable" for the receipts of the other backend. FISCO BCOS exposes a different RPC and has not been tried.
+Publishing waits until the transaction is mined and successful (up to 120 s; about 12 s on a public testnet), so a stored receipt always points at a transaction on chain; if it is not mined in time or reverts, nothing is stored. `scripts/run_anchor_demo.py` reproduces the checked-in on-chain evidence. Verification fetches each receipt's transaction, refuses one that is unmined or sent by another account, and compares the published head with the log. Publishing and verifying with different backends reports "unavailable" for the receipts of the other backend. FISCO BCOS exposes a different RPC and has not been tried.
 
 ### Approval signing keys
 

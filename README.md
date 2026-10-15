@@ -77,7 +77,7 @@ Details and switching providers or country packs: [docs/deployment.md](docs/depl
 
 The hash chain detects edits by anyone who cannot also rewrite the stored head. Someone with write access to the SQLite file can recompute every hash. Publishing the head outside the database closes that gap: **Publish head now** on the Audit log page (or `python -m audit.anchor publish`) writes `runway-audit:v1:<count>:<head hash>` to the backend and stores a receipt; **Verify against published heads** (or `python -m audit.anchor verify`) recomputes the chain and compares it with every published head.
 
-With `RUNWAY_ANCHOR=evm` the payload is the calldata of a zero-value transaction from the anchor account to itself, so it works on any EVM chain without a smart contract (tested against a fake JSON-RPC node that checks real signatures; a local dev chain such as Anvil or Hardhat, or a testnet such as Sepolia, works the same way):
+With `RUNWAY_ANCHOR=evm` the payload is the calldata of a zero-value transaction from the anchor account to itself, so it works on any EVM chain without a smart contract (tested against a fake JSON-RPC node that checks real signatures, and run on a local Anvil chain: see `docs/execution_logs/anchor_run.md`; a testnet such as Sepolia works the same way). Publishing waits until the transaction is mined and successful, so a receipt always means the head is on chain. Install Anvil with `brew install foundry` (or `foundryup`), then:
 
 ```bash
 RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KEY=<funded key> \
@@ -85,6 +85,8 @@ RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KE
 RUNWAY_ANCHOR=evm RUNWAY_EVM_RPC_URL=http://127.0.0.1:8545 RUNWAY_EVM_PRIVATE_KEY=<funded key> \
   .venv/bin/python -m audit.anchor verify      # exit code 0 only when the status is "verified"
 ```
+
+`scripts/run_anchor_demo.py` reproduces the checked-in evidence (with `anvil` running and the same two variables set): it builds the demo workspace, runs the Monday brief, publishes and verifies the head, and runs the forged-history attack on a copy against the on-chain head.
 
 ### Signed approvals (verifiable mandate)
 
@@ -101,7 +103,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 547 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 550 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A9 and the red-team console
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
 ```
