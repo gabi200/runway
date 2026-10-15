@@ -108,6 +108,30 @@ def test_delay_of_overdue_customer_moves_receipt_later(s, days):
     assert f"+{days} days scenario delay" in late.note
 
 
+@pytest.mark.parametrize("change, message", [
+    ({"type": "move_payment", "payment_id": "PAY-9999", "new_date": "2026-12-01"}, "unknown payment"),
+    ({"type": "move_payment", "payment_id": "PAY-0001", "new_date": "2026-12-15"}, "due date"),  # AP-2052 due 12-14
+    ({"type": "move_payment", "payment_id": "PAY-0001", "new_date": "2026-11-20"}, "earlier"),  # scheduled 11-26
+    ({"type": "delay_customer", "counterparty_id": "CUST-NOPE", "days": 5}, "unknown customer"),
+    ({"type": "delay_customer", "counterparty_id": "SUP-CARTONIA", "days": 5}, "unknown customer"),
+    ({"type": "inflow", "amount_cents": 100, "week": 20, "label": "x"}, "week must be 1..13"),
+    ({"type": "inflow", "amount_cents": 100, "week": 0, "label": "x"}, "week must be 1..13"),
+    ({"type": "bogus"}, "unknown scenario change"),
+])
+def test_invalid_scenario_changes_are_rejected(s, change, message):
+    """Regression (B4): an invalid what-if change raises instead of silently returning the baseline."""
+    with pytest.raises(ValueError, match=message):
+        build_forecast(s, scenario=[change])
+
+
+def test_only_scheduled_payments_can_be_moved(s):
+    s.get(Payment, "PAY-0001").status = "executed"
+    s.flush()
+    with pytest.raises(ValueError, match="only scheduled payments"):
+        build_forecast(s, scenario=[{"type": "move_payment", "payment_id": "PAY-0001", "new_date": "2026-12-01"}])
+    s.rollback()
+
+
 def test_scenario_inflow(s):
     base = build_forecast(s)
     fin = build_forecast(s, scenario=[{"type": "inflow", "amount_cents": 40_000_00, "week": 5, "label": "financing"}])

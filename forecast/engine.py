@@ -187,14 +187,35 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
     delays: dict[str, int] = defaultdict(int)
     moves: dict[str, date] = {}
     inflows: list[dict] = []
-    for ch in scenario:
+    n_weeks = (end - start).days // 7 + 1
+    for ch in scenario:  # invalid changes raise ValueError instead of silently leaving the baseline
         t = ch.get("type")
         if t == "delay_customer":
-            delays[ch["counterparty_id"]] += int(ch["days"])
+            cp = session.get(Counterparty, ch["counterparty_id"])
+            if cp is None or cp.kind != "customer":
+                raise ValueError(f"unknown customer {ch['counterparty_id']!r}")
+            delays[cp.id] += int(ch["days"])
         elif t == "move_payment":
-            moves[ch["payment_id"]] = date.fromisoformat(str(ch["new_date"]))
+            p = session.get(Payment, ch["payment_id"])
+            new = date.fromisoformat(str(ch["new_date"]))
+            if p is None:
+                raise ValueError(f"unknown payment {ch['payment_id']!r}")
+            # the rules of bank/service.py reschedule_payment
+            if p.status != "scheduled":
+                raise ValueError(f"payment {p.id} is {p.status}; only scheduled payments can be moved")
+            if new < max(p.execute_date, start):
+                raise ValueError(f"payment {p.id} cannot be moved earlier than {max(p.execute_date, start)}")
+            inv = session.get(Invoice, p.invoice_id) if p.invoice_id else None
+            if p.invoice_id and (inv is None or new > inv.due_date):
+                raise ValueError(f"payment {p.id} must stay within its invoice due date"
+                                 + (f" {inv.due_date}" if inv else ""))
+            moves[p.id] = new
         elif t == "inflow":
+            if not 1 <= int(ch["week"]) <= n_weeks:
+                raise ValueError(f"inflow week must be 1..{n_weeks}")
             inflows.append(ch)
+        else:
+            raise ValueError(f"unknown scenario change {t!r}")
 
     lines: list[ForecastLine] = []
 
@@ -274,7 +295,7 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
     lines += _recurring_lines(session, start, end, pack.vat_day_of_month, known)
 
     for ch in inflows:
-        wk = max(1, int(ch["week"]))
+        wk = int(ch["week"])  # validated above
         lines.append(
             ForecastLine(
                 label=str(ch.get("label", "scenario inflow")),
