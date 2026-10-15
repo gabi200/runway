@@ -347,6 +347,20 @@ def test_confirm_reset_signed_in_with_kill_switch_on(at):
         assert not db.kill_switch_on(s)
 
 
+def test_reset_demo_is_audited_with_the_acting_role(at):
+    from sqlmodel import select
+    from audit.log import verify_chain
+    sign_in(at, "accountant")
+    next(b for b in at.button if b.label == "Reset demo data").click().run()
+    next(b for b in at.button if b.label == "Confirm reset").click().run()
+    assert not at.exception
+    with db.session_scope() as s:
+        entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "reset_demo")).one()
+        assert entry.actor == "accountant" and entry.decision == "HUMAN_ACTION"
+        assert at.session_state["sid"] in entry.args_json
+        assert verify_chain(s).ok
+
+
 def test_sample_data_needs_sign_in_and_works_signed_in(at):
     goto(at, "Onboarding")
     before = _audit_count()

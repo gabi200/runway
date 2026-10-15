@@ -110,6 +110,8 @@ def on_kill_toggle() -> None:
 
 def reset_demo() -> None:
     generate(out_dir=SAMPLE_DIR)
+    with session_scope() as s:  # first entry of the new log: who wiped the old one
+        log_human(s, "reset_demo", {}, "HUMAN_ACTION", "Demo data reset from the UI")
     st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
                             confirm_reset=False)
     st.session_state.pop("scenario", None)
