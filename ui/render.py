@@ -5,7 +5,8 @@ from __future__ import annotations
 import html
 import re
 
-_URL = re.compile(r"(?:https?://|ftp://|www\.|mailto:)[^\s<>\"')\]]+", re.I)
+# URLs and bare e-mail addresses (GFM autolinks both, the latter as mailto: links)
+_URL = re.compile(r"(?:https?://|ftp://|www\.|mailto:|xmpp:)[^\s<>\"')\]]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.I)
 _IMG = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 _SPECIAL = re.compile(r"([\\`*_{}\[\]<>#|~!])")
 

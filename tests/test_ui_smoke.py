@@ -207,6 +207,15 @@ def test_model_markdown_is_neutralised():
     assert "`http://a.example`" in out
 
 
+def test_bare_email_addresses_are_not_autolinked():
+    from ui.render import safe_text
+    out = safe_text("From billing.team+x@evil-pay.example.com, reply to xmpp:bot@evil.example now.")
+    assert "`billing.team+x@evil-pay.example.com`" in out
+    assert "`xmpp:bot@evil.example`" in out
+    assert out.endswith(" now.")
+    assert safe_text("no address here @ all") == "no address here @ all"
+
+
 def test_tool_name_cannot_break_out_of_its_code_span(at):
     import re
     from agent.orchestrator import AgentTurn
