@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -79,8 +80,11 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
                  f"lowest balance {m(fc.min_closing_cents)} in week {fc.min_week}; "
                  f"weeks below minimum: {', '.join(map(str, fc.shortfall_weeks))}")
 
+    cell = ParagraphStyle("cell", parent=st["Normal"], fontSize=10, leading=12)
+
     def table(rows: list[tuple[str, str]]) -> Table:
-        t = Table(rows, colWidths=[55 * mm, 110 * mm])
+        # Values wrap inside the 159 mm A4 frame; escape() because Paragraph parses markup.
+        t = Table([(k, Paragraph(escape(v), cell)) for k, v in rows], colWidths=[50 * mm, 109 * mm])
         t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 10), ("VALIGN", (0, 0), (-1, -1), "TOP"),
                                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                                ("LINEBELOW", (0, 0), (-1, -1), 0.25, "#cccccc")]))

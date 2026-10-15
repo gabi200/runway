@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from datetime import date, timedelta
 
 import pytest
@@ -188,6 +189,21 @@ def test_financing_application_pdf(session, tmp_path):
     pdf = (tmp_path / "var" / "applications" / f"{row.id}.pdf")
     assert pdf.exists() and pdf.read_bytes().startswith(b"%PDF")
     assert row.pdf_path == str(pdf)
+
+
+def test_application_pdf_text_stays_on_the_page(session):
+    """The Terms cell was one unwrapped line that ran about 20 mm off the A4 page."""
+    from pypdf import PdfReader
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    from agent.pdf import prepare_application
+
+    row = prepare_application(session, "supply_chain_finance", 1_000_000, date(2026, 11, 23), 38)
+    page = PdfReader(row.pdf_path).pages[0]
+    ends = []
+    page.extract_text(visitor_text=lambda text, cm, tm, font, size: text.strip() and ends.append(
+        tm[4] + stringWidth(text, "Helvetica", size)))
+    assert ends and max(ends) <= float(page.mediabox.width) - 20
 
 
 def test_failed_execution_is_audited(session, monkeypatch):
