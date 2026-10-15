@@ -71,7 +71,7 @@ def _next_doc_id(session) -> str:
     return f"DOC-{(max(nums) + 1) if nums else 1:04d}"
 
 
-_DELIM_RUN = re.compile(r"[-=_*#~]{3,}")
+_DELIM_RUN = re.compile(r"[-=_*#~<>]{3,}")
 _META_MAX = 120
 
 
@@ -157,7 +157,9 @@ def ingest_document(session, data, filename: str, kind: str, sender: str | None 
 
 
 def _neutralise_body(text: str) -> str:
-    return _DELIM_RUN.sub(lambda m: " ".join(m.group(0)), text.replace(">>>", "> > >").replace("<<<", "< < <"))
+    # Space out every run of delimiter characters: "> > > > >" cannot re-form ">>>" (str.replace on
+    # ">>>>>" left "> > >>>", which closed the untrusted block early).
+    return _DELIM_RUN.sub(lambda m: " ".join(m.group(0)), text)
 
 
 def wrap_untrusted(doc: Document) -> str:
