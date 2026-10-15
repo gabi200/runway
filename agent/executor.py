@@ -8,7 +8,7 @@ The agent never sees tokens, IBANs or bank URLs.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 from sqlalchemy import update
@@ -159,6 +159,17 @@ def _claim(session: Session, approval_id: str, values: dict, **expected) -> bool
     return won
 
 
+def _expire_if_stale(session: Session, req: ApprovalRequest, actor: str) -> bool:
+    """Expire a request pending longer than approvals.expiry_days (simulated days); True if it is expired."""
+    days = policy.load_rules()["approvals"]["expiry_days"]
+    if get_today(session) <= req.created_at.date() + timedelta(days=days):
+        return False
+    if _claim(session, req.id, {"status": "expired", "decided_at": _sim_now(session)}):
+        audit.append(session, actor, "expire_approval", {"approval_id": req.id, "tool": req.tool_name},
+                     "DENY", f"Pending for more than {days} days")
+    return True
+
+
 def approve(session: Session, approval_id: str, role: str, approver_id: str | None = None) -> ToolResult:
     """Record distinct human approvers and re-evaluate every denial before executing.
 
@@ -170,6 +181,9 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
         audit.append(session, role, "approve", {"approval_id": approval_id, "approver_id": approver_id},
                      "DENY", req.reason)
         return req
+    if role in VALID_ROLES and _expire_if_stale(session, req, role):
+        return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id,
+                          reason="Approval request expired; ask the agent to prepare it again")
     required = json.loads(req.required_roles_json)
     args = json.loads(req.args_json)
     if role not in VALID_ROLES or role not in required:
@@ -255,6 +269,7 @@ def reject(session: Session, approval_id: str, role: str, reason: str = "") -> T
 
 
 def pending_approvals(session: Session) -> list[ApprovalRequest]:
-    """All approval requests still waiting for a decision, oldest first."""
-    return list(session.exec(select(ApprovalRequest).where(ApprovalRequest.status == "pending")
-                             .order_by(ApprovalRequest.created_at, ApprovalRequest.id)))
+    """All approval requests still waiting for a decision, oldest first; stale ones are expired here."""
+    rows = session.exec(select(ApprovalRequest).where(ApprovalRequest.status == "pending")
+                        .order_by(ApprovalRequest.created_at, ApprovalRequest.id)).all()
+    return [r for r in rows if not _expire_if_stale(session, r, "system")]

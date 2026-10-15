@@ -479,3 +479,31 @@ def test_kill_switch_at_approval_keeps_request_pending(session):
     assert [r.id for r in pending_approvals(session)] == [req.approval_id]
     db.set_setting(session, "kill_switch", "off")
     assert approve(session, req.approval_id, "owner", "owner-1").status == "ok"
+
+
+def _advance(s, days: int) -> None:
+    db.set_setting(s, "today", (db.get_today(s) + timedelta(days=days)).isoformat())
+
+
+def test_pending_approval_expires_after_seven_days(session):
+    """A parked request stayed approvable forever (known risk 20)."""
+    stale = run_tool(session, "schedule_payment", _pay_args(150_000, execute_date="2026-11-30"))
+    assert stale.status == "needs_approval"
+    _advance(session, 8)
+    result = approve(session, stale.approval_id, "owner")
+    assert result.status == "denied" and "expired" in result.reason
+    assert session.get(db.ApprovalRequest, stale.approval_id, populate_existing=True).status == "expired"
+    assert session.exec(select(Payment).where(Payment.execute_date == date(2026, 11, 30))).all() == []
+    last = session.exec(select(AuditEntry).order_by(AuditEntry.id.desc())).first()
+    assert (last.action, last.decision) == ("expire_approval", "DENY")
+
+
+def test_expired_requests_leave_the_queue_and_are_not_reused(session):
+    first = run_tool(session, "schedule_payment", _pay_args(150_000, execute_date="2026-11-30"))
+    _advance(session, 2)
+    assert [r.id for r in pending_approvals(session)] == [first.approval_id]  # still fresh
+    _advance(session, 6)
+    assert pending_approvals(session) == []
+    again = run_tool(session, "schedule_payment", _pay_args(150_000, execute_date="2026-11-30"))
+    assert again.status == "needs_approval" and again.approval_id != first.approval_id
+    assert approve(session, again.approval_id, "owner").status == "ok"
