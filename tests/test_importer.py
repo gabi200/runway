@@ -238,3 +238,27 @@ def test_decimal_comma_is_rejected_not_read_as_thousands(tmp_path, amount):
 def test_thousands_separators_are_accepted(tmp_path):
     result = import_files(tmp_path / "t.db", TB, 'date,description,amount\n2026-09-01,x,"-1,000.50"\n')
     assert result["opening_balance_cents"] == 5000000 + 100050
+
+
+@pytest.mark.parametrize("bs,match", [
+    ("date,description,amount\n2026-09-01,Café,1\n".encode("latin-1"), "bank statement: not UTF-8"),
+    ("date,description,amount\n2026-09-01,x,1,extra\n", "bank statement row 1: more fields than"),
+    ("date,description,amount\n2026-09-01," + "x" * 200_000 + ",1\n", "bank statement line 2: field larger"),
+    ("date,description,amount\n9999-12-31,x,1\n", "bank statement TX-000001 date: '9999-12-31' is outside"),
+], ids=["latin-1", "extra-field", "huge-field", "year-9999"])
+def test_malformed_bank_statement_is_reported_not_raised_raw(tmp_path, bs, match):
+    with pytest.raises(ImportErrorReport, match=match):
+        import_files(tmp_path / "t.db", TB, bs)
+    assert not (tmp_path / "t.db").exists()
+
+
+@pytest.mark.parametrize("days", ["99999999999", "²", "-3", "4.0"])
+def test_days_overdue_must_be_whole_days(tmp_path, days):
+    ar = f"number,counterparty,issue_date,due_date,amount,days_overdue\nA1,Acme Ltd,2026-09-01,2026-10-01,100,{days}\n"
+    with pytest.raises(ImportErrorReport, match="open receivables row 1 days_overdue"):
+        import_files(tmp_path / "t.db", TB, BS, ar)
+
+
+def test_cr_only_line_endings_are_read(tmp_path):
+    result = import_files(tmp_path / "t.db", TB.replace("\n", "\r"), "date,description,amount\r2026-09-01,x,1\r")
+    assert (result["transactions"], result["opening_balance_cents"]) == (1, 4999900)

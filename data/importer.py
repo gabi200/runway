@@ -46,6 +46,7 @@ BANK_COLS = ("date", "description", "amount")
 OPEN_COLS = ("number", "counterparty", "issue_date", "due_date", "amount")
 CATEGORIES = {"sales_receipt", "supplier_payment", "payroll", "rent", "utilities", "vat",
               "loan_repayment", "financing", "other"}
+MAX_DAYS = 36500  # days_overdue limit (100 years)
 THOUSANDS = re.compile(r"[+-]?[0-9]{1,3}(,[0-9]{3})+(\.[0-9]+)?")  # 1,234,567.89
 CASH_NAMES = ("cash", "bank", "cash at bank", "cash in bank", "bank account", "bank current account")
 Source = Union[bytes, str, Path]
@@ -62,21 +63,33 @@ def _stop_if_locked(status: int, remaining: int, total: int) -> None:
         raise sqlite3.OperationalError("the database is locked by another connection; try again")
 
 
-def _text(src: Source) -> str:
-    if isinstance(src, bytes):
-        return src.decode("utf-8-sig")
-    if isinstance(src, Path):
-        return src.read_text(encoding="utf-8-sig")
+def _text(src: Source, name: str) -> str:
+    try:
+        if isinstance(src, bytes):
+            return src.decode("utf-8-sig")
+        if isinstance(src, Path):
+            return src.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        raise ImportErrorReport(f"{name}: not UTF-8 text; save the file as CSV UTF-8") from None
     return src  # a str is CSV text, never a path
 
 
 def _rows(src: Source, name: str, required: tuple[str, ...]) -> list[dict]:
-    reader = csv.DictReader(io.StringIO(_text(src)))
-    cols = [c.strip() for c in (reader.fieldnames or [])]
-    missing = [c for c in required if c not in cols]
-    if missing:
-        raise ImportErrorReport(f"{name}: missing required column(s): {', '.join(missing)}")
-    return [{(k or "").strip(): (v or "").strip() for k, v in r.items()} for r in reader]
+    reader = csv.DictReader(io.StringIO(_text(src, name), newline=""))  # newline="": \n, \r\n or \r
+    rows = []
+    try:
+        cols = [c.strip() for c in (reader.fieldnames or [])]
+        missing = [c for c in required if c not in cols]
+        if missing:
+            raise ImportErrorReport(f"{name}: missing required column(s): {', '.join(missing)}")
+        for n, r in enumerate(reader, 1):
+            if None in r:
+                raise ImportErrorReport(f"{name} row {n}: more fields than the header has columns "
+                                        "(quote values that contain commas)")
+            rows.append({k.strip(): (v or "").strip() for k, v in r.items()})
+    except csv.Error as exc:
+        raise ImportErrorReport(f"{name} line {reader.reader.line_num}: {exc}") from None
+    return rows
 
 
 def _cents(v: str, where: str) -> int:
@@ -93,9 +106,21 @@ def _cents(v: str, where: str) -> int:
 
 def _date(v: str, where: str) -> date:
     try:
-        return date.fromisoformat(v)
+        d = date.fromisoformat(v)
     except ValueError:
         raise ImportErrorReport(f"{where}: {v!r} is not an ISO date (YYYY-MM-DD)") from None
+    # ponytail: business dates only; this also keeps "+ days" arithmetic far from year 9999.
+    if not 1900 <= d.year <= 2999:
+        raise ImportErrorReport(f"{where}: {v!r} is outside the years 1900 to 2999")
+    return d
+
+
+def _days(v: str, where: str) -> int:
+    if v == "":
+        return 0
+    if not re.fullmatch(r"[0-9]{1,5}", v) or int(v) > MAX_DAYS:
+        raise ImportErrorReport(f"{where}: {v!r} is not a whole number of days from 0 to {MAX_DAYS}")
+    return int(v)
 
 
 def _slug(name: str) -> str:
@@ -178,7 +203,7 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             if gross <= 0:
                 raise ImportErrorReport(f"{where}: amount must be positive")
             vat = _cents(r["vat"], f"{where} vat") if r.get("vat") else round(gross * pack.vat_rate / (1 + pack.vat_rate))
-            overdue = int(r["days_overdue"]) if r.get("days_overdue", "").isdigit() else 0
+            overdue = _days(r.get("days_overdue", ""), f"{where} days_overdue")
             opens.append(dict(direction=direction, id=r.get("invoice_id") or "", number=r["number"],
                               cp_name=r["counterparty"], cp_id=r.get("counterparty_id") or "",
                               issue=_date(r["issue_date"], f"{where} issue_date"),
