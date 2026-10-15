@@ -18,6 +18,7 @@ if __package__ in {None, ""}:
 from sqlmodel import select
 from agent.documents import ingest_file, ingest_text
 from agent.executor import approve, pending_approvals, run_tool
+from agent.mandate import from_pdf, registered_keys, verify_mandate
 from agent.orchestrator import Agent
 from audit import log as audit
 from bank.client import BankClient
@@ -70,6 +71,13 @@ def run(out: Path, seed: int) -> dict:
                 for application in applications:
                     shutil.copyfile(application.pdf_path, out / f"{application.id}.pdf")
                     record("5. Financing PDF generated", {"file": f"{application.id}.pdf", "amount_cents": application.amount_cents})
+                    # The public keys the company would register with its bank, and the bank-side check of the PDF.
+                    (out / "mandate_keys.json").write_text(json.dumps(registered_keys(), indent=2) + "\n")
+                    signed = from_pdf(out / f"{application.id}.pdf")
+                    problems = verify_mandate(signed, registered_keys())
+                    record("5. Signed mandate in the PDF verified against the registered keys",
+                           {"signers": [(x["role"], x["approver_id"]) for x in signed["signatures"]], "problems": problems})
+                    assert problems == []
                 # Run attacks while still on the original simulated day.
                 docs = root / "sample" / "docs"
                 malicious = ingest_file(s, docs / "cartonia_invoice_A1.pdf", "invoice", None, allowed_root=root / "sample")
@@ -127,7 +135,7 @@ def run(out: Path, seed: int) -> dict:
             with db.session_scope(root / "tampered.db") as s:
                 tamper = record("7. A6 tamper on a database COPY", asdict(audit.verify_chain(s)))
                 assert not tamper["ok"] and tamper["first_bad_id"] == 2
-            result = {"audit_entries": len(entries), "pdf": "FIN-0001.pdf", "rescheduled_execution_date": new_date.isoformat(), "audit_verified": True, "tamper_detected": True}
+            result = {"audit_entries": len(entries), "pdf": "FIN-0001.pdf", "rescheduled_execution_date": new_date.isoformat(), "audit_verified": True, "tamper_detected": True, "mandate_verified": True}
             record("Run summary", result)
             (out / "demo_run.md").write_text("\n".join(lines))
             return result
