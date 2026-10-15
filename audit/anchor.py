@@ -12,6 +12,7 @@ import itertools
 import json
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,7 +86,7 @@ class EvmBackend:
     name = "evm"
 
     def __init__(self, rpc_url: str, private_key: str, transport: httpx.BaseTransport | None = None,
-                 timeout: float = 15.0):
+                 timeout: float = 15.0, confirm_timeout: float = 120.0, poll_seconds: float = 1.0):
         from eth_account import Account
 
         self._account = Account.from_key(private_key)
@@ -93,6 +94,7 @@ class EvmBackend:
         self._url = rpc_url
         self._http = httpx.Client(transport=transport, timeout=timeout)
         self._ids = itertools.count(1)
+        self._confirm_timeout, self._poll = confirm_timeout, poll_seconds
 
     def _rpc(self, method: str, params: list):
         # Messages name the method and error type only: the URL may carry an API key.
@@ -129,6 +131,16 @@ class EvmBackend:
         tx_hash = self._rpc("eth_sendRawTransaction", ["0x" + bytes(signed.raw_transaction).hex()])
         if not isinstance(tx_hash, str):
             raise AnchorError("eth_sendRawTransaction returned no transaction hash")
+        # A node returns the hash before the transaction is in a block (a moment on a dev chain, ~12 s on a
+        # testnet); only a mined, successful transaction may become a receipt that says "published".
+        deadline = time.monotonic() + self._confirm_timeout
+        while (receipt := self._rpc("eth_getTransactionReceipt", [tx_hash])) is None:
+            if time.monotonic() > deadline:
+                raise AnchorError(f"Transaction {tx_hash} was not mined within {self._confirm_timeout:g} s; "
+                                  "nothing was stored")
+            time.sleep(self._poll)
+        if not isinstance(receipt, dict) or receipt.get("status") != "0x1":
+            raise AnchorError(f"Transaction {tx_hash} reverted or failed; nothing was stored")
         return tx_hash
 
     def fetch(self, ref: str) -> str:

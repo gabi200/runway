@@ -26,6 +26,8 @@ class FakeNode:
         self.txs: dict[str, dict] = {}
         self.mine = True
         self.fail: str | None = None
+        self.lag = 0  # polls that still see a sent transaction as pending (a real node mines a moment later)
+        self.status = "0x1"
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -49,11 +51,19 @@ class FakeNode:
             fields = rlp.decode(raw)  # legacy: nonce, gasPrice, gas, to, value, data, v, r, s
             tx_hash = "0x" + keccak(raw).hex()
             self.txs[tx_hash] = {"hash": tx_hash, "from": Account.recover_transaction(raw),
-                                 "input": "0x" + fields[5].hex(),
+                                 "input": "0x" + fields[5].hex(), "lag": self.lag,
                                  "blockNumber": hex(len(self.txs) + 1) if self.mine else None}
             return reply(result=tx_hash)
+        tx = self.txs.get(params[0]) if method.startswith("eth_getTransaction") else None
+        if tx and tx["lag"] > 0:
+            tx["lag"] -= 1
+            return reply(result=None if method == "eth_getTransactionReceipt" else {**tx, "blockNumber": None})
         if method == "eth_getTransactionByHash":
-            return reply(result=self.txs.get(params[0]))
+            return reply(result=tx)
+        if method == "eth_getTransactionReceipt":
+            mined = tx is not None and tx["blockNumber"] is not None
+            return reply(result={"transactionHash": params[0], "blockNumber": tx["blockNumber"],
+                                 "status": self.status} if mined else None)
         return reply(error={"code": -32601, "message": "method not found"})
 
 
@@ -63,7 +73,7 @@ def node():
 
 
 def evm(node, key=DEV_KEY, url="http://chain.test"):
-    return EvmBackend(url, key, transport=httpx.MockTransport(node))
+    return EvmBackend(url, key, transport=httpx.MockTransport(node), confirm_timeout=0.3, poll_seconds=0.01)
 
 
 def test_publish_signs_and_fetch_reads_back(node):
@@ -82,11 +92,27 @@ def test_fetch_rejects_other_senders(node):
 def test_unmined_and_unknown_transactions(node):
     node.mine = False
     backend = evm(node)
-    ref = backend.publish(encode_payload(3, HEAD))
+    with pytest.raises(AnchorError, match="not mined"):
+        backend.publish(encode_payload(3, HEAD))
     with pytest.raises(AnchorError, match="not on chain"):
-        backend.fetch(ref)
+        backend.fetch(next(iter(node.txs)))
     with pytest.raises(AnchorError, match="not on chain"):
         backend.fetch("0x" + "00" * 32)
+
+
+def test_publish_waits_until_the_transaction_is_mined(node, session):
+    """Anvil returned the hash before its block was readable, so publish-then-verify said 'not on chain'."""
+    node.lag = 2
+    backend = evm(node)
+    anchor_head(session, "owner", backend)
+    assert verify_anchors(session, backend).status == "verified"
+
+
+def test_reverted_transaction_stores_nothing(node, session):
+    node.status = "0x0"
+    with pytest.raises(AnchorError, match="reverted"):
+        anchor_head(session, "owner", evm(node))
+    assert session.exec(select(AuditAnchor)).all() == []
 
 
 def test_rpc_error_is_reported(node):

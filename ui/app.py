@@ -940,7 +940,7 @@ def page_audit() -> None:
     publish_col, verify_col = st.columns(2)
     if publish_col.button("Publish head now", key="anchor_btn") and auth.require_login("publish the audit head"):
         try:
-            with session_scope() as s:
+            with st.spinner("Publishing and waiting until it is on record..."), session_scope() as s:
                 receipt = anchor.anchor_head(s, st.session_state.role)
             st.success(f"Published entries 1 to {receipt.count} as {receipt.ref}.")
         except anchor.AnchorError as exc:
