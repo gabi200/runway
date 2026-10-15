@@ -103,7 +103,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 550 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 553 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A9 and the red-team console
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
 ```

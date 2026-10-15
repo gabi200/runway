@@ -57,7 +57,7 @@ The knobs `SMALL_BASE`, `BRIGHTFIELD_BASE` and `CARTONIA_BASE` were adjusted unt
 
 ## 2. 13-week cash forecast (`forecast/engine.py`)
 
-A cash-flow forecast predicts the bank balance week by week. A week is a bucket from Monday to Sunday starting at the simulated today.
+A cash-flow forecast predicts the bank balance week by week. A week is a seven-day bucket starting at the simulated today (a Monday in the demo; after a clock advance that is not a multiple of 7 days, weeks start on that day instead).
 
 ### Algorithm (`build_forecast(session, weeks=13, scenario=None)`)
 
