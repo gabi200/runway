@@ -34,6 +34,7 @@ from common.db import (
 
 ACCOUNT_ID = "ACC-MAIN"
 OVERDUE_ASSUMED_DAYS = 3  # overdue AR is assumed to arrive this many days after today
+MAX_WEEKS = 52  # forecast horizon cap; the cost grows with weeks x lines
 RECURRING = {  # ledger category -> label
     "payroll": "Payroll",
     "rent": "Rent",
@@ -314,6 +315,8 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
 # --------------------------------------------------------------------------- #
 def build_forecast(session: Session, weeks: int = 13, scenario: list[dict] | None = None) -> Forecast:
     """Build the weekly cash forecast starting at the simulated today."""
+    if type(weeks) is not int or not 1 <= weeks <= MAX_WEEKS:
+        raise ValueError(f"weeks must be 1..{MAX_WEEKS}")
     scenario = scenario or []
     start = get_today(session)
     end = start + timedelta(days=7 * weeks - 1)

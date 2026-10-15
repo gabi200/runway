@@ -132,6 +132,19 @@ def test_only_scheduled_payments_can_be_moved(s):
     s.rollback()
 
 
+@pytest.mark.parametrize("weeks", [0, -1, 53, 10**6, 20_000])
+def test_weeks_is_bounded(s, weeks):
+    """Regression (B5): weeks was unbounded (20,000 weeks took 42 s, 10**6 overflowed the date)."""
+    with pytest.raises(ValueError, match=r"weeks must be 1\.\.52"):
+        build_forecast(s, weeks=weeks)
+
+
+def test_52_weeks_allowed(s):
+    fc = build_forecast(s, weeks=52)
+    assert len(fc.weeks) == 52 and fc.weeks[-1].closing_cents == fc.weeks[-1].opening_cents + \
+        fc.weeks[-1].receipts_cents + fc.weeks[-1].payments_cents
+
+
 def test_scenario_inflow(s):
     base = build_forecast(s)
     fin = build_forecast(s, scenario=[{"type": "inflow", "amount_cents": 40_000_00, "week": 5, "label": "financing"}])
