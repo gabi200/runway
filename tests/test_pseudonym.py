@@ -159,6 +159,22 @@ def test_known_names_masked_across_whitespace_and_hyphen_variants(session, name,
     assert p.mask(f"pay {variant} today") == f"pay {p.mask(name)} today"
 
 
+def test_common_words_are_not_aliases_and_placeholders_are_never_rewritten(session):
+    p = Pseudonymizer(session)
+    p.learn("From: Bill Weber <bill.weber@acme.example>\n\nPlease pay.\n\nKind regards,\nAccounts Payable")
+    p.learn("Thanks.\n\nBest regards,\nCredit Control")
+    p.learn("From: Iban Garcia <iban.garcia@acme.example>")
+    p.add("SUPPLIER", "Office Supplies Direct")
+    p.add("SUPPLIER", "Direct Packaging Partners")
+    text = ("We will bill the pallets in March; our accounts payable and credit control teams; "
+            "office hours, direct debit; weber grills.")
+    assert p.mask(text) == text
+    masked = p.mask("Ask Weber, Bill Weber or Iban Garcia")
+    assert not {"Bill", "Weber", "Iban", "Garcia"} & set(re.findall(r"\w+", masked)), masked
+    ph = p.mask("GB82WEST12345698765432")
+    assert p.mask(f"pay {ph} and <IBAN_99>") == f"pay {ph} and <IBAN_99>"
+
+
 def test_learn_still_learns_real_two_token_person(session):
     p = Pseudonymizer(session)
     p.learn("Hi\n\nBest regards,\nHans Muller")

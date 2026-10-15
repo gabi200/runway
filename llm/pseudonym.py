@@ -32,8 +32,17 @@ PLACEHOLDER_RE = re.compile(r"<([A-Z]+)_(\d+)(_[A-Z]+)?>")
 _MIN_ALIAS_LEN = 6
 _COMMON_WORDS = {"packaging", "company", "department", "team", "services", "service", "group", "management",
                  "accounting", "finance", "support", "sales", "logistics", "energy", "bank", "office",
-                 "customer", "supplier", "invoice", "payment", "dear", "hello", "best", "kind", "many"}
+                 "customer", "supplier", "invoice", "payment", "dear", "hello", "best", "kind", "many",
+                 "accounts", "account", "payable", "receivable", "credit", "control", "collections", "billing",
+                 "treasury", "direct", "debit", "invoices", "payments", "banking"}
 _LEGAL_SUFFIXES = {"gmbh", "ltd", "llc", "inc", "corp", "bv", "sa", "ag", "co", "the", "limited"}
+_MONTHS = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december"}
+# Never a one-word alias (they may still be part of a full name, which is masked as a whole).
+# ponytail: a fixed list; other everyday words that are also names (e.g. "Hope") still alias when capitalised.
+_NO_ALIAS = _COMMON_WORDS | _ROLE_LOCALS | _SIGN_OFFS | _LEGAL_SUFFIXES | _MONTHS | {
+    "bill", "bills", "pay", "iban", "will", "mark", "grant", "rose", "frank", "art", "bob"}
+_PH_RX = r"<[A-Z]+_\d+(?:_[A-Z]+)?>"
 
 
 def _key(s: str) -> str:
@@ -62,6 +71,7 @@ class Pseudonymizer:
     def __init__(self, session=None, people: list[str] | None = None) -> None:
         self._fwd: dict[str, str] = {}  # lowercase name literal -> placeholder (case-insensitive)
         self._lit: dict[str, str] = {}  # same keys -> literal in its original case (the regex is built from these)
+        self._cap: set[str] = set()  # keys that match only with a capital first letter
         self._ids: dict[str, str] = {}  # identifier literal -> placeholder (case-sensitive)
         self._rev: dict[str, str] = {}  # placeholder -> original literal
         self._counters: dict[str, int] = {}
@@ -93,18 +103,20 @@ class Pseudonymizer:
             words = re.findall(r"[A-Za-z][A-Za-z0-9&'-]+", literal)
             if label == "PERSON":
                 for w in words:
-                    if len(w) >= 3 and w.lower() not in _SIGN_OFFS:
-                        self._alias(w, ph)
-            elif label not in ("EMAIL", "IBAN") and words and words[0].lower() not in _LEGAL_SUFFIXES and len(words[0]) >= _MIN_ALIAS_LEN:
+                    if len(w) >= 3 and w.lower() not in _NO_ALIAS:
+                        self._alias(w, ph, capitalised=True)
+            elif label not in ("EMAIL", "IBAN") and words and words[0].lower() not in _NO_ALIAS and len(words[0]) >= _MIN_ALIAS_LEN:
                 self._alias(words[0], ph)
         if ident:
             self._add_id(ph, label, ident, id_tag)
         return ph
 
-    def _alias(self, word: str, ph: str) -> None:
+    def _alias(self, word: str, ph: str, capitalised: bool = False) -> None:
         if _key(word) not in self._fwd:
             self._fwd[_key(word)] = ph
             self._lit[_key(word)] = word
+            if capitalised:  # a person's single name matches only capitalised: "Weber", never "weber grills"
+                self._cap.add(_key(word))
 
     def _add_id(self, ph: str, label: str, ident: str, tag: str = "ID") -> None:
         # Plain-word IDs (PAYROLL, LANDLORD) would mask ordinary prose; only structured IDs are masked.
@@ -152,7 +164,7 @@ class Pseudonymizer:
         toks = name.split()
         if len(toks) != 2 or not all(re.fullmatch(_NAME, t) for t in toks):
             return False
-        banned = self._company_words | _COMMON_WORDS | _SIGN_OFFS | _LEGAL_SUFFIXES | {
+        banned = self._company_words | _COMMON_WORDS | _ROLE_LOCALS | _SIGN_OFFS | _LEGAL_SUFFIXES | {
             w.lower() for w in COMPANY.split()}
         return not any(t.lower() in banned for t in toks)
 
@@ -193,10 +205,18 @@ class Pseudonymizer:
     def _pattern(self) -> re.Pattern[str] | None:
         if self._regex is None and (self._fwd or self._ids):
             ids = "|".join(re.escape(a) for a in sorted(self._ids, key=len, reverse=True))
-            names = "|".join(_name_rx(a) for a in sorted(self._lit.values(), key=len, reverse=True))
+            names = "|".join(self._rx(k) for k in sorted(self._lit, key=lambda k: len(self._lit[k]), reverse=True))
             alts = ([f"(?-i:{ids})"] if ids else []) + ([names] if names else [])
-            self._regex = re.compile(rf"(?<![A-Za-z0-9])(?:{'|'.join(alts)})(?![A-Za-z0-9])", re.IGNORECASE)
+            # An existing placeholder is matched first and kept, so no name inside it (IBAN, PERSON) is rewritten.
+            self._regex = re.compile(rf"(?P<ph>(?-i:{_PH_RX}))|(?<![A-Za-z0-9])(?:{'|'.join(alts)})(?![A-Za-z0-9])",
+                                     re.IGNORECASE)
         return self._regex
+
+    def _rx(self, key: str) -> str:
+        lit = self._lit[key]
+        if key in self._cap:
+            return f"(?-i:{re.escape(lit[0].upper())}){_name_rx(lit[1:])}"
+        return _name_rx(lit)
 
     def mask(self, text: str) -> str:
         """Replace known names/IDs and every email/IBAN-shaped string with placeholders."""
@@ -221,15 +241,15 @@ class Pseudonymizer:
         text = IBAN_RE.sub(iban_sub, text)  # IBAN-shaped but failing the checksum: masked as before
         pat = self._pattern()
         if pat is not None:
-            text = pat.sub(lambda m: self._lookup(m.group(0)), text)
+            text = pat.sub(lambda m: m.group(0) if m.group("ph") else self._lookup(m.group(0)), text)
         return text
 
     def _lookup(self, found: str) -> str:
         """Placeholder for a regex match. Never raises: masking must not crash a turn."""
         ph = self._ids.get(found) or self._fwd.get(_key(found))
         if ph is None:  # re.IGNORECASE also pairs i/I with ı/İ and s with ſ, which lower() does not
-            ph = next((self._fwd[k] for k, lit in self._lit.items()
-                       if re.fullmatch(_name_rx(lit), found, re.IGNORECASE)), "<REDACTED_0>")
+            ph = next((self._fwd[k] for k in self._lit
+                       if re.fullmatch(self._rx(k), found, re.IGNORECASE)), "<REDACTED_0>")
         return ph
 
     def unmask(self, text: str) -> str:
