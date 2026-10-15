@@ -585,3 +585,12 @@ def test_overlong_approver_identity_is_refused(session):
     result = approve(session, request.approval_id, "owner", "o" * 1200)
     assert result.status == "denied" and result.reason == "Invalid approver identity"
     assert approve(session, request.approval_id, "owner", "o" * 120).status == "needs_approval"
+
+
+@pytest.mark.parametrize("role", [None, 7, ""])
+def test_approve_and_reject_without_a_role_are_denied_not_crashing(session, role):
+    request = run_tool(session, "prepare_financing_application",
+                       {"product_id": "overdraft", "amount_cents": 600_000, "needed_by": "2026-11-20"})
+    assert approve(session, request.approval_id, role).status == "denied"
+    assert reject(session, request.approval_id, role).status == "denied"
+    assert verify_chain(session).ok

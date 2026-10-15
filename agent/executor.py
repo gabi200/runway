@@ -178,6 +178,7 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
     Calls without an identity retain legacy role identities. Old string lists
     are migrated when recording the next approval.
     """
+    role = role if isinstance(role, str) and role else "unknown"  # audited and denied below, never a crash
     req = _get_pending(session, approval_id)
     if isinstance(req, ToolResult):
         audit.append(session, role, "approve", {"approval_id": approval_id, "approver_id": approver_id},
@@ -257,6 +258,7 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
 
 def reject(session: Session, approval_id: str, role: str, reason: str = "") -> ToolResult:
     """Reject a pending approval request."""
+    role = role if isinstance(role, str) and role else "unknown"
     if role not in VALID_ROLES:
         audit.append(session, role, "reject", {"approval_id": approval_id}, "DENY",
                      "Only owner or accountant can reject")
