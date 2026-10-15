@@ -628,8 +628,8 @@ def page_approvals() -> None:
                         if res.status == "ok":
                             st.rerun()
                         elif res.status == "needs_approval":
-                            st.success("Your approval is recorded. Waiting for the other role "
-                                       "(it must be signed in from a different browser session).")
+                            st.success("Your approval is recorded and signed with your role's key. Waiting for "
+                                       "the other role (it must be signed in from a different browser session).")
                         else:
                             st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
                                      "of a four-eyes request.")
@@ -643,6 +643,9 @@ def page_approvals() -> None:
             st.caption("Requests requiring both roles need separate owner and accountant sign-ins. Switching roles in one session cannot supply both approvals.")
             st.markdown("**Policy before execution**")
             st.caption("The rules engine checks the request again when it is approved.")
+            st.markdown("**Signed approvals**")
+            st.caption("Each approval is signed with the approver role's Ed25519 key. A financing PDF carries "
+                       "the signed mandate, so the bank can check that two people, not the agent, approved it.")
             st.markdown("**A record of every decision**")
             st.caption("Approvals, refusals and actions remain in the audit trail.")
 
@@ -650,7 +653,8 @@ def page_approvals() -> None:
     if history:
         st.dataframe(pd.DataFrame([{
             "ID": r.id, "Tool": r.tool_name, "Status": r.status, "Required": r.required_roles_json,
-            "Approved by": r.approvals_json, "Reason": r.reason, "Decided": r.decided_at,
+            "Approved by": ", ".join(e if isinstance(e, str) else e["role"] + (" (signed)" if "signature" in e else "")
+                                    for e in json.loads(r.approvals_json)), "Reason": r.reason, "Decided": r.decided_at,
             "Args": r.args_json} for r in history]), width="stretch", hide_index=True)
     else:
         st.caption("No decided requests yet.")

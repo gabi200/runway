@@ -21,3 +21,9 @@ def no_live_anchor(monkeypatch):
     """A .env pointing at a real chain must never make a test publish or read an anchor."""
     for name in ("RUNWAY_ANCHOR", "RUNWAY_NOTARY_PATH", "RUNWAY_EVM_RPC_URL", "RUNWAY_EVM_PRIVATE_KEY"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def private_var_dir(tmp_path, monkeypatch):
+    """Keep signing keys, e-mails and PDFs out of the repository's var/ (fixtures may point it elsewhere)."""
+    monkeypatch.setenv("RUNWAY_VAR_DIR", str(tmp_path / "var"))

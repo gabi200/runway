@@ -14,7 +14,8 @@ from datetime import datetime
 from sqlalchemy import update
 from sqlmodel import Session, select
 
-from agent.financing import compare_financing  # noqa: F401  (re-exported per CONTRACTS section 6)
+from agent import mandate
+from agent.financing import account_currency, compare_financing  # noqa: F401  (compare_financing re-exported per CONTRACTS section 6)
 from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
@@ -49,13 +50,14 @@ def _canon(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _execute(session: Session, tool: str, args: dict, actor: str, automatic: bool) -> ToolResult:
+def _execute(session: Session, tool: str, args: dict, actor: str, automatic: bool,
+             signed_mandate: dict | None = None) -> ToolResult:
     """Run the handler and audit EXECUTED / FAILED."""
     handler = HANDLERS.get(tool)
     try:
         if handler is None:
             raise ToolError(f"no implementation for tool {tool!r}")
-        data = jsonable(handler(session, args, {"automatic": automatic, "actor": actor}))
+        data = jsonable(handler(session, args, {"automatic": automatic, "actor": actor, "mandate": signed_mandate}))
     except ToolError as e:
         session.rollback()
         audit.append(session, actor, tool, args, "FAILED", str(e))
@@ -188,15 +190,20 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
                      "DENY", "Same approver cannot fill two roles")
         return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id,
                           reason="Same approver cannot fill two roles")
+    mandate_body = mandate.body(req, account_currency(session))
+    signature: dict = {}
     if role not in [entry["role"] for entry in given]:
-        given.append({"role": role, "approver_id": identity})
+        signature = mandate.sign(mandate_body, role, identity)
+        given.append(signature)
     if not _claim(session, req.id, {"approvals_json": json.dumps(given)}, approvals_json=req.approvals_json):
         reason = "Approval request changed at the same time; reload and try again"
         audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity}, "DENY", reason)
         return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id, reason=reason)
     approved_roles = [entry["role"] for entry in given]
-    audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity},
-                 "APPROVED", f"approvals so far: {given}")
+    signed = {"public_key": signature["public_key"], "signature": signature["signature"]} if signature else {}
+    audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity,
+                                            **signed},
+                 "APPROVED", f"approvals so far: {[(e['role'], e['approver_id']) for e in given]}")
     decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
     if decision.outcome == "DENY" and get_setting(session, "kill_switch", "off") != "off":
         # Temporary stop: keep the request and its approvals for when the switch is off again.
@@ -217,7 +224,8 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
     if not _claim(session, req.id, {"status": "executing"}):
         return ToolResult(status="error", tool=req.tool_name, approval_id=req.id,
                           reason="approval is already being executed or decided")
-    result = _execute(session, req.tool_name, args, role, automatic=False)
+    result = _execute(session, req.tool_name, args, role, automatic=False,
+                      signed_mandate=mandate.document(mandate_body, given))
     req.status = "executed" if result.status == "ok" else "failed"
     req.decided_at = _sim_now(session)
     req.result_json = _canon(result.model_dump(mode="json"))

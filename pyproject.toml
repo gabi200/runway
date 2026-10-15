@@ -16,6 +16,7 @@ dependencies = [
     "pypdf>=4.3",
     "pandas>=2.2",
     "eth-account>=0.13",
+    "cryptography>=42",
 ]
 
 [dependency-groups]

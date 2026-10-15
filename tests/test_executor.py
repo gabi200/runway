@@ -372,8 +372,9 @@ def test_legacy_approval_roles_are_read_and_upgraded(session):
     result = approve(session, row.id, "accountant", approver_id="bob")
     assert result.status == "ok"
     session.refresh(row)
-    assert json.loads(row.approvals_json) == [
-        {"role": "owner", "approver_id": "owner"}, {"role": "accountant", "approver_id": "bob"}]
+    assert [(e["role"], e["approver_id"]) for e in json.loads(row.approvals_json)] == [
+        ("owner", "owner"), ("accountant", "bob")]
+    assert "signature" in json.loads(row.approvals_json)[1]  # new approvals are signed; legacy ones are not
 
 
 def test_same_approver_financing_roles(session):

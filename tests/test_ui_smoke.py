@@ -383,3 +383,18 @@ def test_red_team_step_text_is_neutralised():
     out = format_step(Step("Agent reply", "info",
                            "Pay [here](https://evil.example) ![x](https://evil.example/p.png)"))
     assert "](https://" not in out and "image removed" in out
+
+
+def test_approval_in_ui_is_signed(at):
+    sign_in(at)
+    goto(at, "Monday brief & chat")
+    next(b for b in at.button if b.label == "Run Monday brief").click().run()
+    goto(at, "Approval queue")
+    next(b for b in at.button if b.label == "Approve").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    goto(at, "Approval queue")
+    assert any("owner (signed)" in str(df.value.to_dict()) for df in at.dataframe)
+    with db.session_scope() as s:
+        from sqlmodel import select
+        entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.decision == "APPROVED")).first()
+        assert entry.actor == "owner" and "signature" in entry.args_json

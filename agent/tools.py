@@ -367,10 +367,11 @@ def prepare_financing_application(session: Session, args: dict, ctx: dict) -> di
         args = _need_defaults(session, args)
         row = prepare_application(session, args["product_id"], int(args["amount_cents"]),
                                   _date(args["needed_by"], "needed_by"),
-                                  int(args.get("days_needed") or DEFAULT_DAYS_NEEDED))
+                                  int(args.get("days_needed") or DEFAULT_DAYS_NEEDED), ctx.get("mandate"))
     except (KeyError, ValueError) as e:
         raise ToolError(f"invalid arguments: {e}") from e
-    return {**_row(row), "amount_display": load_country_pack().display(row.amount_cents)}
+    signed = {"mandate": ctx["mandate"]} if ctx.get("mandate") else {}
+    return {**_row(row), "amount_display": load_country_pack().display(row.amount_cents), **signed}
 
 
 HANDLERS: dict[str, Handler] = {
