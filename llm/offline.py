@@ -286,6 +286,13 @@ class OfflinePlanner:
                 if base and base.get("amount_cents"):
                     out.append(f"If the reschedule is not approved, the need is {_money(base['amount_cents'])} "
                                f"(worst week {base['worst_week']}).")
+        elif need and need.get("scenario"):  # the reschedule alone closes the gap
+            out.append("With the proposed reschedule applied, no financing is needed.")
+            base = next((r["data"] for a, r in by.get("get_financing_need", [])
+                         if not a.get("scenario") and r.get("status") == "ok"), None)
+            if base and base.get("amount_cents"):
+                out.append(f"If the reschedule is not approved, the need is {_money(base['amount_cents'])} "
+                           f"needed by {base['needed_by']} for {base['days_needed']} days (worst week {base['worst_week']}).")
         elif short and "financing" in wants and "get_financing_need" in by:
             out.append("I could not determine the financing need from the forecast.")
         cmpd = ((by.get("compare_financing") or [(0, {})])[0][1] or {}).get("data") or {}

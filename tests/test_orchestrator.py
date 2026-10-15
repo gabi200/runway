@@ -257,6 +257,17 @@ class TestEndToEnd:
         turn = agent.chat(f"Please review {did}")
         assert "flagged" in turn.reply.lower()
 
+    def test_brief_when_the_reschedule_alone_cures_the_shortfall(self, env):
+        with Session(db.get_engine()) as s:
+            account = s.get(db.Account, "ACC-MAIN")
+            account.opening_balance_cents += 1_750_000
+            s.add(account)
+            s.commit()
+        turn = Agent(lambda: Session(db.get_engine())).monday_brief()
+        assert "could not determine" not in turn.reply
+        assert "no financing is needed" in turn.reply and "If the reschedule is not approved, the need is" in turn.reply
+        assert "prepare_financing_application" not in {s["tool"] for s in turn.steps}
+
     def test_document_flagged_for_its_sender_is_not_called_clean(self, env):
         from agent.documents import ingest_document
 
