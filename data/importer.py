@@ -46,6 +46,7 @@ BANK_COLS = ("date", "description", "amount")
 OPEN_COLS = ("number", "counterparty", "issue_date", "due_date", "amount")
 CATEGORIES = {"sales_receipt", "supplier_payment", "payroll", "rent", "utilities", "vat",
               "loan_repayment", "financing", "other"}
+THOUSANDS = re.compile(r"[+-]?[0-9]{1,3}(,[0-9]{3})+(\.[0-9]+)?")  # 1,234,567.89
 CASH_NAMES = ("cash", "bank", "cash at bank", "cash in bank", "bank account", "bank current account")
 Source = Union[bytes, str, Path]
 LOCK_WAIT_SECONDS = 5.0  # how long the final copy waits for another writer to finish
@@ -81,6 +82,9 @@ def _rows(src: Source, name: str, required: tuple[str, ...]) -> list[dict]:
 def _cents(v: str, where: str) -> int:
     if v == "":
         return 0
+    if "," in v and not THOUSANDS.fullmatch(v):
+        raise ImportErrorReport(f"{where}: {v!r} is not a number (use a dot for decimals; "
+                                "a comma only between groups of thousands)")
     try:
         return int((Decimal(v.replace(",", "")) * 100).quantize(Decimal(1)))
     except (InvalidOperation, ValueError, OverflowError):

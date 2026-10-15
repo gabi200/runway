@@ -227,3 +227,14 @@ def test_cash_account_is_not_any_account_with_cash_in_its_name(tmp_path):
     assert (result["opening_balance_cents"], result["warnings"]) == (4990000, [])
     with pytest.raises(ImportErrorReport, match="1020 Cash at bank, 1010 Bank current account.*code 1000"):
         import_files(tmp_path / "u.db", tb.replace("4900,Cash discounts granted", "1020,Cash at bank"), BS)
+
+
+@pytest.mark.parametrize("amount", ["50000,00", "12,50", "1,2345.00", "1,000,0"])
+def test_decimal_comma_is_rejected_not_read_as_thousands(tmp_path, amount):
+    with pytest.raises(ImportErrorReport, match="is not a number"):
+        import_files(tmp_path / "t.db", TB, f'date,description,amount\n2026-09-01,x,"{amount}"\n')
+
+
+def test_thousands_separators_are_accepted(tmp_path):
+    result = import_files(tmp_path / "t.db", TB, 'date,description,amount\n2026-09-01,x,"-1,000.50"\n')
+    assert result["opening_balance_cents"] == 5000000 + 100050
