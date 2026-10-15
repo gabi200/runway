@@ -95,3 +95,18 @@ def test_ledger_money_keeps_currency_and_terms_carry_units(monkeypatch):
     assert ledger_money(100, "CHF") == "CHF 1.00"
     terms = product_terms(get_product("overdraft"), "EUR")
     assert "Limit €50,000" in terms and "€200 one-off" in terms
+
+
+def test_loan_shorter_than_the_need_is_excluded(session):
+    """A 183-day loan was ranked first for a 300-day need, priced as if 183 days covered it."""
+    from policy.engine import evaluate
+
+    result = compare_financing(session, 1_000_000, TODAY + timedelta(days=60), 300)
+    excluded = {e["product_id"]: e["reason"] for e in result["excluded"]}
+    assert "Term of 183 days" in excluded["short_term_loan"]
+    assert "short_term_loan" not in {r["product_id"] for r in result["ranked"]}
+    assert "state_guaranteed_loan" in {r["product_id"] for r in result["ranked"]}  # 365-day term covers it
+    args = {"product_id": "short_term_loan", "amount_cents": 1_000_000,
+            "needed_by": (TODAY + timedelta(days=60)).isoformat(), "days_needed": 300}
+    decision = evaluate(session, "prepare_financing_application", args, "agent")
+    assert decision.outcome == "DENY" and "Term of 183 days" in decision.reason

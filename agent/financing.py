@@ -97,9 +97,12 @@ def account_currency(session: Session) -> str:
     return acc.currency if acc else load_country_pack().currency
 
 
-def _eligibility(session: Session, p: dict[str, Any], amount_cents: int) -> tuple[str | None, list[str]]:
+def _eligibility(session: Session, p: dict[str, Any], amount_cents: int,
+                 days_needed: int | None = None) -> tuple[str | None, list[str]]:
     """Return (exclusion reason or None, warnings)."""
     warnings: list[str] = []
+    if days_needed and p.get("term_days") and days_needed > p["term_days"]:
+        return f"Term of {p['term_days']} days is shorter than the {days_needed} days needed.", warnings
     req = p.get("requires")
     if req in ("open_ar_invoice", "brightfield_invoice"):
         cp = p.get("eligible_counterparty_id") if req == "brightfield_invoice" else None
@@ -141,7 +144,7 @@ def compare_financing(session: Session, amount_cents: int, needed_by: date, days
                 f"Too slow: cash arrives {arrival.isoformat()} ({p['time_to_cash_days']} days), "
                 f"after the needed date {needed_by.isoformat()}.")})
             continue
-        reason, warnings = _eligibility(session, p, amount_cents)
+        reason, warnings = _eligibility(session, p, amount_cents, days_needed)
         if reason:
             excluded.append({"product_id": p["id"], "name": p["name"], "arrival_date": arrival.isoformat(),
                              "time_to_cash_days": p["time_to_cash_days"], "reason": reason})

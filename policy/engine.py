@@ -225,7 +225,7 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
             needed_by = _date(args["needed_by"])
             if needed_by < today or today + timedelta(days=product["time_to_cash_days"]) > needed_by:
                 return Decision("DENY", "Financing cannot arrive by the needed date", tier)
-            exclusion, _ = _eligibility(session, product, args["amount_cents"])
+            exclusion, _ = _eligibility(session, product, args["amount_cents"], args.get("days_needed"))
             if exclusion:
                 return Decision("DENY", exclusion, tier)
             roles = tuple(payment_rules["material_roles"] if args["amount_cents"] > payment_rules["accountant_above_cents"]
