@@ -229,9 +229,12 @@ def verify_anchors(session: Session, backend=None) -> AnchorReport:
         return AnchorReport("tampered", len(receipts), covered, "; ".join(problems))
     if unavailable:
         return AnchorReport("unavailable", len(receipts), covered, "; ".join(unavailable))
-    message = f"All {len(receipts)} published heads match; entries 1 to {covered} are as published"
+    heads = "1 published head matches" if len(receipts) == 1 else f"All {len(receipts)} published heads match"
+    message = f"{heads}; entries 1 to {covered} are as published"
     if len(entries) > covered:
-        message += f"; entries {covered + 1} to {len(entries)} are not yet published"
+        rest = (f"entry {len(entries)} is" if len(entries) == covered + 1
+                else f"entries {covered + 1} to {len(entries)} are")
+        message += f"; {rest} not yet published"
     return AnchorReport("verified", len(receipts), covered, message)
 
 

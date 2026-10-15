@@ -221,7 +221,7 @@ def audit_rewrite(source: str | Path, mode: str, backend=None) -> Trace:
                 published = verify_anchors(s, backend)
         finally:
             engine.dispose()
-    hint = "" if published.status in ANCHOR_OUTCOME else " Publish the head on the Audit log page to catch this."
+    hint = "" if published.status in ANCHOR_OUTCOME else ". Publish the head on the Audit log page to catch this."
     return _trace(MODES[mode], [
         Step("Insider (on a copy)", "info", did),
         Step("Hash chain", "fooled" if chain.ok else "detected", chain.message),

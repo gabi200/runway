@@ -87,6 +87,7 @@ def test_anchor_then_verify(session, tmp_path):
     assert (last.id, last.actor, last.action, last.decision) == (5, "owner", "anchor_audit_head", "INFO")
     report = verify_anchors(session)
     assert report.status == "verified" and report.ok and report.covered == 4
+    assert report.message == "1 published head matches; entries 1 to 4 are as published; entry 5 is not yet published"
     assert (tmp_path / "anchor.notary.jsonl").exists()
 
 
