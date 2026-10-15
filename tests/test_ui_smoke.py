@@ -447,6 +447,18 @@ def test_import_requires_confirm_and_sign_in_and_has_optional_uploads(at):
     assert any("Paid invoices" in x for x in labels) and any("Scheduled payments" in x for x in labels)
 
 
+def test_non_utf8_csv_preview_shows_an_error(at):
+    goto(at, "Onboarding")
+    latin1 = "account,name,debit,credit\n1000,Caisse société,10.00,0\n".encode("cp1252")
+    at.file_uploader(key="up_tb").set_value(("tb.csv", latin1, "text/csv")).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("UTF-8" in e.value for e in at.error)
+    utf8 = "date,description,amount\n2026-10-01,Café,-5.00\n".encode("utf-8")
+    at.file_uploader(key="up_bs").set_value(("bs.csv", utf8, "text/csv")).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("1 transactions" in i.value for i in at.info)  # the valid file is still previewed
+
+
 def test_financing_card_states_reschedule_dependency(at):
     from agent.executor import run_tool
     with db.session_scope() as s:

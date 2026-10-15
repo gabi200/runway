@@ -206,8 +206,13 @@ def controls() -> None:
 # --------------------------------------------------------------------------- #
 # 1. Onboarding
 # --------------------------------------------------------------------------- #
-def read_csv(upload) -> list[dict]:
-    return list(csv.DictReader(io.StringIO(upload.getvalue().decode("utf-8-sig"))))
+def read_csv(upload) -> list[dict] | None:
+    """Rows of an uploaded CSV for the preview; None, with an error shown, if it is not UTF-8."""
+    try:
+        return list(csv.DictReader(io.StringIO(upload.getvalue().decode("utf-8-sig"))))
+    except UnicodeDecodeError:
+        st.error(safe_text(f"{upload.name} is not UTF-8 text. Save it as CSV UTF-8 and upload it again."))
+        return None
 
 
 def num(x: str | None) -> float:
@@ -243,8 +248,7 @@ def page_onboarding() -> None:
             log_human(s, "load_sample_data", {k: v for k, v in summary.items() if k != "warnings"},
                       "HUMAN_ACTION", "Sample data regenerated from the UI")
         st.rerun()
-    if tb is not None:
-        rows = read_csv(tb)
+    if tb is not None and (rows := read_csv(tb)) is not None:
         debit, credit = sum(num(r.get("debit")) for r in rows), sum(num(r.get("credit")) for r in rows)
         st.subheader("Trial balance summary")
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
@@ -252,8 +256,7 @@ def page_onboarding() -> None:
         (st.success if ok else st.error)(
             f"{len(rows)} accounts. Debits {debit:,.2f}, credits {credit:,.2f}: "
             + ("balanced." if ok else "NOT balanced, check the file."))
-    if bs is not None:
-        rows = read_csv(bs)
+    if bs is not None and (rows := read_csv(bs)) is not None:
         total_in = sum(num(r["amount"]) for r in rows if num(r.get("amount")) > 0)
         total_out = sum(num(r["amount"]) for r in rows if num(r.get("amount")) < 0)
         st.subheader("Bank statement summary")
