@@ -184,6 +184,13 @@ class TestEndToEnd:
             from sqlmodel import select
             assert len(s.exec(select(db.OutboxEmail).where(db.OutboxEmail.kind == "reminder")).all()) == 2
 
+    def test_brief_reports_each_stretch_below_zero_by_running_balance(self, env):
+        reply = Agent(lambda: Session(db.get_engine())).monday_brief().reply
+        assert "below zero from 2026-11-25" in reply and "-€29,303.32 on 2026-11-26" in reply
+        assert "AR-1093" in reply and "expected 2026-12-03" in reply  # ends the late-November stretch
+        assert "below zero from 2026-12-25" in reply and "AR-1101" in reply
+        assert "€63,696.68" not in reply and "€77,505.02" not in reply  # positive week closings are not "below zero"
+
     @pytest.mark.parametrize("message", [
         "Which customer invoices are overdue?",
         "Don't send any reminders yet, just list the overdue invoices.",

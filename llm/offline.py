@@ -141,7 +141,7 @@ class OfflinePlanner:
 
         fc_res = first("get_forecast")
         fc = fc_res.get("data") if fc_res and fc_res.get("status") == "ok" else None
-        short = bool(fc and fc["min_closing_cents"] < 0)
+        short = bool(fc and fc["min_running_cents"] < 0)
 
         stage2: list[dict] = []
         overdue = [r for r in ((first("list_receivables") or {}).get("data") or [])] if "reminders" in wants else []
@@ -189,23 +189,27 @@ class OfflinePlanner:
         return pick.get("data") if pick else None
 
     @staticmethod
-    def _recoveries(fc: dict) -> list[tuple[dict, dict | None, dict | None]]:
-        """For each shortfall week: (week, first later receipt that brings the balance back to >= 0, its week)."""
-        out = []
-        weeks = fc["weeks"]
-        for wi in fc["shortfall_weeks"]:
-            w = weeks[wi - 1]
-            bal, hit = w["closing_cents"], None
-            for nw in weeks[wi:]:
-                for ln in sorted(nw.get("lines") or [], key=lambda ln: (ln["expected_date"], -ln["amount_cents"])):
-                    bal += ln["amount_cents"]
-                    if ln["kind"] == "receipt" and bal >= 0:
-                        hit = (ln, nw)
-                        break
-                if hit:
-                    break
-            out.append((w, hit[0] if hit else None, hit[1] if hit else None))
-        return out
+    def _dips(fc: dict) -> list[dict]:
+        """Each stretch below zero: first day, lowest balance and day, its payments and the line that ends it."""
+        lines = sorted((ln for w in fc["weeks"] for ln in w.get("lines") or []),
+                       key=lambda ln: (ln["expected_date"], ln["amount_cents"] > 0))  # payments first, as the engine
+        bal, dips, cur, same_day = fc["opening_balance_cents"], [], None, []
+        for ln in lines:
+            bal += ln["amount_cents"]
+            same_day = [x for x in same_day if x["expected_date"] == ln["expected_date"]]
+            if bal < 0:
+                if cur is None:  # payments earlier that day helped push it below zero too
+                    cur = {"start": ln["expected_date"], "low": bal, "low_date": ln["expected_date"],
+                           "outs": [x for x in same_day if x["kind"] == "payment"], "end": None}
+                    dips.append(cur)
+                if bal < cur["low"]:
+                    cur["low"], cur["low_date"] = bal, ln["expected_date"]
+                if ln["kind"] == "payment":
+                    cur["outs"].append(ln)
+            elif cur is not None:
+                cur["end"], cur = ln, None
+            same_day.append(ln)
+        return dips
 
     @staticmethod
     def _reschedule_candidate(fc: dict | None, payables: dict | None) -> dict | None:
@@ -214,7 +218,7 @@ class OfflinePlanner:
         inv_by_id = {i["id"]: i for i in payables["data"]}
         best = None
         for w in fc["weeks"]:
-            if w["index"] > fc["min_week"]:
+            if w["index"] > fc["min_running_week"]:
                 continue
             for ln in w.get("lines") or []:
                 pay = next((r for r in ln["source_refs"] if r.startswith("PAY-")), None)
@@ -233,28 +237,29 @@ class OfflinePlanner:
     def _reply(wants, fc, short, by, cand, rec, need=None) -> str:
         out: list[str] = []
         if fc:
-            weeks = {w["index"]: w for w in fc["weeks"]}
             if short:
-                rec_info = OfflinePlanner._recoveries(fc)
-                sw = ", ".join(f"week {w['index']} ({w['start']} to {w['end']}) at {_money(w['closing_cents'])}"
-                               for w, _, _ in rec_info)
-                out.append(f"Heads up: your cash goes below zero in {sw}. "
-                           f"The forecast starts from {_money(fc['opening_balance_cents'])} today.")
-                for w, ln, nw in rec_info:
-                    outs = sorted((x for x in w.get("lines") or [] if x["kind"] == "payment"),
-                                  key=lambda x: x["amount_cents"])[:3]
+                def week_of(day: str) -> int:
+                    return next(w["index"] for w in fc["weeks"] if w["start"] <= day <= w["end"])
+
+                out.append(f"Heads up: your cash goes below zero. The forecast starts from "
+                           f"{_money(fc['opening_balance_cents'])} today.")
+                for d in OfflinePlanner._dips(fc):
+                    out.append(f"The balance is below zero from {d['start']} (week {week_of(d['start'])}) and lowest at "
+                               f"{_money(d['low'])} on {d['low_date']}.")
+                    outs = sorted(d["outs"], key=lambda x: x["amount_cents"])[:3]
                     if outs:
-                        out.append(f"Biggest payments in week {w['index']}: " + "; ".join(
+                        out.append("Biggest payments in that stretch: " + "; ".join(
                             f"{x['label']} ({_money(-x['amount_cents'])})" for x in outs) + ".")
+                    ln = d["end"]
                     if ln:
-                        out.append(f"Week {w['index']} is restored by {ln['label']} ({_money(ln['amount_cents'])}, "
-                                   f"{', '.join(ln['source_refs'])}), expected {ln['expected_date']} in week {nw['index']}"
-                                   + (f" ({ln['note']})." if ln.get("note") else "."))
+                        out.append(f"It ends with {ln['label']} ({_money(ln['amount_cents'])}, "
+                                   f"{', '.join(ln['source_refs'])}), expected {ln['expected_date']} in week "
+                                   f"{week_of(ln['expected_date'])}" + (f" ({ln['note']})." if ln.get("note") else "."))
                     else:
-                        out.append(f"No receipt in the forecast horizon restores week {w['index']}.")
+                        out.append("No receipt in the forecast horizon brings it back above zero.")
             else:
-                out.append(f"No shortfall in the forecast: the lowest balance is {_money(fc['min_closing_cents'])} "
-                           f"in week {fc['min_week']}.")
+                out.append(f"No shortfall in the forecast: the lowest balance is {_money(fc['min_running_cents'])} "
+                           f"on {fc['min_running_date']} (week {fc['min_running_week']}).")
         if "reminders" in wants and by.get("send_payment_reminder"):
             parts = []
             for a, r in by["send_payment_reminder"]:
