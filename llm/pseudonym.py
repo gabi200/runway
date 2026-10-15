@@ -173,6 +173,10 @@ class Pseudonymizer:
     def add_person(self, name: str) -> str:
         return self.add("PERSON", name)
 
+    def people(self) -> list[str]:
+        """Person names registered so far, in placeholder order (pass to the next instance as `people`)."""
+        return [lit for ph, lit in self._rev.items() if ph.startswith("<PERSON_")]
+
     def learn(self, text: str) -> None:
         """Register person names found in text (From:/To: headers, sign-offs, first.last email addresses)."""
         if not isinstance(text, str) or not text:

@@ -61,6 +61,20 @@ def steps_note(steps: list[dict]) -> str:
     return f"[Tool calls made in that turn: {calls or 'none'}]"
 
 
+def _masked(pseudo: Pseudonymizer, m: dict) -> dict:
+    """The model-facing copy of one raw message."""
+    if m["role"] == "tool":
+        try:
+            content = json.dumps(pseudo.mask_obj(m["data"]), default=str)
+        except Exception:  # fail closed: withhold a result that could not be masked
+            content = json.dumps({"status": "error", "tool": m["tool"],
+                                  "reason": "result withheld: it could not be pseudonymised"})
+        return {"role": "tool", "tool_call_id": m["tool_call_id"], "content": content}
+    if m.get("tool_calls"):
+        return m  # the model's own tool-call message: already placeholders
+    return {"role": m["role"], "content": pseudo.mask(m["content"])}
+
+
 class AgentTurn(BaseModel):
     """Result of one agent turn: reply text plus the tool trace."""
 
@@ -85,6 +99,7 @@ class Agent:
         self._tool_runner = tool_runner
         self.history: list[dict] = []  # raw (unmasked) user/assistant text of earlier turns
         self._evidence: set[str] = set()  # amounts seen in tool results, user messages and documents
+        self._people: list[str] = []  # person names learned in earlier turns (masked in every later turn)
 
     # -- helpers -----------------------------------------------------------
     def _specs(self) -> list[dict]:
@@ -136,27 +151,26 @@ class Agent:
             return self._loop(session, MONDAY_PROMPT)
 
     def _loop(self, session, user_message: str) -> AgentTurn:
-        pseudo = Pseudonymizer(session)
+        pseudo = Pseudonymizer(session, people=self._people)
         full_user = self._with_documents(session, user_message)
         self._evidence |= amounts_in(full_user)
         for m in self.history:
             pseudo.learn(m["content"])
         pseudo.learn(full_user)
-        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        try:
-            messages += [{"role": m["role"], "content": pseudo.mask(m["content"])} for m in self.history]
-            messages.append({"role": "user", "content": pseudo.mask(full_user)})
-        except Exception:  # fail closed: never send text that could not be masked
-            return AgentTurn(reply=MASK_FAILED, steps=[])
+        raw: list[dict] = [*self.history, {"role": "user", "content": full_user}]  # unmasked; masked per call
         steps: list[dict] = []
         reply = ""
         for _ in range(self.max_steps):
+            try:  # masked afresh before every call, so a name learned mid-turn is masked in earlier messages too
+                messages = [{"role": "system", "content": SYSTEM_PROMPT}] + [_masked(pseudo, m) for m in raw]
+            except Exception:  # fail closed: never send text that could not be masked
+                return AgentTurn(reply=MASK_FAILED, steps=steps)
             resp = self.adapter.chat(messages, self._specs())
             calls = resp.get("tool_calls") or []
             if not calls:
                 reply = pseudo.unmask(resp.get("content") or "")
                 break
-            messages.append({
+            raw.append({  # the model's own output is already in placeholders
                 "role": "assistant", "content": resp.get("content"),
                 "tool_calls": [{"id": c["id"], "type": "function",
                                 "function": {"name": c["name"], "arguments": json.dumps(c["arguments"])}}
@@ -176,12 +190,7 @@ class Agent:
                 safe = json.loads(json.dumps(payload, default=str))
                 self._evidence |= amounts_in(json.dumps(safe))
                 pseudo.learn_obj(safe)
-                try:
-                    content = json.dumps(pseudo.mask_obj(safe), default=str)
-                except Exception:  # fail closed: withhold a result that could not be masked
-                    content = json.dumps({"status": "error", "tool": c["name"],
-                                          "reason": "result withheld: it could not be pseudonymised"})
-                messages.append({"role": "tool", "tool_call_id": c["id"], "content": content})
+                raw.append({"role": "tool", "tool_call_id": c["id"], "tool": c["name"], "data": safe})
         else:
             reply = ("I stopped after reaching the step limit. Here is what was done so far: "
                      + (", ".join(f"{s['tool']} ({s['status']})" for s in steps) or "nothing"))
@@ -195,4 +204,5 @@ class Agent:
                       + ", ".join(figures) + ". Treat them as unverified.")
         self.history += [{"role": "user", "content": user_message},
                          {"role": "assistant", "content": reply + "\n\n" + steps_note(steps)}]
+        self._people = pseudo.people()  # history keeps raw text, so later turns must still know these names
         return AgentTurn(reply=reply, steps=steps)

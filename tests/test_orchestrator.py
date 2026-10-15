@@ -338,6 +338,29 @@ def test_non_ascii_names_in_document_metadata_and_tool_notes_are_masked(session_
         assert secret not in blob, secret
 
 
+def test_learned_person_names_stay_masked_in_later_turns_and_later_calls(session_factory):
+    with session_factory() as s:
+        s.add(db.Document(id="DOC-0001", filename="mail.txt", kind="email",
+                          sender="Hans Muller <hans.muller@mueller-mail.example>", content_text="Please call me back."))
+        s.commit()
+
+    def runner(session, name, args, actor="agent"):
+        return types.SimpleNamespace(model_dump=lambda mode="json": {
+            "status": "ok", "tool": name, "data": {"text": "From: Greta Lind <greta.lind@lind-mail.example>\n\nHi"}})
+    adapter = ScriptedAdapter([
+        {"content": "<PERSON_1> asks for a call back.", "tool_calls": []},
+        {"content": None, "tool_calls": [{"id": "c1", "name": "list_documents", "arguments": {}}]},
+        {"content": "Yes, she did.", "tool_calls": []},
+    ])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=runner)
+    assert agent.chat("Please review DOC-0001").reply == "Hans Muller asks for a call back."
+    agent.chat("Did Greta Lind write too?")  # Greta is only learned from the tool result in this turn
+    everything = json.dumps(adapter.seen)
+    assert "Hans" not in everything and "Muller" not in everything
+    last_call = json.dumps(adapter.seen[-1])
+    assert "Greta" not in last_call and "Lind" not in last_call
+
+
 def test_unknown_placeholder_args_rejected(session_factory):
     log = []
     adapter = ScriptedAdapter([
