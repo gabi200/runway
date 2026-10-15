@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
+from uuid import uuid4
 from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import A4
@@ -70,6 +72,7 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
     out = var_dir() / "applications"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{app_id}.pdf"
+    draft = out / f".{app_id}.{uuid4().hex}.pdf"  # moved into place only after the id is claimed
     st = getSampleStyleSheet()
     cur = account_currency(session)
 
@@ -90,7 +93,7 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
                                ("LINEBELOW", (0, 0), (-1, -1), 0.25, "#cccccc")]))
         return t
 
-    doc = SimpleDocTemplate(str(path), pagesize=A4, title=f"Financing application {app_id}")
+    doc = SimpleDocTemplate(str(draft), pagesize=A4, title=f"Financing application {app_id}")
     status = ("approved and signed by " + " and ".join(s["role"] for s in mandate["signatures"])
               if mandate else "DRAFT, needs human approval")
     doc.build([
@@ -113,12 +116,17 @@ def prepare_application(session: Session, product_id: str, amount_cents: int, ne
     if mandate:  # machine-readable copy for `python -m agent.mandate verify`
         from pypdf import PdfWriter
 
-        writer = PdfWriter(clone_from=str(path))
+        writer = PdfWriter(clone_from=str(draft))
         writer.add_metadata({PDF_METADATA_KEY: json.dumps(mandate, separators=(",", ":"))})
-        writer.write(str(path))
+        writer.write(str(draft))
     row = FinancingApplication(id=app_id, product_id=product_id, amount_cents=amount_cents,
                                currency=cur, needed_by=needed_by, pdf_path=str(path))
     session.add(row)
-    session.commit()
+    try:
+        session.commit()  # a concurrent application with the same id fails here, before touching its PDF
+    except Exception:
+        draft.unlink(missing_ok=True)
+        raise
+    os.replace(draft, path)
     session.refresh(row)
     return row

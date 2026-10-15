@@ -206,6 +206,21 @@ def test_application_pdf_text_stays_on_the_page(session):
     assert ends and max(ends) <= float(page.mediabox.width) - 20
 
 
+@pytest.mark.filterwarnings("ignore::sqlalchemy.exc.SAWarning")  # one session plays both requests
+def test_id_collision_never_overwrites_another_application(session, monkeypatch):
+    """Two concurrent applications got the same FIN id; the loser's PDF replaced the winner's."""
+    import agent.pdf as pdf_mod
+
+    first = pdf_mod.prepare_application(session, "overdraft", 400_000, date(2026, 11, 20))
+    before = Path(first.pdf_path).read_bytes()
+    monkeypatch.setattr(pdf_mod, "next_id", lambda *a, **k: first.id)  # the other request claimed it first
+    with pytest.raises(Exception):
+        pdf_mod.prepare_application(session, "overdraft", 900_000, date(2026, 11, 20))
+    session.rollback()
+    assert Path(first.pdf_path).read_bytes() == before
+    assert list(Path(first.pdf_path).parent.iterdir()) == [Path(first.pdf_path)]
+
+
 def test_failed_execution_is_audited(session, monkeypatch):
     monkeypatch.setitem(executor.HANDLERS, "get_balances", lambda s, a, c: 1 / 0)
     r = run_tool(session, "get_balances", {})
