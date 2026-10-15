@@ -46,6 +46,7 @@ BANK_COLS = ("date", "description", "amount")
 OPEN_COLS = ("number", "counterparty", "issue_date", "due_date", "amount")
 CATEGORIES = {"sales_receipt", "supplier_payment", "payroll", "rent", "utilities", "vat",
               "loan_repayment", "financing", "other"}
+CASH_NAMES = ("cash", "bank", "cash at bank", "cash in bank", "bank account", "bank current account")
 Source = Union[bytes, str, Path]
 LOCK_WAIT_SECONDS = 5.0  # how long the final copy waits for another writer to finish
 
@@ -130,8 +131,14 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
     if debit != credit:
         raise ImportErrorReport(f"trial balance is not balanced: debits {debit / 100:,.2f} "
                                 f"!= credits {credit / 100:,.2f}")
-    cash_cents = next((_cents(r["debit"], "cash") - _cents(r["credit"], "cash") for r in tb
-                       if r["account_code"] == "1000" or "cash" in r["account_name"].lower()), None)
+    # ponytail: the bank account is code 1000 or a plain cash/bank name; anything else needs code 1000.
+    cash_rows = [r for r in tb if r["account_code"] == "1000"] or [
+        r for r in tb if r["account_name"].lower() in CASH_NAMES or r["account_name"].lower().startswith("cash at bank")]
+    if len(cash_rows) > 1:
+        raise ImportErrorReport("trial balance: cannot tell which account is the bank account ("
+                                + ", ".join(f"{r['account_code']} {r['account_name']}" for r in cash_rows)
+                                + "); give it account code 1000")
+    cash_cents = _cents(cash_rows[0]["debit"], "cash") - _cents(cash_rows[0]["credit"], "cash") if cash_rows else None
 
     bank = _rows(bank_statement_csv, "bank statement", BANK_COLS)
     txs, seen = [], set()

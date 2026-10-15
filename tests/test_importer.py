@@ -218,3 +218,12 @@ def test_statement_end_is_compared_with_trial_balance_in_date_order(tmp_path):
     tb = "account_code,account_name,debit,credit\n1000,Cash,1300,\n3000,Equity,,1300\n"
     assert import_files(tmp_path / "t.db", tb, NEWEST_FIRST)["warnings"] == []
     assert "differs" in import_files(tmp_path / "u.db", tb.replace("1300", "1400"), NEWEST_FIRST)["warnings"][0]
+
+
+def test_cash_account_is_not_any_account_with_cash_in_its_name(tmp_path):
+    tb = ("account_code,account_name,debit,credit\n4900,Cash discounts granted,500,\n"
+          "1010,Bank current account,50000,\n3000,Equity,,50500\n")
+    result = import_files(tmp_path / "t.db", tb, "date,description,amount,balance\n2026-09-01,Receipt,100,50000\n")
+    assert (result["opening_balance_cents"], result["warnings"]) == (4990000, [])
+    with pytest.raises(ImportErrorReport, match="1020 Cash at bank, 1010 Bank current account.*code 1000"):
+        import_files(tmp_path / "u.db", tb.replace("4900,Cash discounts granted", "1020,Cash at bank"), BS)
