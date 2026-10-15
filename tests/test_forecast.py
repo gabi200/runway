@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlmodel import Session
@@ -93,6 +93,19 @@ def test_scenario_delay_brightfield_worsens(s):
     late = build_forecast(s, scenario=[{"type": "delay_customer", "counterparty_id": "CUST-BRIGHTFIELD", "days": 30}])
     assert late.min_closing_cents < base.min_closing_cents
     assert late.weeks[5].closing_cents <= base.weeks[5].closing_cents
+
+
+@pytest.mark.parametrize("days", [7, 10])
+def test_delay_of_overdue_customer_moves_receipt_later(s, days):
+    """Regression (B3): the scenario delay is added after the overdue clamp, so it never moves a receipt earlier."""
+    def ar1091(fc):
+        return next(ln for w in fc.weeks for ln in w.lines if ln.source_refs == ["AR-1091"])
+    base = ar1091(build_forecast(s))
+    late = ar1091(build_forecast(s, scenario=[{"type": "delay_customer", "counterparty_id": "CUST-SMALL-3",
+                                               "days": days}]))
+    assert base.expected_date == date(2026, 10, 22)  # due 10-04, overdue: today + 3
+    assert late.expected_date == base.expected_date + timedelta(days=days)
+    assert f"+{days} days scenario delay" in late.note
 
 
 def test_scenario_inflow(s):

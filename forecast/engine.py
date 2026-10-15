@@ -203,17 +203,14 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
     for inv in ar:
         late = customer_lateness_days(session, inv.counterparty_id)
         extra = delays.get(inv.counterparty_id, 0)
-        expected = inv.due_date + timedelta(days=late + extra)
-        note = f"due {inv.due_date}"
-        if late or extra:
-            note += f", adjusted +{late + extra} days"
-            if extra:
-                note += f" (incl. +{extra} scenario delay)"
-            else:
-                note += " for avg lateness"
+        expected = inv.due_date + timedelta(days=late)
+        note = f"due {inv.due_date}" + (f", adjusted +{late} days for avg lateness" if late else "")
         if expected < start:
             expected = start + timedelta(days=OVERDUE_ASSUMED_DAYS)
             note += f"; overdue, assumed paid {OVERDUE_ASSUMED_DAYS} days from today"
+        if extra:  # after the overdue clamp, so a delay never moves a receipt earlier
+            expected += timedelta(days=extra)
+            note += f"; +{extra} days scenario delay"
         lines.append(
             ForecastLine(
                 label=f"Receipt {inv.number}",
