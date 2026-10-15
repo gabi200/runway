@@ -75,16 +75,19 @@ class Pseudonymizer:
             elif label not in ("EMAIL", "IBAN") and words and words[0].lower() not in _LEGAL_SUFFIXES and len(words[0]) >= _MIN_ALIAS_LEN:
                 self._fwd.setdefault(words[0].lower(), ph)
         if ident:
-            self._add_id(ph, ident, id_tag)
+            self._add_id(ph, label, ident, id_tag)
         return ph
 
-    def _add_id(self, ph: str, ident: str, tag: str = "ID") -> None:
-        idph = ph[:-1] + f"_{tag}>"
+    def _add_id(self, ph: str, label: str, ident: str, tag: str = "ID") -> None:
         # Plain-word IDs (PAYROLL, LANDLORD) would mask ordinary prose; only structured IDs are masked.
-        if ("-" in ident or any(c.isdigit() for c in ident)) and ident not in self._ids:
-            self._ids[ident] = idph
-            self._rev[idph] = ident
-            self._regex = None
+        if not ("-" in ident or any(c.isdigit() for c in ident)) or ident in self._ids:
+            return
+        idph = ph[:-1] + f"_{tag}>"
+        while idph in self._rev:  # name shared with another entity: that ID keeps its placeholder, this one gets its own
+            idph = f"<{label}_{self._next(label)}_{tag}>"
+        self._ids[ident] = idph
+        self._rev[idph] = ident
+        self._regex = None
 
     def load(self, session) -> None:
         """Load names, IDs and IBANs from the database."""

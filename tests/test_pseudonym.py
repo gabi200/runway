@@ -99,6 +99,19 @@ def test_learn_does_not_treat_company_signoff_as_person(session):
     assert "<PERSON_" not in out and "packaging line" in out
 
 
+def test_same_name_entities_get_distinct_id_placeholders(session):
+    # A customer and a supplier with one name, and two payees with one name, must never share an ID placeholder.
+    session.add(db.Counterparty(id="SUP-BRIGHTFIELD", name="Brightfield Retail Ltd", kind="supplier"))
+    session.add(db.Payee(id="PAYEE-0001", name="Cartonia Packaging GmbH", counterparty_id="SUP-CARTONIA",
+                         iban="GB82WEST12345698765432", verified=False, created_at=datetime.now(timezone.utc)))
+    session.commit()
+    p = Pseudonymizer(session)
+    ids = ["CUST-BRIGHTFIELD", "SUP-BRIGHTFIELD", "SUP-CARTONIA", "PAYEE-CARTONIA", "PAYEE-0001"]
+    masked = [p.mask(i) for i in ids]
+    assert len(set(masked)) == len(ids), masked
+    assert [p.unmask(m) for m in masked] == ids
+
+
 def test_learn_still_learns_real_two_token_person(session):
     p = Pseudonymizer(session)
     p.learn("Hi\n\nBest regards,\nHans Muller")
