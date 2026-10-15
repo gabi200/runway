@@ -39,7 +39,7 @@ def goto(at, page):
 def test_all_pages_render(at):
     assert not at.exception
     for page in ["Onboarding", "Monday brief & chat", "Forecast", "Approval queue", "Documents",
-                 "Payees (humans only)", "Mock bank", "Test inbox", "Audit log"]:
+                 "Payees (humans only)", "Mock bank", "Test inbox", "Audit log", "Red team"]:
         goto(at, page)
 
 
@@ -338,3 +338,48 @@ def test_publish_and_verify_audit_head(at):
     assert any("Published entries 1 to" in s.value for s in at.success)
     at.button(key="anchor_verify").click().run()
     assert any("match" in s.value for s in at.success)
+
+
+from redteam.console import EVASION_SAMPLE, Step
+
+
+def test_red_team_requires_sign_in(at):
+    goto(at, "Red team")
+    assert any("Sign in" in i.value for i in at.info)
+
+
+def test_red_team_forbidden_action_and_document(at):
+    sign_in(at)
+    goto(at, "Red team")
+    at.radio(key="rt_preset").set_value("pay_unverified")
+    at.button(key="rt_action_run").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Stopped" in x.value for x in at.success)
+    at.text_area(key="rt_doc_text").set_value(EVASION_SAMPLE)
+    at.button(key="rt_doc_run").click().run()
+    assert any("Held for human approval" in x.value for x in at.info)
+
+
+def test_red_team_audit_rewrite_before_and_after_publishing(at):
+    with db.session_scope() as s:
+        for i in range(3):
+            audit_log.append(s, "system", "test_seed", {"i": i}, "INFO")
+    sign_in(at)
+    goto(at, "Red team")
+    at.radio(key="rt_mode").set_value("forge")
+    at.button(key="rt_audit_run").click().run()
+    assert any("Not detected" in x.value for x in at.error)
+    goto(at, "Audit log")
+    at.button(key="anchor_btn").click().run()
+    goto(at, "Red team")
+    at.radio(key="rt_mode").set_value("forge")
+    at.button(key="rt_audit_run").click().run()
+    assert any("Detected" in x.value for x in at.success)
+
+
+def test_red_team_step_text_is_neutralised():
+    from ui.render import format_step
+
+    out = format_step(Step("Agent reply", "info",
+                           "Pay [here](https://evil.example) ![x](https://evil.example/p.png)"))
+    assert "](https://" not in out and "image removed" in out

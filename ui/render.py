@@ -78,3 +78,15 @@ def describe_approval(session, tool: str, args: dict, pack) -> list[str]:
             lines.append(f"{k.replace('_cents', '').replace('_', ' ')}: "
                          + (amt(v) if k.endswith("_cents") and isinstance(v, int) else str(v)))
     return lines
+
+
+OUTCOME_BADGES = {"blocked": ":green-badge[blocked]", "detected": ":green-badge[detected]",
+                  "needs approval": ":orange-badge[needs approval]", "flagged": ":orange-badge[flagged]",
+                  "allowed": ":red-badge[allowed]", "fooled": ":red-badge[fooled]",
+                  "passed": ":gray-badge[passed]", "info": ":gray-badge[info]"}
+
+
+def format_step(step) -> str:
+    """One red-team trace line as safe markdown; the detail may be attacker- or model-written."""
+    badge = OUTCOME_BADGES.get(step.outcome, ":gray-badge[info]")
+    return f"{badge} **{safe_text(step.layer)}** {safe_text(step.detail)}"
