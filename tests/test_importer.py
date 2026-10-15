@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import os
 import sqlite3
+import time
 from contextlib import closing
 
 import pytest
@@ -314,3 +315,18 @@ def test_receipt_for_an_invoice_still_open_is_not_rebuilt_as_paid(tmp_path):
     assert "A1" in result["warnings"][0] and "still open" in result["warnings"][0]
     with db.session_scope(tmp_path / "t.db") as s:
         assert [(i.number, i.status) for i in s.exec(select(db.Invoice))] == [("A1", "open")]
+
+
+def test_tagging_counterparties_does_not_scan_every_name_per_line(tmp_path):
+    # 2,000 customers x 4,000 long bank lines took about 5 s when every name was tried on every line.
+    names = [f"Customer {k:05d} Ltd" for k in range(2000)]
+    ar = OPEN + "".join(f"A{k},{nm},2026-09-01,2026-10-01,100\n" for k, nm in enumerate(names))
+    filler = " ".join(f"ref{i}" for i in range(150))
+    bs = "date,description,amount\n" + "".join(
+        f"2026-09-01,Card {k} {filler} {names[k % 2000] if k % 10 == 0 else 'Shop'} fee,-1\n" for k in range(4000))
+    start = time.perf_counter()
+    import_files(tmp_path / "t.db", TB, bs, ar)
+    assert time.perf_counter() - start < 2
+    with db.session_scope(tmp_path / "t.db") as s:
+        tagged = {t.id: t.counterparty_id for t in s.exec(select(db.Transaction))}
+    assert tagged["TX-000011"] == "CUST-CUSTOMER-00010-LTD" and tagged["TX-000012"] is None

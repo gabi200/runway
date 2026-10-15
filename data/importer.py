@@ -131,9 +131,13 @@ def _slug(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "-", name.upper()).strip("-")[:30] or "UNKNOWN"
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
 def _key(name: str) -> str:
     """Name for matching: "Acme Ltd" and "ACME LTD." are one counterparty."""
-    return re.sub(r"[\W_]+", "", name.casefold())
+    return "".join(_words(name))
 
 
 def _canonical() -> dict[str, tuple]:
@@ -311,7 +315,10 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         if cid is None or cps[cid]["direction"] != "AP" or (cid in canon and canon[cid][2] == "customer"):
             raise ImportErrorReport("scheduled payments: counterparty must be a supplier with a payee")
         raise ImportErrorReport(f"scheduled payments: payee for {sp['cp_name']} is unverified; verify with a human before scheduling")
-    by_name = {c["name"]: cid for cid, c in cps.items()}
+    name_words = {cid: _words(c["name"]) for cid, c in cps.items()}
+    by_key = {"".join(w): cid for cid, w in name_words.items() if w}
+    first_words = {w[0] for w in name_words.values() if w}
+    longest = max(map(len, name_words.values()), default=0)
 
     # ---- paid customer invoices rebuilt from receipts ------------------------- #
     paid: list[dict] = []
@@ -331,10 +338,14 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
                             "open receivables; kept it open (partly paid, or an older open-items file?)")
             continue
         paid.append(dict(tx=t, number=m.group(2), cp=cid))
+    # Other lines: the counterparty named in the text as whole words (case and punctuation
+    # ignored, longest first). One dict lookup per run of words, not a scan of every name.
+    # ponytail: a name glued to other letters (no space, as in Chinese text) is not found.
     for t in txs:
         if "cp" not in t:
-            hit = next((cid for nm, cid in by_name.items() if nm in t["desc"]), None)
-            t["cp"] = hit
+            w = _words(t["desc"])
+            t["cp"] = next((by_key[k] for i in range(len(w)) if w[i] in first_words
+                            for j in range(min(len(w), i + longest), i, -1) if (k := "".join(w[i:j])) in by_key), None)
 
     invoice_ids = ids + [f"{h['direction']}-H{k:05d}" for k, h in enumerate(hist, 1)]
     invoice_ids += [f"AR-H{k:05d}" for k in range(len(hist) + 1, len(hist) + len(paid) + 1)]
