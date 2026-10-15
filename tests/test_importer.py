@@ -196,3 +196,25 @@ def test_bank_category_ignores_case_and_rejects_unknown_values(tmp_path):
     with pytest.raises(ImportErrorReport, match=r"bank statement TX-000001: unknown category 'Salaries'.*payroll"):
         import_files(tmp_path / "b.db", TB, bs.replace("Payroll", "Salaries"))
     assert not (tmp_path / "b.db").exists()
+
+
+TB_NO_CASH = "account_code,account_name,debit,credit\n1100,Receivables,50000,\n3000,Equity,,50000\n"
+NEWEST_FIRST = "date,description,amount,balance\n2026-09-03,Rent,-200,1300\n2026-09-01,Receipt,500,1500\n"
+
+
+@pytest.mark.parametrize("bs", [
+    NEWEST_FIRST,
+    # same day, oldest first; "B10" sorts before "B9" as text
+    "id,date,description,amount,balance\nB9,2026-09-01,Receipt,500,1500\nB10,2026-09-01,Rent,-200,1300\n",
+])
+def test_opening_balance_follows_statement_order(tmp_path, bs):
+    result = import_files(tmp_path / "t.db", TB_NO_CASH, bs)
+    assert result["opening_balance_cents"] == 100000
+    with db.session_scope(tmp_path / "t.db") as s:
+        assert db.account_balance_cents(s, as_of=db.get_today(s)) == 130000
+
+
+def test_statement_end_is_compared_with_trial_balance_in_date_order(tmp_path):
+    tb = "account_code,account_name,debit,credit\n1000,Cash,1300,\n3000,Equity,,1300\n"
+    assert import_files(tmp_path / "t.db", tb, NEWEST_FIRST)["warnings"] == []
+    assert "differs" in import_files(tmp_path / "u.db", tb.replace("1300", "1400"), NEWEST_FIRST)["warnings"][0]

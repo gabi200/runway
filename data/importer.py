@@ -147,8 +147,11 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         txs.append(dict(id=tid, date=_date(r["date"], f"bank statement {tid} date"),
                         amount=_cents(r["amount"], f"bank statement {tid} amount"),
                         desc=r["description"], cat=cat,
-                        currency=r.get("currency") or pack.currency))
-    txs.sort(key=lambda t: (t["date"], t["id"]))
+                        currency=r.get("currency") or pack.currency, row=n, balance=r.get("balance", "")))
+    # Exports list oldest or newest first; rows of one day keep their file order (reversed
+    # in a newest-first file). ponytail: a statement covering a single day is read as oldest first.
+    newest_first = len(txs) > 1 and txs[0]["date"] > txs[-1]["date"]
+    txs.sort(key=lambda t: (t["date"], -t["row"] if newest_first else t["row"]))
     currency = txs[0]["currency"] if txs else pack.currency
     if any(t["currency"] != currency for t in txs):
         raise ImportErrorReport("bank statement mixes currencies; import one account at a time")
@@ -211,16 +214,16 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             raise ImportErrorReport("open items: days_overdue values imply different 'today' dates")
         as_of = implied.pop() if implied else (txs[-1]["date"] + timedelta(days=1) if txs else date.today())
 
-    opening = None
+    opening, total = None, sum(t["amount"] for t in txs)
+    last = _cents(txs[-1]["balance"], f"bank statement {txs[-1]['id']} balance") \
+        if txs and txs[-1]["balance"] else None  # balance after the chronologically last row
     if cash_cents is not None:
-        opening = cash_cents - sum(t["amount"] for t in txs)
-        if bank and bank[-1].get("balance"):
-            last = _cents(bank[-1]["balance"], "bank statement balance")
-            if last != cash_cents:
-                warnings.append(f"statement ending balance {last / 100:,.2f} differs from trial balance "
-                                f"cash {cash_cents / 100:,.2f}; using the trial balance")
-    elif bank and bank[0].get("balance"):
-        opening = _cents(bank[0]["balance"], "bank statement balance") - txs[0]["amount"]
+        opening = cash_cents - total
+        if last is not None and last != cash_cents:
+            warnings.append(f"statement ending balance {last / 100:,.2f} differs from trial balance "
+                            f"cash {cash_cents / 100:,.2f}; using the trial balance")
+    elif last is not None:
+        opening = last - total
     if opening is None:
         raise ImportErrorReport("cannot determine opening cash: no cash account in the trial balance "
                                 "and no balance column in the bank statement")
