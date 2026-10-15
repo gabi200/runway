@@ -15,6 +15,7 @@ dependencies = [
     "reportlab>=4.2",
     "pypdf>=4.3",
     "pandas>=2.2",
+    "eth-account>=0.13",
 ]
 
 [dependency-groups]

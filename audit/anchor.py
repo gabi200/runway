@@ -7,6 +7,7 @@ elsewhere (a notary file, or a blockchain transaction) is what such a rewrite ca
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from sqlmodel import Session, select
 
 from audit import log as audit
@@ -76,11 +78,83 @@ class NotaryBackend:
             raise AnchorError(f"Notary record {ref!r} is unreadable") from exc
 
 
+class EvmBackend:
+    """Any EVM JSON-RPC chain: the payload is the calldata of a zero-value transaction to ourselves."""
+
+    name = "evm"
+
+    def __init__(self, rpc_url: str, private_key: str, transport: httpx.BaseTransport | None = None,
+                 timeout: float = 15.0):
+        from eth_account import Account
+
+        self._account = Account.from_key(private_key)
+        self.address = self._account.address
+        self._url = rpc_url
+        self._http = httpx.Client(transport=transport, timeout=timeout)
+        self._ids = itertools.count(1)
+
+    def _rpc(self, method: str, params: list):
+        # Messages name the method and error type only: the URL may carry an API key.
+        try:
+            response = self._http.post(self._url, json={"jsonrpc": "2.0", "id": next(self._ids),
+                                                        "method": method, "params": params})
+            response.raise_for_status()
+            body = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise AnchorError(f"{method} failed: HTTP {exc.response.status_code}") from None
+        except (httpx.HTTPError, ValueError) as exc:
+            raise AnchorError(f"{method} failed: {type(exc).__name__}") from None
+        error = body.get("error") if isinstance(body, dict) else "malformed reply"
+        if error:
+            raise AnchorError(f"{method} failed: {error.get('message', error) if isinstance(error, dict) else error}")
+        return body.get("result")
+
+    def _quantity(self, method: str, params: list) -> int:
+        value = self._rpc(method, params)
+        try:
+            return int(value, 16)
+        except (TypeError, ValueError):
+            raise AnchorError(f"{method} returned {value!r}, not a hex number") from None
+
+    def publish(self, payload: str) -> str:
+        data = "0x" + payload.encode("utf-8").hex()
+        tx = {"to": self.address, "value": 0, "data": data,
+              "nonce": self._quantity("eth_getTransactionCount", [self.address, "pending"]),
+              "gasPrice": self._quantity("eth_gasPrice", []),
+              "chainId": self._quantity("eth_chainId", []),
+              "gas": self._quantity("eth_estimateGas", [{"from": self.address, "to": self.address,
+                                                          "value": "0x0", "data": data}])}
+        signed = self._account.sign_transaction(tx)
+        tx_hash = self._rpc("eth_sendRawTransaction", ["0x" + bytes(signed.raw_transaction).hex()])
+        if not isinstance(tx_hash, str):
+            raise AnchorError("eth_sendRawTransaction returned no transaction hash")
+        return tx_hash
+
+    def fetch(self, ref: str) -> str:
+        tx = self._rpc("eth_getTransactionByHash", [ref])
+        if not isinstance(tx, dict) or tx.get("blockNumber") is None:
+            raise AnchorError(f"Transaction {ref} is not on chain (yet)")
+        if str(tx.get("from", "")).lower() != self.address.lower():
+            raise AnchorError(f"Transaction {ref} was not sent by the Runway anchor account")
+        try:
+            return bytes.fromhex(str(tx["input"]).removeprefix("0x")).decode("utf-8")
+        except (KeyError, ValueError) as exc:
+            raise AnchorError(f"Transaction {ref} carries no readable payload") from exc
+
+
 def get_backend():
-    """Backend chosen by RUNWAY_ANCHOR: 'notary' (default)."""
+    """Backend chosen by RUNWAY_ANCHOR: 'notary' (default) or 'evm' (RUNWAY_EVM_RPC_URL, RUNWAY_EVM_PRIVATE_KEY)."""
     kind = (os.getenv("RUNWAY_ANCHOR") or "notary").strip().lower()
     if kind == "notary":
         return NotaryBackend(os.getenv("RUNWAY_NOTARY_PATH") or db_path().with_suffix(".notary.jsonl"))
+    if kind == "evm":
+        url, key = os.getenv("RUNWAY_EVM_RPC_URL"), os.getenv("RUNWAY_EVM_PRIVATE_KEY")
+        if not url or not key:
+            raise AnchorError("RUNWAY_ANCHOR=evm needs RUNWAY_EVM_RPC_URL and RUNWAY_EVM_PRIVATE_KEY")
+        try:
+            return EvmBackend(url, key)
+        except Exception:  # noqa: BLE001 - never echo the key in the message
+            raise AnchorError("RUNWAY_EVM_PRIVATE_KEY is not a valid private key") from None
     raise AnchorError(f"Unknown RUNWAY_ANCHOR {kind!r}; use notary or evm")
 
 
