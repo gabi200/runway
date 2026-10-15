@@ -8,6 +8,7 @@ The agent never sees tokens, IBANs or bank URLs.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 
 
@@ -19,7 +20,8 @@ from agent.financing import account_currency, compare_financing  # noqa: F401  (
 from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
-from common.db import Account, ApprovalRequest, Document, Payment, Setting, get_setting, get_today, utcnow
+from bank.client import BankClient, BankError
+from common.db import Account, ApprovalRequest, Document, Payee, Payment, Setting, get_setting, get_today, utcnow
 from policy import engine as policy
 
 VALID_ROLES = ("owner", "accountant")
@@ -53,7 +55,7 @@ def _canon(obj) -> str:
 def _execute(session: Session, tool: str, args: dict, actor: str, automatic: bool,
              signed_mandate: dict | None = None) -> ToolResult:
     """Run the handler and audit EXECUTED / FAILED."""
-    handler = HANDLERS.get(tool)
+    handler = HANDLERS.get(tool) or HUMAN_HANDLERS.get(tool)
     try:
         if handler is None:
             raise ToolError(f"no implementation for tool {tool!r}")
@@ -218,7 +220,11 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
     audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity,
                                             **signed},
                  "APPROVED", f"approvals so far: {[(e['role'], e['approver_id']) for e in given]}")
-    decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
+    if req.tool_name in HUMAN_HANDLERS:  # two-person rule, not agent policy
+        both = set(required) <= set(approved_roles)
+        decision = policy.Decision("ALLOW" if both else "NEEDS_APPROVAL", "Two-person rule", "H", tuple(required))
+    else:
+        decision = policy.evaluate(session, req.tool_name, args, "agent", approvals=tuple(approved_roles))
     if decision.outcome == "DENY" and get_setting(session, "kill_switch", "off") != "off":
         # Temporary stop: keep the request and its approvals for when the switch is off again.
         audit.append(session, role, req.tool_name, args, "DENY", f"re-check at approval: {decision.reason}")
@@ -266,6 +272,89 @@ def reject(session: Session, approval_id: str, role: str, reason: str = "") -> T
                  "REJECTED", reason)
     return ToolResult(status="ok", tool=req.tool_name, approval_id=req.id, reason=f"rejected by {role}",
                       data={"status": "rejected"})
+
+
+# --------------------------------------------------------------------------- #
+# Human-only actions that lift a payment block: two people (owner and accountant, two sessions)
+# --------------------------------------------------------------------------- #
+def _human_check(session: Session, action: str, args: dict) -> str | None:
+    """Why the action cannot run now, or None."""
+    if action == "verify_payee":
+        payee = session.get(Payee, args.get("payee_id"), populate_existing=True)
+        if payee is None:
+            return "Payee not found"
+        return "Payee is already verified" if payee.verified else None
+    doc = session.get(Document, args.get("document_id"), populate_existing=True)
+    if doc is None or not doc.flagged or doc.cleared:
+        return "Document not found or not flagged"
+    if action == "release_supplier":
+        cp = args.get("counterparty_id")
+        if cp not in json.loads(doc.counterparty_ids):
+            return f"The document does not name {cp}"
+        if cp in json.loads(doc.released_counterparty_ids):
+            return f"{cp} is already released from this document"
+    return None
+
+
+def _checked(session: Session, action: str, args: dict) -> None:
+    reason = _human_check(session, action, args)
+    if reason:
+        raise ToolError(reason)
+
+
+def _verify_payee(session: Session, args: dict, ctx: dict) -> dict:
+    _checked(session, "verify_payee", args)
+    try:  # two people approved: the human bank scope is used here, never by agent tools
+        with BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None,
+                        token=os.getenv("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token")) as bank:
+            return bank.verify_payee(args["payee_id"], True)
+    except BankError as exc:
+        raise ToolError(f"bank refused ({exc.status_code}): {exc.detail}") from exc
+
+
+def _clear_flag(session: Session, args: dict, ctx: dict) -> dict:
+    _checked(session, "clear_document_flag", args)
+    result = clear_document_flag(session, args["document_id"], ctx["actor"], "Cleared by owner and accountant")
+    if result.status != "ok":
+        raise ToolError(result.reason)
+    return result.data
+
+
+def _release_supplier(session: Session, args: dict, ctx: dict) -> dict:
+    _checked(session, "release_supplier", args)
+    doc = session.get(Document, args["document_id"])
+    doc.released_counterparty_ids = json.dumps(json.loads(doc.released_counterparty_ids) + [args["counterparty_id"]])
+    session.add(doc)
+    session.commit()
+    return {"document_id": doc.id, "released": json.loads(doc.released_counterparty_ids)}
+
+
+HUMAN_HANDLERS = {"verify_payee": _verify_payee, "clear_document_flag": _clear_flag,
+                  "release_supplier": _release_supplier}
+
+
+def request_human_action(session: Session, action: str, args: dict, role: str,
+                         approver_id: str | None = None) -> ToolResult:
+    """First person asks for an action that lifts a payment block; it runs once the other role approves.
+
+    The agent cannot reach this: it is not a tool, and run_tool denies these names.
+    """
+    reason = ("Only owner or accountant can request this" if role not in VALID_ROLES or action not in HUMAN_HANDLERS
+              else _human_check(session, action, args))
+    if reason:
+        audit.append(session, role, action, args, "DENY", reason)
+        return ToolResult(status="denied", tool=action, reason=reason)
+    key = _canon(args)
+    req = next((r for r in pending_approvals(session)
+                if r.tool_name == action and _canon(json.loads(r.args_json)) == key), None)
+    if req is None:
+        req = ApprovalRequest(id=next_id(session, ApprovalRequest, "APR"), tool_name=action, args_json=key,
+                              required_roles_json=json.dumps(list(VALID_ROLES)),
+                              reason="Two-person rule: owner and accountant", created_at=_sim_now(session))
+        session.add(req)
+        session.commit()
+        audit.append(session, role, action, args, "NEEDS_APPROVAL", "Two-person rule: owner and accountant")
+    return approve(session, req.id, role, approver_id)
 
 
 def pending_approvals(session: Session) -> list[ApprovalRequest]:

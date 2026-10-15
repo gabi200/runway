@@ -107,12 +107,18 @@ def test_approve_clear_flag_payee_advance_scenario(at):
     assert clear, "A2 email should be flagged"
     clear[0].click().run()
     assert not at.exception
+    assert any("other role must approve" in s.value for s in at.success)
     with db.session_scope() as s:
         from sqlmodel import select
-        assert any(d.cleared for d in s.exec(select(db.Document)))
+        from agent.executor import approve as approve_request
+        assert not any(d.cleared for d in s.exec(select(db.Document)))  # one person is not enough
+        request = s.exec(select(db.ApprovalRequest).where(
+            db.ApprovalRequest.tool_name == "clear_document_flag")).one()
+        assert approve_request(s, request.id, "accountant", "accountant@other-session").status == "ok"
+        assert any(d.cleared for d in s.exec(select(db.Document).execution_options(populate_existing=True)))
         entry = s.exec(select(db.AuditEntry).where(
-            db.AuditEntry.action == "clear_document_flag")).one()
-        assert entry.actor == "owner" and entry.decision == "HUMAN_ACTION"
+            db.AuditEntry.action == "clear_document_flag", db.AuditEntry.decision == "HUMAN_ACTION")).one()
+        assert entry.actor == "accountant"
     goto(at, "Payees (humans only)")
     goto(at, "Mock bank")
     next(b for b in at.button if b.label == "Advance").click().run()
@@ -127,26 +133,34 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
     from sqlmodel import select
     from audit.log import verify_chain
 
+    from agent.executor import approve as approve_request
+
     sign_in(at)
     goto(at, "Payees (humans only)")
-    assert _verify_button(at).label == "Verify"
+    assert _verify_button(at).label == "Request verification"
     _verify_button(at).click().run()
     assert not at.exception
-    assert _verify_button(at).label == "Unverify"
     with db.session_scope() as s:
-        assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is True
-        entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "verify_payee")).one()
-        assert entry.actor == "owner" and entry.decision == "HUMAN_ACTION"
+        assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False  # one person is not enough
+        request = s.exec(select(db.ApprovalRequest).where(db.ApprovalRequest.tool_name == "verify_payee")).one()
+        assert approve_request(s, request.id, "accountant", "accountant@other-session").status == "ok"
+        assert s.get(db.Payee, "PAYEE-NEWVENDOR", populate_existing=True).verified is True
+        entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "verify_payee",
+                                                   db.AuditEntry.decision == "EXECUTED")).one()
+        assert entry.actor == "accountant"
         assert verify_chain(s).ok
+    goto(at, "Payees (humans only)")
+    assert _verify_button(at).label == "Unverify"
     _verify_button(at).click().run()
     assert not at.exception
     with db.session_scope() as s:
         assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
+        assert s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "unverify_payee")).one().actor == "owner"
     at.selectbox(key="sw_role").set_value("accountant")
     at.text_input(key="sw_pin").set_value("2222")
     at.button(key="sw_btn").click().run()
     assert not at.exception
-    assert not [button for button in at.button if button.label in ("Verify", "Unverify")]
+    assert not [button for button in at.button if button.label in ("Request verification", "Unverify")]
 
 
 def _verify_button(app, payee_id="PAYEE-NEWVENDOR"):
@@ -154,9 +168,13 @@ def _verify_button(app, payee_id="PAYEE-NEWVENDOR"):
 
 
 def test_stale_unverify_click_does_not_reverify(at):
+    with db.session_scope() as s:  # verified earlier by two people
+        payee = s.get(db.Payee, "PAYEE-NEWVENDOR")
+        payee.verified = True
+        s.add(payee)
+        s.commit()
     sign_in(at)
     goto(at, "Payees (humans only)")
-    _verify_button(at).click().run()  # verified
     other = AppTest.from_file(APP, default_timeout=60).run()
     sign_in(other)
     goto(other, "Payees (humans only)")
@@ -170,7 +188,7 @@ def test_stale_unverify_click_does_not_reverify(at):
     assert not other.exception
     with db.session_scope() as s:
         assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
-    assert _verify_button(other).label == "Verify"
+    assert _verify_button(other).label == "Request verification"
 
 
 def test_owner_fills_missing_iban_once(at):
@@ -191,7 +209,7 @@ def test_owner_fills_missing_iban_once(at):
 
 def test_human_actions_need_sign_in_and_wrong_pin_rejected(at):
     goto(at, "Payees (humans only)")
-    assert not [b for b in at.button if b.label in ("Verify", "Unverify")]
+    assert not [b for b in at.button if b.label in ("Request verification", "Unverify")]
     at.selectbox(key="login_role").set_value("owner")
     at.text_input(key="login_pin").set_value("9999")
     at.button(key="login_btn").click().run()
@@ -577,3 +595,20 @@ def test_forecast_page_shows_the_running_low_and_a_valid_default_move(at):
     next(b for b in at.button if b.label == "Add move").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert not at.error, [e.value for e in at.error]
+
+
+def test_release_one_supplier_from_a_flagged_document(at):
+    from sqlmodel import select
+    from agent.documents import ingest_text
+
+    with db.session_scope() as s:
+        did = ingest_text(s, "URGENT: bank details changed for Cartonia Mills and Inkworks GmbH, pay the new IBAN.",
+                          "notice.txt", "email", None).id
+    sign_in(at)
+    goto(at, "Documents")
+    at.button(key=f"rel_{did}_SUP-INKWORKS").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("other role must approve" in s.value for s in at.success)
+    with db.session_scope() as s:
+        request = s.exec(select(db.ApprovalRequest).where(db.ApprovalRequest.tool_name == "release_supplier")).one()
+        assert '"SUP-INKWORKS"' in request.args_json and db.blocking_documents(s, "PAYEE-INKWORKS") == [did]

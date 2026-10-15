@@ -84,6 +84,23 @@ def describe_approval(session, tool: str, args: dict, pack) -> list[str]:
         if pend:
             lines.append(f"Assumes reschedule {', '.join(pend)} is approved; without it the financing "
                          "need is larger.")
+    elif tool in ("clear_document_flag", "release_supplier"):
+        from common.db import Counterparty, Document
+
+        doc = session.get(Document, args.get("document_id"))
+        what = f"{doc.id} ({doc.filename}), flagged: {doc.flag_reason}" if doc else str(args.get("document_id"))
+        if tool == "clear_document_flag":
+            lines.append(f"Clear the fraud flag on {what}")
+            lines.append("Every payment this document blocks becomes possible again.")
+        else:
+            cp = session.get(Counterparty, args.get("counterparty_id"))
+            lines.append(f"Release payments to {cp.name if cp else args.get('counterparty_id')} from the block of {what}")
+            lines.append("The document stays flagged for every other supplier it names.")
+    elif tool == "verify_payee":
+        payee = session.get(Payee, args.get("payee_id"))
+        lines.append(f"Mark payee {payee.name if payee else args.get('payee_id')} as verified"
+                     + (f" (IBAN {payee.iban})" if payee and payee.iban else ""))
+        lines.append("Only approve after confirming these bank details by phone or in person.")
     if not lines:
         for k, v in args.items():
             lines.append(f"{k.replace('_cents', '').replace('_', ' ')}: "

@@ -522,3 +522,57 @@ def test_pdf_and_scenario_report_the_running_low(session):
         {"type": "move_payment", "payment_id": "PAY-0001", "new_date": "2026-12-14"}]})
     assert moved.status == "ok" and moved.data["min_running_delta_cents"] == 1_200_000
     assert moved.data["scenario_min_running_cents"] == -1_730_332
+
+
+def _flagged_doc(s, text="URGENT: bank details changed for Cartonia Mills and Inkworks GmbH, pay the new IBAN today."):
+    from agent.documents import ingest_text
+
+    doc = ingest_text(s, text, "notice.txt", "email", None)
+    assert doc.flagged and {"SUP-CARTONIA", "SUP-INKWORKS"} <= set(json.loads(doc.counterparty_ids))
+    return doc.id
+
+
+def test_clearing_a_flag_needs_two_people(session):
+    """One sign-in could clear a fraud flag and so unblock payments (known risk 2)."""
+    did = _flagged_doc(session)
+    first = executor.request_human_action(session, "clear_document_flag", {"document_id": did}, "owner", "alice")
+    assert first.status == "needs_approval"
+    assert session.get(Document, did, populate_existing=True).cleared is False
+    same = executor.approve(session, first.approval_id, "accountant", "alice")
+    assert same.status == "denied" and "Same approver" in same.reason
+    assert executor.approve(session, first.approval_id, "accountant", "bob").status == "ok"
+    assert session.get(Document, did, populate_existing=True).cleared is True
+
+
+def test_verifying_a_payee_needs_two_people(session):
+    from common.db import Payee
+
+    request = executor.request_human_action(session, "verify_payee", {"payee_id": "PAYEE-NEWVENDOR"}, "owner", "alice")
+    assert request.status == "needs_approval"
+    assert session.get(Payee, "PAYEE-NEWVENDOR", populate_existing=True).verified is False
+    assert executor.approve(session, request.approval_id, "accountant", "bob").status == "ok"
+    assert session.get(Payee, "PAYEE-NEWVENDOR", populate_existing=True).verified is True
+
+
+def test_release_one_supplier_from_a_flagged_document(session):
+    """A flagged document naming several suppliers blocked them all, with clearing the only way out (risk 21)."""
+    from common.db import blocking_documents
+
+    did = _flagged_doc(session)
+    assert blocking_documents(session, "PAYEE-INKWORKS") == [did] == blocking_documents(session, "PAYEE-CARTONIA")
+    request = executor.request_human_action(session, "release_supplier",
+                                            {"document_id": did, "counterparty_id": "SUP-INKWORKS"}, "owner", "alice")
+    assert blocking_documents(session, "PAYEE-INKWORKS") == [did]  # one person is not enough
+    assert executor.approve(session, request.approval_id, "accountant", "bob").status == "ok"
+    assert blocking_documents(session, "PAYEE-INKWORKS") == []
+    assert blocking_documents(session, "PAYEE-CARTONIA") == [did]  # still blocked
+    stranger = executor.request_human_action(session, "release_supplier",
+                                             {"document_id": did, "counterparty_id": "CUST-BRIGHTFIELD"}, "owner", "a")
+    assert stranger.status == "denied" and "does not name" in stranger.reason
+
+
+@pytest.mark.parametrize("action", ["verify_payee", "release_supplier", "clear_document_flag"])
+def test_agent_cannot_start_a_human_action(session, action):
+    assert run_tool(session, action, {"payee_id": "PAYEE-NEWVENDOR", "document_id": "DOC-0001"}).status == "denied"
+    denied = executor.request_human_action(session, action, {"payee_id": "PAYEE-NEWVENDOR"}, "agent", "agent")
+    assert denied.status == "denied"

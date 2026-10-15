@@ -76,6 +76,19 @@ def log_human(session, action: str, args: dict, decision: str, reason: str = "")
                  {**args, "session": st.session_state.sid}, decision, reason)
 
 
+def human_request(action: str, args: dict) -> None:
+    """Ask for an action that lifts a payment block; the other role approves it in the queue."""
+    with session_scope() as s:
+        res = executor.request_human_action(s, action, args, st.session_state.role, auth.approver_id())
+    if res.status == "ok":
+        st.rerun()
+    elif res.status == "needs_approval":
+        st.success(f"Request {res.approval_id} recorded with your signed approval. The other role must approve it "
+                   "in the approval queue, from a different browser session.")
+    else:
+        st.error(f"Not possible: {safe_text(res.reason)}")
+
+
 def get_agent() -> Agent:
     if "agent" not in st.session_state:
         st.session_state.agent = Agent(session_factory=session_scope)
@@ -720,11 +733,13 @@ def page_documents() -> None:
     st.subheader("Stored documents")
     with session_scope() as s:
         docs = list(s.exec(select(Document).order_by(Document.id)))
+        names = {c.id: c.name for c in s.exec(select(Counterparty))}
         view = [(d.id, d.filename, d.kind, d.sender, d.flagged, d.cleared, d.flag_reason, d.content_text,
-                 json.loads(d.invoice_ids), json.loads(d.counterparty_ids)) for d in docs]
+                 json.loads(d.invoice_ids), json.loads(d.counterparty_ids), json.loads(d.released_counterparty_ids))
+                for d in docs]
     if not view:
         st.caption("No documents yet.")
-    for did, fn, k, snd, flagged, cleared, reason, text, inv_ids, cp_ids in view:
+    for did, fn, k, snd, flagged, cleared, reason, text, inv_ids, cp_ids, released in view:
         status = ":blue-badge[Cleared by human]" if (flagged and cleared) else (
             ":red-badge[Flagged]" if flagged else ":green-badge[Clean]")
         with st.expander(f"{status} {safe_text(f'{did} - {fn}')}"):
@@ -737,15 +752,18 @@ def page_documents() -> None:
             st.text(text[:3000])
             if flagged and not cleared:
                 if auth.signed_in():
+                    st.caption("Lifting a block needs two people: you ask here, the other role approves it "
+                               "in the approval queue.")
                     if st.button("Clear flag (I reviewed this document)", key=f"clr_{did}"):
-                        with session_scope() as s:
-                            result = executor.clear_document_flag(
-                                s, did, st.session_state.role, "Reviewed and cleared in the UI")
-                        if result.status == "ok":
-                            st.rerun()
-                        st.error(result.reason)
+                        human_request("clear_document_flag", {"document_id": did})
+                    for cp in [c for c in cp_ids if c not in released]:
+                        if st.button(safe_text(f"Release payments to {names.get(cp, cp)} only"), key=f"rel_{did}_{cp}"):
+                            human_request("release_supplier", {"document_id": did, "counterparty_id": cp})
+                    if released:
+                        st.caption(safe_text("Released from this block: "
+                                             + ", ".join(names.get(c, c) for c in released)))
                 else:
-                    st.caption("Sign in as owner or accountant to clear a flag.")
+                    st.caption("Sign in as owner or accountant to ask for a flag to be cleared.")
 
 
 # --------------------------------------------------------------------------- #
@@ -787,16 +805,19 @@ def page_payees() -> None:
         # The key carries the state this button sets, so a click on a stale button (state changed
         # in another tab) finds no matching button on the rerun and does nothing.
         target = not payee["verified"]
-        if action.button("Verify" if target else "Unverify", key=f"verify_{payee['id']}_{int(target)}"):
-            try:
-                with human_bank() as bank:
-                    bank.verify_payee(payee["id"], target)
-                with session_scope() as s:
-                    log_human(s, "verify_payee", {"payee_id": payee["id"], "verified": target},
-                              "HUMAN_ACTION", "Verification changed via the bank's human token")
-                st.rerun()
-            except BankError as exc:
-                st.error(f"Bank refused: {exc.detail}")
+        if action.button("Request verification" if target else "Unverify", key=f"verify_{payee['id']}_{int(target)}"):
+            if target:  # lifts the unverified-payee block: two people
+                human_request("verify_payee", {"payee_id": payee["id"]})
+            else:  # stricter: one person is enough
+                try:
+                    with human_bank() as bank:
+                        bank.verify_payee(payee["id"], False)
+                    with session_scope() as s:
+                        log_human(s, "unverify_payee", {"payee_id": payee["id"]},
+                                  "HUMAN_ACTION", "Payee unverified via the bank's human token")
+                    st.rerun()
+                except BankError as exc:
+                    st.error(f"Bank refused: {exc.detail}")
     st.subheader("Add a payee")
     with session_scope() as s:
         cps = [(None, "(none)")] + [(c.id, c.name) for c in s.exec(select(Counterparty))]
@@ -804,15 +825,15 @@ def page_payees() -> None:
         name = st.text_input("Name")
         iban = st.text_input("IBAN")
         cp = st.selectbox("Counterparty", cps, format_func=lambda c: c[1])
-        verified = st.checkbox("Verified (I confirmed these bank details by phone / in person)")
         if st.form_submit_button("Add payee") and name and iban and auth.require_login("add a payee"):
             try:
-                with human_bank() as bank:
-                    row = bank.create_payee(name, iban, cp[0], verified)
+                with human_bank() as bank:  # always unverified: verifying needs a second person
+                    row = bank.create_payee(name, iban, cp[0], False)
                 with session_scope() as s:
-                    log_human(s, "add_payee", {"payee_id": row["id"], "name": name, "verified": verified},
+                    log_human(s, "add_payee", {"payee_id": row["id"], "name": name, "verified": False},
                               "EXECUTED", "Created by a human via the bank's human token")
-                st.success(f"Created {row['id']} (verified={row['verified']}).")
+                st.success(f"Created {row['id']}, unverified. Use Request verification once the bank details "
+                           "are confirmed by phone or in person.")
             except BankError as exc:
                 st.error(f"Bank refused: {exc.detail}")
     st.caption("A missing IBAN can be filled in once. To use a different IBAN, create a new payee: "

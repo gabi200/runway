@@ -132,6 +132,7 @@ class Document(SQLModel, table=True):
     cleared: bool = False  # a human reviewed the flag and cleared it
     invoice_ids: str = "[]"  # JSON list of open AP invoice ids named in the text (set at ingestion)
     counterparty_ids: str = "[]"  # JSON list of counterparty ids named in the text/sender
+    released_counterparty_ids: str = "[]"  # named suppliers two people released from this document's block
 
 
 class ApprovalRequest(SQLModel, table=True):
@@ -242,7 +243,7 @@ def get_engine(path: str | Path | None = None) -> Engine:
         SQLModel.metadata.create_all(eng)
         with eng.begin() as conn:  # additive migration for databases created before document links
             have = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(document)")}
-            for col in ("invoice_ids", "counterparty_ids"):
+            for col in ("invoice_ids", "counterparty_ids", "released_counterparty_ids"):
                 if col not in have:
                     conn.exec_driver_sql(f"ALTER TABLE document ADD COLUMN {col} VARCHAR NOT NULL DEFAULT '[]'")
         _engines[url] = eng
@@ -311,7 +312,8 @@ def blocking_documents(s: Session, payee_id: str, invoice_id: str | None = None,
     out = sorted(explicit - found)
     for d in docs:
         linked = (d.id in explicit or (invoice_id and invoice_id in json.loads(d.invoice_ids or "[]"))
-                  or (cp and cp in json.loads(d.counterparty_ids or "[]")))
+                  or (cp and cp in json.loads(d.counterparty_ids or "[]")
+                      and cp not in json.loads(d.released_counterparty_ids or "[]")))
         if linked and d.flagged and not d.cleared:
             out.append(d.id)
     return out
