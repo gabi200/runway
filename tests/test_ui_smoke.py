@@ -64,6 +64,19 @@ def test_kill_switch_refused_when_signed_out(at):
         assert not db.kill_switch_on(s)
 
 
+def test_kill_switch_shown_from_db_in_every_session(at):
+    other = AppTest.from_file(APP, default_timeout=60).run()
+    sign_in(other)
+    other.toggle(key="kill").set_value(True).run()
+    at.run()
+    assert at.toggle(key="kill").value is True
+    assert any("Agent read-only" in m.value for m in at.sidebar.markdown)
+    other.toggle(key="kill").set_value(False).run()
+    at.run()
+    assert at.toggle(key="kill").value is False
+    assert any("Agent active within rules" in m.value for m in at.sidebar.markdown)
+
+
 def test_forecast_and_currency_switch(at):
     goto(at, "Forecast")
     at.radio(key="pack").set_value("cn").run()

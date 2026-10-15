@@ -88,12 +88,10 @@ def init_state() -> None:
     st.session_state.setdefault("chat", [])
     st.session_state.setdefault("brief", None)
     st.session_state.setdefault("confirm_reset", False)
-    # Widget keys cannot be written after their widget exists; actions queue the value here.
-    if "kill_next" in st.session_state:
-        st.session_state.kill = st.session_state.pop("kill_next")
-    elif "kill" not in st.session_state:
-        with session_scope() as s:
-            st.session_state.kill = db.kill_switch_on(s)
+    # The DB is the source of truth: another session may have toggled it. Read it on every run,
+    # before the toggle exists (its on_change callback has already saved this session's click).
+    with session_scope() as s:
+        st.session_state.kill = db.kill_switch_on(s)
 
 
 def on_kill_toggle() -> None:
@@ -113,7 +111,7 @@ def on_kill_toggle() -> None:
 def reset_demo() -> None:
     generate(out_dir=SAMPLE_DIR)
     st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
-                            kill_next=False, confirm_reset=False)
+                            confirm_reset=False)
     st.session_state.pop("scenario", None)
 
 
@@ -235,7 +233,7 @@ def page_onboarding() -> None:
         with st.spinner("Generating 12 months of sample data..."):
             summary = generate(out_dir=SAMPLE_DIR)
         st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
-                                kill_next=False, notice="Sample data loaded.")
+                                notice="Sample data loaded.")
         st.session_state.pop("scenario", None)
         with session_scope() as s:
             log_human(s, "load_sample_data", {k: v for k, v in summary.items() if k != "warnings"},
@@ -273,8 +271,7 @@ def page_onboarding() -> None:
             except ImportErrorReport as exc:
                 st.error(f"Import rejected, nothing was changed: {exc}")
             else:
-                st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
-                                        kill_next=False)
+                st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None)
                 st.session_state.pop("scenario", None)
                 with session_scope() as s:
                     log_human(s, "import_files", {k: v for k, v in summary.items() if k != "warnings"},
