@@ -146,6 +146,19 @@ def test_loose_iban_match_keeps_following_words_and_ignores_lookalikes(session):
         assert p.mask(text) == text
 
 
+@pytest.mark.parametrize("name,variant", [
+    ("Volta Energy", "Volta  Energy"), ("Volta Energy", "Volta-Energy"), ("Volta Energy", "Volta\tEnergy"),
+    ("Rhein Gadgets", "Rhein  Gadgets"), ("Rhein Gadgets", "Rhein\nGadgets"), ("Rhein Gadgets", "rhein gadgets"),
+    ("Cartonia Packaging GmbH", "Cartonia\nPackaging  GmbH"),
+])
+def test_known_names_masked_across_whitespace_and_hyphen_variants(session, name, variant):
+    session.add(db.Counterparty(id="SUP-VOLTA-ENERGY", name="Volta Energy", kind="utility"))
+    session.add(db.Counterparty(id="CUST-SMALL-6", name="Rhein Gadgets", kind="customer"))
+    session.commit()
+    p = Pseudonymizer(session)
+    assert p.mask(f"pay {variant} today") == f"pay {p.mask(name)} today"
+
+
 def test_learn_still_learns_real_two_token_person(session):
     p = Pseudonymizer(session)
     p.learn("Hi\n\nBest regards,\nHans Muller")

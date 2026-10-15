@@ -36,6 +36,16 @@ _COMMON_WORDS = {"packaging", "company", "department", "team", "services", "serv
 _LEGAL_SUFFIXES = {"gmbh", "ltd", "llc", "inc", "corp", "bv", "sa", "ag", "co", "the", "limited"}
 
 
+def _key(s: str) -> str:
+    """Lookup key of a name: lower case, runs of whitespace and hyphens collapsed to one space."""
+    return re.sub(r"[\s-]+", " ", s).strip().lower()
+
+
+def _name_rx(literal: str) -> str:
+    """Regex for a name literal whose words may be split by any run of whitespace or hyphens."""
+    return r"[\s-]+".join(re.escape(w) for w in re.split(r"[\s-]+", literal) if w)
+
+
 def _norm_iban(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", s).upper()
 
@@ -69,7 +79,7 @@ class Pseudonymizer:
 
     def add(self, label: str, literal: str, ident: str | None = None, id_tag: str = "ID") -> str:
         """Register a literal (and optional embedded-name ID) under a label; return placeholder."""
-        key = literal.strip().lower()
+        key = _key(literal)
         if not key:
             return literal
         if key in self._fwd:
@@ -92,9 +102,9 @@ class Pseudonymizer:
         return ph
 
     def _alias(self, word: str, ph: str) -> None:
-        if word.lower() not in self._fwd:
-            self._fwd[word.lower()] = ph
-            self._lit[word.lower()] = word
+        if _key(word) not in self._fwd:
+            self._fwd[_key(word)] = ph
+            self._lit[_key(word)] = word
 
     def _add_id(self, ph: str, label: str, ident: str, tag: str = "ID") -> None:
         # Plain-word IDs (PAYROLL, LANDLORD) would mask ordinary prose; only structured IDs are masked.
@@ -183,7 +193,7 @@ class Pseudonymizer:
     def _pattern(self) -> re.Pattern[str] | None:
         if self._regex is None and (self._fwd or self._ids):
             ids = "|".join(re.escape(a) for a in sorted(self._ids, key=len, reverse=True))
-            names = "|".join(re.escape(a) for a in sorted(self._lit.values(), key=len, reverse=True))
+            names = "|".join(_name_rx(a) for a in sorted(self._lit.values(), key=len, reverse=True))
             alts = ([f"(?-i:{ids})"] if ids else []) + ([names] if names else [])
             self._regex = re.compile(rf"(?<![A-Za-z0-9])(?:{'|'.join(alts)})(?![A-Za-z0-9])", re.IGNORECASE)
         return self._regex
@@ -216,10 +226,10 @@ class Pseudonymizer:
 
     def _lookup(self, found: str) -> str:
         """Placeholder for a regex match. Never raises: masking must not crash a turn."""
-        ph = self._ids.get(found) or self._fwd.get(found.lower())
+        ph = self._ids.get(found) or self._fwd.get(_key(found))
         if ph is None:  # re.IGNORECASE also pairs i/I with ı/İ and s with ſ, which lower() does not
             ph = next((self._fwd[k] for k, lit in self._lit.items()
-                       if re.fullmatch(re.escape(lit), found, re.IGNORECASE)), "<REDACTED_0>")
+                       if re.fullmatch(_name_rx(lit), found, re.IGNORECASE)), "<REDACTED_0>")
         return ph
 
     def unmask(self, text: str) -> str:
