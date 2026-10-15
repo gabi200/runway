@@ -189,6 +189,17 @@ class AuditEntry(SQLModel, table=True):
     hash: str
 
 
+class AuditAnchor(SQLModel, table=True):
+    """Receipt for an audit head published outside the database. See audit/anchor.py."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    count: int  # number of audit entries the published head covers
+    head: str  # hash of entry `count` when it was published
+    backend: str  # "notary" | "evm"
+    ref: str  # where to look it up: "notary:<n>" or a transaction hash
+    created_at: str  # ISO-8601 UTC
+
+
 class Setting(SQLModel, table=True):
     """Key/value runtime settings: simulated clock, kill switch, country pack."""
 
