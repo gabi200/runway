@@ -129,17 +129,16 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
 
     sign_in(at)
     goto(at, "Payees (humans only)")
-    key = "verify_PAYEE-NEWVENDOR"
-    assert at.button(key=key).label == "Verify"
-    at.button(key=key).click().run()
+    assert _verify_button(at).label == "Verify"
+    _verify_button(at).click().run()
     assert not at.exception
-    assert at.button(key=key).label == "Unverify"
+    assert _verify_button(at).label == "Unverify"
     with db.session_scope() as s:
         assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is True
         entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "verify_payee")).one()
         assert entry.actor == "owner" and entry.decision == "HUMAN_ACTION"
         assert verify_chain(s).ok
-    at.button(key=key).click().run()
+    _verify_button(at).click().run()
     assert not at.exception
     with db.session_scope() as s:
         assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
@@ -148,6 +147,30 @@ def test_payee_verify_unverify_is_owner_only_and_audited(at):
     at.button(key="sw_btn").click().run()
     assert not at.exception
     assert not [button for button in at.button if button.label in ("Verify", "Unverify")]
+
+
+def _verify_button(app, payee_id="PAYEE-NEWVENDOR"):
+    return next(b for b in app.button if (b.key or "").startswith(f"verify_{payee_id}"))
+
+
+def test_stale_unverify_click_does_not_reverify(at):
+    sign_in(at)
+    goto(at, "Payees (humans only)")
+    _verify_button(at).click().run()  # verified
+    other = AppTest.from_file(APP, default_timeout=60).run()
+    sign_in(other)
+    goto(other, "Payees (humans only)")
+    assert _verify_button(other).label == "Unverify"
+    _verify_button(at).click().run()  # unverified in the first tab
+    with db.session_scope() as s:
+        assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
+    stale = _verify_button(other)
+    assert stale.label == "Unverify"  # the second tab still shows the old state
+    stale.click().run()
+    assert not other.exception
+    with db.session_scope() as s:
+        assert s.get(db.Payee, "PAYEE-NEWVENDOR").verified is False
+    assert _verify_button(other).label == "Verify"
 
 
 def test_owner_fills_missing_iban_once(at):

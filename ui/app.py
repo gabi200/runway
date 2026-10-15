@@ -765,13 +765,15 @@ def page_payees() -> None:
                     st.rerun()
                 except BankError as exc:
                     st.error(f"Bank refused: {exc.detail}")
-        verified = not payee["verified"]
-        if action.button("Verify" if verified else "Unverify", key=f"verify_{payee['id']}"):
+        # The key carries the state this button sets, so a click on a stale button (state changed
+        # in another tab) finds no matching button on the rerun and does nothing.
+        target = not payee["verified"]
+        if action.button("Verify" if target else "Unverify", key=f"verify_{payee['id']}_{int(target)}"):
             try:
                 with human_bank() as bank:
-                    bank.verify_payee(payee["id"], verified)
+                    bank.verify_payee(payee["id"], target)
                 with session_scope() as s:
-                    log_human(s, "verify_payee", {"payee_id": payee["id"], "verified": verified},
+                    log_human(s, "verify_payee", {"payee_id": payee["id"], "verified": target},
                               "HUMAN_ACTION", "Verification changed via the bank's human token")
                 st.rerun()
             except BankError as exc:
