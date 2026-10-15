@@ -509,7 +509,8 @@ def page_forecast() -> None:
             st.caption(f"Select a row to trace its figures. Default: the lowest week ({fc.min_running_week}).")
             sel = st.dataframe(weeks_frame(fc, pack), width="stretch", hide_index=True, key="fc_table",
                               on_select="rerun", selection_mode="single-row",
-                              column_order=["Week", "Start", "Receipts (in)", "Payments (out)", "Closing", "Shortfall", "Opening", "End"])
+                              column_order=["Week", "Start", "Receipts (in)", "Payments (out)", "Closing", "Lowest in week",
+                                            "Shortfall", "Opening", "End"])
             rows = list(sel.selection.rows) if sel is not None and sel.selection else []
             week = rows[0] + 1 if rows else (fc.min_running_week or 1)
         with detail, st.container(key="week-detail"):
@@ -696,7 +697,7 @@ def page_documents() -> None:
     page_heading("Review what comes in.", "Scan invoices and emails before they can influence a payment.")
     st.caption("Incoming PDFs and emails are **untrusted data**. They are scanned for hidden instructions "
                "and bank-detail-change tricks (a classic fraud). Flagged documents block any linked payment "
-               "until the owner or accountant clears them.")
+               "until the owner and the accountant together clear the flag or release that supplier.")
     up = st.file_uploader("Upload an invoice PDF or email text", type=["pdf", "txt", "eml"], key="up_doc")
     kind = st.selectbox("Kind", ["invoice", "email", "other"])
     sender = st.text_input("Sender (optional)")

@@ -612,3 +612,9 @@ def test_release_one_supplier_from_a_flagged_document(at):
     with db.session_scope() as s:
         request = s.exec(select(db.ApprovalRequest).where(db.ApprovalRequest.tool_name == "release_supplier")).one()
         assert '"SUP-INKWORKS"' in request.args_json and db.blocking_documents(s, "PAYEE-INKWORKS") == [did]
+
+
+def test_forecast_table_shows_the_lowest_point_of_each_week(at):
+    goto(at, "Forecast")
+    table = next(df for df in at.dataframe if "Lowest in week" in df.value.columns)
+    assert "Lowest in week" in (table.proto.column_order or table.value.columns)
