@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from audit import log as audit_log
 from common import db
 
 APP = str(Path(__file__).resolve().parent.parent / "ui" / "app.py")
@@ -322,3 +323,18 @@ def test_financing_card_states_reschedule_dependency(at):
     sign_in(at)
     goto(at, "Approval queue")
     assert any(f"Assumes reschedule {r1.approval_id} is approved" in m.value for m in at.markdown)
+
+
+def test_publish_and_verify_audit_head(at):
+    with db.session_scope() as s:
+        audit_log.append(s, "system", "test_seed", {}, "INFO")
+    goto(at, "Audit log")
+    at.button(key="anchor_btn").click().run()
+    assert any("Sign in" in i.value for i in at.info)
+    sign_in(at)
+    goto(at, "Audit log")
+    at.button(key="anchor_btn").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Published entries 1 to" in s.value for s in at.success)
+    at.button(key="anchor_verify").click().run()
+    assert any("match" in s.value for s in at.success)

@@ -7,11 +7,12 @@ elsewhere (a notary file, or a blockchain transaction) is what such a rewrite ca
 
 from __future__ import annotations
 
+import argparse
 import itertools
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -188,6 +189,7 @@ def anchor_head(session: Session, actor: str, backend=None) -> AuditAnchor:
     audit.append(session, actor, "anchor_audit_head",
                  {"count": receipt.count, "head": head, "backend": backend.name, "ref": ref},
                  "INFO", "Audit head published outside the database")
+    session.refresh(receipt)  # append committed and expired it; callers read it after the session closes
     return receipt
 
 
@@ -231,3 +233,24 @@ def verify_anchors(session: Session, backend=None) -> AnchorReport:
     if len(entries) > covered:
         message += f"; entries {covered + 1} to {len(entries)} are not yet published"
     return AnchorReport("verified", len(receipts), covered, message)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m audit.anchor publish|verify` for the operator (actor 'system')."""
+    from common.db import session_scope
+
+    parser = argparse.ArgumentParser(description="Publish the audit head, or verify the log against published heads.")
+    parser.add_argument("command", choices=["publish", "verify"])
+    args = parser.parse_args(argv)
+    with session_scope() as session:
+        if args.command == "publish":
+            receipt = anchor_head(session, "system")
+            print(json.dumps(receipt.model_dump(), indent=2))
+            return 0
+        report = verify_anchors(session)
+        print(json.dumps(asdict(report), indent=2))
+        return 0 if report.ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

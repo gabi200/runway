@@ -28,11 +28,12 @@ from sqlmodel import select  # noqa: E402
 from agent import documents as docs_mod  # noqa: E402
 from agent import executor  # noqa: E402
 from agent.orchestrator import Agent  # noqa: E402
+from audit import anchor  # noqa: E402
 from audit import log as audit  # noqa: E402
 from bank.client import BankClient, BankError  # noqa: E402
 from common import db  # noqa: E402
 from common.db import (  # noqa: E402
-    Account, ApprovalRequest, Counterparty, Document, FinancingApplication, Invoice,
+    Account, ApprovalRequest, AuditAnchor, Counterparty, Document, FinancingApplication, Invoice,
     OutboxEmail, Payee, Payment, session_scope,
 )
 from data.generate import generate  # noqa: E402
@@ -887,6 +888,31 @@ def page_audit() -> None:
             st.success(f"Chain intact - {rep.checked} entries verified.")
         else:
             st.error(f"TAMPERING DETECTED - first bad entry id: {rep.first_bad_id} ({rep.message})")
+    st.subheader("Published heads")
+    st.caption("Someone who can write the database file could rebuild the whole chain. Publishing the head "
+               f"outside it (backend: **{safe_text(os.getenv('RUNWAY_ANCHOR') or 'notary')}**) makes such a "
+               "rewrite visible: the published hash cannot be changed afterwards.")
+    publish_col, verify_col = st.columns(2)
+    if publish_col.button("Publish head now", key="anchor_btn") and auth.require_login("publish the audit head"):
+        try:
+            with session_scope() as s:
+                receipt = anchor.anchor_head(s, st.session_state.role)
+            st.success(f"Published entries 1 to {receipt.count} as {receipt.ref}.")
+        except anchor.AnchorError as exc:
+            st.error(f"Could not publish: {safe_text(str(exc))}")
+    if verify_col.button("Verify against published heads", key="anchor_verify"):
+        with session_scope() as s:
+            report = anchor.verify_anchors(s)
+        show = {"verified": st.success, "tampered": st.error, "unanchored": st.info}.get(report.status, st.warning)
+        show(safe_text(report.message))
+    with session_scope() as s:
+        receipts = [{"id": r.id, "entries": f"1 to {r.count}", "backend": r.backend, "reference": r.ref,
+                     "head": r.head[:12], "published": r.created_at[:19]}
+                    for r in s.exec(select(AuditAnchor).order_by(AuditAnchor.id.desc()))]
+    if receipts:
+        st.dataframe(pd.DataFrame(receipts), width="stretch", hide_index=True)
+    else:
+        st.caption("Nothing published yet.")
     with session_scope() as s:
         entries = audit.list_entries(s)
         rows = [{"id": e.id, "time": e.timestamp, "actor": e.actor, "action": e.action,

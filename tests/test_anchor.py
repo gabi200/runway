@@ -155,3 +155,16 @@ def test_entries_after_last_anchor_are_reported(session):
     seed(session, 2)
     report = verify_anchors(session)
     assert report.ok and "not yet published" in report.message
+
+
+from audit.anchor import main
+
+
+def test_cli_publish_and_verify(session, capsys):
+    seed(session)
+    assert main(["publish"]) == 0
+    assert '"ref": "notary:1"' in capsys.readouterr().out
+    assert main(["verify"]) == 0
+    assert '"status": "verified"' in capsys.readouterr().out
+    edit_entry(session, 1, "attacker")
+    assert main(["verify"]) == 1
