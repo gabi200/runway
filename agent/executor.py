@@ -197,7 +197,7 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
     given = [{"role": entry, "approver_id": entry} if isinstance(entry, str) else entry
              for entry in stored]
     identity = approver_id if approver_id is not None else role
-    if not isinstance(identity, str) or not identity.strip():
+    if not isinstance(identity, str) or not identity.strip() or len(identity) > 120:  # signed into PDF and QR
         audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity},
                      "DENY", "Invalid approver identity")
         return ToolResult(status="denied", tool=req.tool_name, reason="Invalid approver identity")

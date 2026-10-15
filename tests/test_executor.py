@@ -576,3 +576,12 @@ def test_agent_cannot_start_a_human_action(session, action):
     assert run_tool(session, action, {"payee_id": "PAYEE-NEWVENDOR", "document_id": "DOC-0001"}).status == "denied"
     denied = executor.request_human_action(session, action, {"payee_id": "PAYEE-NEWVENDOR"}, "agent", "agent")
     assert denied.status == "denied"
+
+
+def test_overlong_approver_identity_is_refused(session):
+    """A 1,200-character approver id overflowed the financing PDF's QR code after both approvals."""
+    request = run_tool(session, "prepare_financing_application",
+                       {"product_id": "overdraft", "amount_cents": 600_000, "needed_by": "2026-11-20"})
+    result = approve(session, request.approval_id, "owner", "o" * 1200)
+    assert result.status == "denied" and result.reason == "Invalid approver identity"
+    assert approve(session, request.approval_id, "owner", "o" * 120).status == "needs_approval"
