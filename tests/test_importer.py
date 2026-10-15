@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import csv
+import os
+import sqlite3
+from contextlib import closing
 
 import pytest
 from sqlmodel import Session, select
@@ -150,4 +153,36 @@ def test_successful_atomic_import_reopens_database(tmp_path, use_session):
         assert s.get(db.Account, "ACC-MAIN").name == "Imported company main account"
     with db.session_scope(target) as s:
         assert db.account_balance_cents(s) == 5000000
+    assert not list(tmp_path.glob(".runway-import-*"))
+
+
+def test_import_keeps_the_live_file_for_other_connections(tmp_path):
+    # A separately running bank server keeps its connection open; it must see the import,
+    # and the file keeps its inode and permissions.
+    target = tmp_path / "old.db"
+    generate(target, out_dir=tmp_path / "out")
+    db.reset_engines()
+    before = os.stat(target)
+    with closing(sqlite3.connect(target)) as other:
+        assert other.execute("SELECT name FROM account").fetchall() != [("Imported company main account",)]
+        import_files(target, TB, BS)
+        assert other.execute("SELECT name FROM account").fetchall() == [("Imported company main account",)]
+    after = os.stat(target)
+    assert (after.st_ino, after.st_mode) == (before.st_ino, before.st_mode)
+    assert not list(tmp_path.glob(".runway-import-*"))
+
+
+def test_import_into_locked_database_fails_cleanly(tmp_path, monkeypatch):
+    from data import importer
+    monkeypatch.setattr(importer, "LOCK_WAIT_SECONDS", 0.1)
+    target = tmp_path / "old.db"
+    generate(target, out_dir=tmp_path / "out")
+    db.reset_engines()
+    before = target.read_bytes()
+    with closing(sqlite3.connect(target, isolation_level=None)) as writer:
+        writer.execute("BEGIN IMMEDIATE")  # another process is in the middle of a write
+        with pytest.raises(ImportErrorReport, match="existing database preserved.*locked"):
+            import_files(target, TB, BS)
+        writer.execute("ROLLBACK")
+    assert target.read_bytes() == before
     assert not list(tmp_path.glob(".runway-import-*"))

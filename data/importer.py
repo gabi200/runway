@@ -24,7 +24,9 @@ import csv
 import io
 import os
 import re
+import sqlite3
 import tempfile
+from contextlib import closing
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -45,10 +47,17 @@ OPEN_COLS = ("number", "counterparty", "issue_date", "due_date", "amount")
 CATEGORIES = {"sales_receipt", "supplier_payment", "payroll", "rent", "utilities", "vat",
               "loan_repayment", "financing", "other"}
 Source = Union[bytes, str, Path]
+LOCK_WAIT_SECONDS = 5.0  # how long the final copy waits for another writer to finish
 
 
 class ImportErrorReport(ValueError):
     """Raised when an uploaded file fails validation. The message lists every problem found."""
+
+
+def _stop_if_locked(status: int, remaining: int, total: int) -> None:
+    # Connection.backup retries a locked destination forever; give up after LOCK_WAIT_SECONDS.
+    if status in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        raise sqlite3.OperationalError("the database is locked by another connection; try again")
 
 
 def _text(src: Source) -> str:
@@ -340,7 +349,14 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             target.close()
             target_engine.dispose()
         reset_engines()
-        os.replace(temporary, destination)
+        # Copy into the live file instead of swapping it: same inode and mode, so connections
+        # that stay open (a separate bank server) see the import. One locked, atomic write.
+        try:
+            with closing(sqlite3.connect(temporary)) as src, \
+                    closing(sqlite3.connect(destination, timeout=LOCK_WAIT_SECONDS)) as dst:
+                src.backup(dst, progress=_stop_if_locked)
+        except sqlite3.Error as exc:
+            raise ImportErrorReport(f"Import failed; existing database preserved: {exc}") from exc
     finally:
         session.close()
         eng.dispose()
