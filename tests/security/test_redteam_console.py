@@ -107,3 +107,56 @@ def test_runs_are_audited(stack):
     last = list_entries(s)[-1]
     assert (last.actor, last.action, last.decision) == ("owner", "redteam_run", "INFO")
     assert json.loads(last.args_json) == {"scenario": trace.scenario, "verdict": "Stopped"}
+
+
+from sqlalchemy import text
+
+from agent.executor import run_tool
+from audit.anchor import anchor_head, verify_anchors
+from audit.log import append, verify_chain
+from redteam.console import audit_rewrite
+
+
+def _activity(s, n=3):
+    for _ in range(n):
+        assert run_tool(s, "get_balances", {}).status == "ok"
+
+
+def test_forgery_without_anchor_is_not_detected(stack):
+    s, _, _ = stack
+    _activity(s)
+    trace = audit_rewrite(db.db_path(), "forge")
+    steps = {step.layer: step for step in trace.steps}
+    assert trace.verdict == "Not detected"
+    assert steps["Hash chain"].outcome == "fooled" and steps["Published heads"].outcome == "info"
+    assert verify_chain(s).ok
+    assert s.execute(text("SELECT name FROM sqlite_master WHERE type='trigger' "
+                          "AND name='auditentry_no_update'")).first() is not None
+
+
+def test_forgery_after_anchoring_is_detected(stack):
+    s, _, _ = stack
+    _activity(s)
+    anchor_head(s, "owner")
+    trace = audit_rewrite(db.db_path(), "forge")
+    steps = {step.layer: step for step in trace.steps}
+    assert trace.verdict == "Detected"
+    assert steps["Hash chain"].outcome == "fooled" and steps["Published heads"].outcome == "detected"
+    assert verify_anchors(s).status == "verified"  # the live log is untouched
+
+
+@pytest.mark.parametrize("mode", ["edit", "truncate"])
+def test_other_rewrites_after_anchoring(stack, mode):
+    s, _, _ = stack
+    _activity(s, 6)
+    anchor_head(s, "owner")
+    assert audit_rewrite(db.db_path(), mode).verdict == "Detected"
+
+
+def test_short_log_is_reported(tmp_path):
+    path = tmp_path / "short.db"
+    with db.session_scope(path) as s:
+        append(s, "agent", "get_balances", {}, "ALLOW", "Read")
+    trace = audit_rewrite(path, "forge")
+    db.reset_engines()
+    assert trace.verdict == "No harmful action" and "at least three" in trace.steps[0].detail

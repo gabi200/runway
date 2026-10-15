@@ -8,18 +8,24 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import tempfile
+from contextlib import closing
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
-from sqlmodel import Session, select
+from sqlmodel import Session, create_engine, select
 
 from agent.documents import ingest_text
 from agent.executor import run_tool
 from audit import log as audit
+from audit.anchor import verify_anchors
 from bank.client import BankClient, BankError
 from common.db import Account, Invoice, Payee, Payment, get_today
 from data.generate import NEWVENDOR_IBAN
 from policy import engine as policy
+from redteam.tamper import edit_entry, rewrite_history, truncate_history
 
 OUTCOME_OF_DECISION = {"ALLOW": "allowed", "NEEDS_APPROVAL": "needs approval", "DENY": "blocked"}
 
@@ -177,3 +183,47 @@ def record(session: Session, actor: str, trace: Trace) -> None:
     """Audit that a human ran an attack, and what the verdict was."""
     audit.append(session, actor, "redteam_run", {"scenario": trace.scenario, "verdict": trace.verdict},
                  "INFO", "Attack run from the red-team console")
+
+
+MODES = {
+    "edit": "Edit one entry with raw SQL",
+    "forge": "Edit one entry, then recompute every later hash and the stored head",
+    "truncate": "Delete the two newest entries, then fix the stored head and count",
+}
+ANCHOR_OUTCOME = {"tampered": "detected", "verified": "fooled"}
+
+
+def audit_rewrite(source: str | Path, mode: str, backend=None) -> Trace:
+    """Play an insider with write access to a copy of the database; report which check notices."""
+    if mode not in MODES:
+        raise ValueError(f"Unknown mode {mode!r}")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        copy = Path(tmp) / "sandbox.db"
+        with closing(sqlite3.connect(source)) as live, closing(sqlite3.connect(copy)) as sandbox:
+            live.backup(sandbox)
+        engine = create_engine(f"sqlite:///{copy}")
+        try:
+            with Session(engine) as s:
+                total = len(audit.list_entries(s))
+                if total < 3:
+                    return _trace(MODES[mode], [Step("Insider (on a copy)", "info",
+                                                     "The audit log needs at least three entries for this attack")])
+                if mode == "edit":
+                    edit_entry(s, 2, "nothing to see here")
+                    did = "Changed the reason of entry 2 with raw SQL"
+                elif mode == "forge":
+                    rewrite_history(s, 2, "nothing to see here")
+                    did = "Changed entry 2, then recomputed the hash of every later entry and the stored head"
+                else:
+                    truncate_history(s, total - 2)
+                    did = f"Deleted entries {total - 1} and {total}, then set the stored head and count to match"
+                chain = audit.verify_chain(s)
+                published = verify_anchors(s, backend)
+        finally:
+            engine.dispose()
+    hint = "" if published.status in ANCHOR_OUTCOME else " Publish the head on the Audit log page to catch this."
+    return _trace(MODES[mode], [
+        Step("Insider (on a copy)", "info", did),
+        Step("Hash chain", "fooled" if chain.ok else "detected", chain.message),
+        Step("Published heads", ANCHOR_OUTCOME.get(published.status, "info"), published.message + hint),
+    ])
