@@ -262,3 +262,20 @@ def test_days_overdue_must_be_whole_days(tmp_path, days):
 def test_cr_only_line_endings_are_read(tmp_path):
     result = import_files(tmp_path / "t.db", TB.replace("\n", "\r"), "date,description,amount\r2026-09-01,x,1\r")
     assert (result["transactions"], result["opening_balance_cents"]) == (1, 4999900)
+
+
+@pytest.mark.parametrize("bs,match", [
+    ("date,description,amount\n2026-09-01,x,\n", "bank statement TX-000001: amount is missing"),
+    ("date,amount,description\n2026-09-01\n", "bank statement TX-000001: amount is missing"),
+    ("date,description,amount,amount\n2026-09-01,x,100,200\n", "bank statement: duplicate column.*amount"),
+], ids=["blank-amount", "truncated-row", "duplicate-column"])
+def test_missing_bank_amount_and_duplicate_columns_rejected(tmp_path, bs, match):
+    with pytest.raises(ImportErrorReport, match=match):
+        import_files(tmp_path / "t.db", TB, bs)
+
+
+def test_open_item_in_another_currency_rejected(tmp_path):
+    ar = "number,counterparty,issue_date,due_date,amount,currency\nA1,Acme Ltd,2026-09-01,2026-10-01,100,USD\n"
+    with pytest.raises(ImportErrorReport, match="open receivables row 1: currency 'USD'.*EUR"):
+        import_files(tmp_path / "t.db", TB, BS, ar)
+    assert import_files(tmp_path / "u.db", TB, BS, ar.replace("USD", "EUR"))["open_receivables"] == 1

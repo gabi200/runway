@@ -82,6 +82,9 @@ def _rows(src: Source, name: str, required: tuple[str, ...]) -> list[dict]:
         missing = [c for c in required if c not in cols]
         if missing:
             raise ImportErrorReport(f"{name}: missing required column(s): {', '.join(missing)}")
+        duplicate = sorted({c for c in cols if c and cols.count(c) > 1})
+        if duplicate:
+            raise ImportErrorReport(f"{name}: duplicate column(s): {', '.join(duplicate)}")
         for n, r in enumerate(reader, 1):
             if None in r:
                 raise ImportErrorReport(f"{name} row {n}: more fields than the header has columns "
@@ -180,6 +183,8 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         if cat not in CATEGORIES:
             raise ImportErrorReport(f"bank statement {tid}: unknown category {r['category']!r}; use one of "
                                     f"{', '.join(sorted(CATEGORIES))} or leave it empty")
+        if r["amount"] == "":
+            raise ImportErrorReport(f"bank statement {tid}: amount is missing")
         txs.append(dict(id=tid, date=_date(r["date"], f"bank statement {tid} date"),
                         amount=_cents(r["amount"], f"bank statement {tid} amount"),
                         desc=r["description"], cat=cat,
@@ -202,7 +207,10 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             gross = _cents(r["amount"], f"{where} amount")
             if gross <= 0:
                 raise ImportErrorReport(f"{where}: amount must be positive")
-            vat = _cents(r["vat"], f"{where} vat") if r.get("vat") else round(gross * pack.vat_rate / (1 + pack.vat_rate))
+            if r.get("currency") and r["currency"].upper() != currency.upper():
+                raise ImportErrorReport(f"{where}: currency {r['currency']!r} differs from the account "
+                                        f"currency {currency}; import one currency at a time")
+            vat =_cents(r["vat"], f"{where} vat") if r.get("vat") else round(gross * pack.vat_rate / (1 + pack.vat_rate))
             overdue = _days(r.get("days_overdue", ""), f"{where} days_overdue")
             opens.append(dict(direction=direction, id=r.get("invoice_id") or "", number=r["number"],
                               cp_name=r["counterparty"], cp_id=r.get("counterparty_id") or "",
