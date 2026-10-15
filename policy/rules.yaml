@@ -11,6 +11,7 @@ payment:
   automatic_requires_invoice: true   # payments without an open AP invoice always need the owner
   daily_payee_cents: 100000
   daily_global_cents: 300000
+  weekly_global_cents: 500000      # rolling 7 simulated days: advancing the clock does not reset it
   accountant_above_cents: 500000
   owner_roles: [owner]
   material_roles: [owner, accountant]

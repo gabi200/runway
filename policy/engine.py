@@ -195,12 +195,17 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
                 Payment.status != "cancelled", Payment.created_sim_date == today)
                 .execution_options(populate_existing=True)).all()
             payee_total = sum(p.amount_cents for p in payments if p.payee_id == payee.id)
+            week_total = sum(p.amount_cents for p in session.exec(select(Payment).where(
+                Payment.automatic == True, Payment.status != "cancelled",  # noqa: E712
+                Payment.created_sim_date > today - timedelta(days=7), Payment.created_sim_date <= today)
+                .execution_options(populate_existing=True)))
             # Only payments backed by an open AP invoice may run without a human.
             backed = invoice is not None or not payment_rules["automatic_requires_invoice"]
             if (backed and amount < payment_rules["automatic_amount_cents"]
                     and amount + payee_total < payment_rules["daily_payee_cents"]
-                    and amount + sum(p.amount_cents for p in payments) < payment_rules["daily_global_cents"]):
-                reason = "Automatic payment within amount and daily limits"
+                    and amount + sum(p.amount_cents for p in payments) < payment_rules["daily_global_cents"]
+                    and amount + week_total < payment_rules["weekly_global_cents"]):
+                reason = "Automatic payment within amount, daily and weekly limits"
             else:
                 tier = payment_rules["approval_tier"]
                 roles = tuple(payment_rules["material_roles"] if amount > payment_rules["accountant_above_cents"]

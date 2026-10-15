@@ -102,6 +102,17 @@ def test_daily_totals_and_exclusions(session):
     assert evaluate(session, 'schedule_payment', args(85000)).outcome == 'NEEDS_APPROVAL'
 
 
+@pytest.mark.usefixtures("unbacked_automatic")
+def test_weekly_cap_survives_a_clock_advance(session):
+    """Daily caps reset when the simulated clock moves; the rolling 7-day automatic total does not."""
+    for back in range(1, 6):  # one 950.00 automatic payment on each of the last five days
+        payment(session, f'day{back}').created_sim_date -= timedelta(days=back)
+    payment(session, 'long_ago').created_sim_date -= timedelta(days=7)  # outside the 7-day window
+    session.commit()
+    assert evaluate(session, 'schedule_payment', args()).outcome == 'NEEDS_APPROVAL'
+    assert evaluate(session, 'schedule_payment', args(4000)).outcome == 'ALLOW'
+
+
 def test_payee_invoice_currency_and_documents(session):
     for bad in [args(payee_id_override='x'), args(invoice_id='missing'), args(document_id='missing'), args(currency='XXX'), args(execute_date_override='y')]:
         assert evaluate(session, 'schedule_payment', bad).outcome == 'DENY'
