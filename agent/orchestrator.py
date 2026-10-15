@@ -52,6 +52,9 @@ def unbacked_figures(reply: str, evidence: set[str]) -> list[str]:
     return list(dict.fromkeys(m for m in _MONEY_RE.findall(reply) if f"{float(m.replace(',', '')):.2f}" not in evidence))
 
 
+FULL_TURNS = 2  # ponytail: tool results kept for the last two turns only; raise it if follow-ups need more
+
+
 def steps_note(steps: list[dict]) -> str:
     """Compact record of a turn's tool calls, kept in history so later turns know what really ran."""
     # ensure_ascii=False: a name with non-ASCII letters, once escaped, would not be masked when the note is resent.
@@ -97,11 +100,23 @@ class Agent:
         self.max_steps = max_steps
         self._tool_specs = tool_specs
         self._tool_runner = tool_runner
-        self.history: list[dict] = []  # raw (unmasked) user/assistant text of earlier turns
+        self._turns: list[dict] = []  # earlier turns, raw (unmasked): user text, tool exchange, reply
         self._evidence: set[str] = set()  # amounts seen in tool results, user messages and documents
         self._people: list[str] = []  # person names learned in earlier turns (masked in every later turn)
 
     # -- helpers -----------------------------------------------------------
+    @property
+    def history(self) -> list[dict]:
+        """Earlier turns as raw messages. The last FULL_TURNS keep their tool calls and results, so the
+        model can answer a follow-up from data instead of memory; older ones keep the one-line record."""
+        out: list[dict] = []
+        for i, turn in enumerate(self._turns):
+            out.append({"role": "user", "content": turn["user"]})
+            if i >= len(self._turns) - FULL_TURNS:
+                out += turn["exchange"]
+            out.append({"role": "assistant", "content": turn["reply"]})
+        return out
+
     def _specs(self) -> list[dict]:
         if self._tool_specs is None:
             from agent.tools import TOOL_SPECS
@@ -140,8 +155,7 @@ class Agent:
         with self.session_factory() as session:
             if is_bypass_attempt(user_message):
                 self._log_refusal(session, actor, user_message)
-                self.history += [{"role": "user", "content": user_message},
-                                 {"role": "assistant", "content": REFUSAL_TEXT}]
+                self._turns.append({"user": user_message, "exchange": [], "reply": REFUSAL_TEXT})
                 return AgentTurn(reply=REFUSAL_TEXT, steps=[], refused=True)
             return self._loop(session, user_message)
 
@@ -154,10 +168,15 @@ class Agent:
         pseudo = Pseudonymizer(session, people=self._people)
         full_user = self._with_documents(session, user_message)
         self._evidence |= amounts_in(full_user)
-        for m in self.history:
-            pseudo.learn(m["content"])
+        history = self.history
+        for m in history:
+            if m["role"] == "tool":
+                pseudo.learn_obj(m["data"])
+            elif m.get("content"):
+                pseudo.learn(m["content"])
         pseudo.learn(full_user)
-        raw: list[dict] = [*self.history, {"role": "user", "content": full_user}]  # unmasked; masked per call
+        raw: list[dict] = [*history, {"role": "user", "content": full_user}]  # unmasked; masked per call
+        turn_start = len(raw)
         steps: list[dict] = []
         reply = ""
         for _ in range(self.max_steps):
@@ -202,7 +221,7 @@ class Agent:
         if figures:
             reply += ("\n\n> Check by Runway: these amounts do not appear in any tool result or document: "
                       + ", ".join(figures) + ". Treat them as unverified.")
-        self.history += [{"role": "user", "content": user_message},
-                         {"role": "assistant", "content": reply + "\n\n" + steps_note(steps)}]
+        self._turns.append({"user": user_message, "exchange": raw[turn_start:],
+                            "reply": reply + "\n\n" + steps_note(steps)})
         self._people = pseudo.people()  # history keeps raw text, so later turns must still know these names
         return AgentTurn(reply=reply, steps=steps)

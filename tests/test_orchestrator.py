@@ -447,3 +447,34 @@ def test_unbacked_figures_are_marked(session_factory):
     note = turn.reply.split("Check by Runway")[1]
     assert "11,149.66" in note and "11,491.66" not in note and "9,800.00" not in note
     assert "Check by Runway" not in agent.chat("and VAT?").reply  # evidence carries over to later turns
+
+
+def test_later_turns_see_earlier_tool_results_masked(session_factory):
+    """History kept only a one-line record of earlier tool calls, so the live model answered follow-ups from
+    memory (known risk 9). The last turns now keep their tool results, masked like any other message."""
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "list_payables", "arguments": {}}]},
+        {"content": "One payable.", "tool_calls": []},
+        {"content": "As listed before.", "tool_calls": []},
+    ])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([]))
+    agent.chat("What do we owe?")
+    agent.chat("And to whom exactly?")
+    second = adapter.seen[-1]
+    tool_msgs = [m for m in second if m["role"] == "tool"]
+    assert tool_msgs and "PAYEE-CARTONIA" not in json.dumps(second) and "Cartonia" not in json.dumps(second)
+    assert "<SUPPLIER_1" in tool_msgs[0]["content"]
+    calls = [m for m in second if m.get("tool_calls")]
+    assert calls[0]["tool_calls"][0]["id"] == tool_msgs[0]["tool_call_id"]
+
+
+def test_history_keeps_full_tool_data_only_for_recent_turns(session_factory):
+    adapter = ScriptedAdapter(
+        [{"content": None, "tool_calls": [{"id": f"c{i}", "name": "list_payables", "arguments": {}}]} if i % 2 == 0
+         else {"content": "ok", "tool_calls": []} for i in range(8)] + [{"content": "done", "tool_calls": []}])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([]))
+    for _ in range(5):
+        agent.chat("again")
+    sent = adapter.seen[-1]
+    assert len([m for m in sent if m["role"] == "tool"]) == 2  # the last two turns keep their results
+    assert sum("[Tool calls made in that turn" in (m.get("content") or "") for m in sent) == 4
