@@ -186,3 +186,13 @@ def test_import_into_locked_database_fails_cleanly(tmp_path, monkeypatch):
         writer.execute("ROLLBACK")
     assert target.read_bytes() == before
     assert not list(tmp_path.glob(".runway-import-*"))
+
+
+def test_bank_category_ignores_case_and_rejects_unknown_values(tmp_path):
+    bs = "date,description,amount,category\n2026-09-01,Salaries,-1000,Payroll\n"
+    import_files(tmp_path / "a.db", TB, bs)
+    with db.session_scope(tmp_path / "a.db") as s:
+        assert [t.category for t in s.exec(select(db.Transaction))] == ["payroll"]
+    with pytest.raises(ImportErrorReport, match=r"bank statement TX-000001: unknown category 'Salaries'.*payroll"):
+        import_files(tmp_path / "b.db", TB, bs.replace("Payroll", "Salaries"))
+    assert not (tmp_path / "b.db").exists()

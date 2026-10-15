@@ -140,10 +140,13 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         if tid in seen:
             raise ImportErrorReport(f"bank statement: duplicate id {tid}")
         seen.add(tid)
-        cat = r.get("category") or "other"
+        cat = (r.get("category") or "other").lower()
+        if cat not in CATEGORIES:
+            raise ImportErrorReport(f"bank statement {tid}: unknown category {r['category']!r}; use one of "
+                                    f"{', '.join(sorted(CATEGORIES))} or leave it empty")
         txs.append(dict(id=tid, date=_date(r["date"], f"bank statement {tid} date"),
                         amount=_cents(r["amount"], f"bank statement {tid} amount"),
-                        desc=r["description"], cat=cat if cat in CATEGORIES else "other",
+                        desc=r["description"], cat=cat,
                         currency=r.get("currency") or pack.currency))
     txs.sort(key=lambda t: (t["date"], t["id"]))
     currency = txs[0]["currency"] if txs else pack.currency
