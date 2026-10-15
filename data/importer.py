@@ -222,7 +222,7 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
                               cp_name=r["counterparty"], cp_id=r.get("counterparty_id") or "",
                               issue=_date(r["issue_date"], f"{where} issue_date"),
                               due=_date(r["due_date"], f"{where} due_date"), gross=gross, vat=vat,
-                              overdue=overdue))
+                              overdue=overdue, where=where))
     hist = []
     if paid_invoices_csv is not None:
         for n, r in enumerate(_rows(paid_invoices_csv, "paid invoices",
@@ -297,8 +297,13 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
         item["cp_id"] = cid
         return entry
 
+    open_items: set[tuple[str, str, str]] = set()
     for o in opens:
         counterparty(o)["terms"].append((o["due"] - o["issue"]).days)
+        item = (o["direction"], o["cp_id"], o["number"])
+        if item in open_items:
+            raise ImportErrorReport(f"{o['where']}: invoice {o['number']} of {o['cp_name']} is listed twice")
+        open_items.add(item)
     for h in hist:
         counterparty(h)
     for sp in sched:
@@ -320,6 +325,10 @@ def import_files(target: Union[Session, str, Path, None], trial_balance_csv: Sou
             continue
         t["cp"] = cid
         if m.group(2) in hist_numbers:
+            continue
+        if ("AR", cid, m.group(2)) in open_items:  # a paid copy would expect the same cash twice
+            warnings.append(f"bank statement {t['id']}: receipt for {m.group(2)}, which is still open in the "
+                            "open receivables; kept it open (partly paid, or an older open-items file?)")
             continue
         paid.append(dict(tx=t, number=m.group(2), cp=cid))
     for t in txs:

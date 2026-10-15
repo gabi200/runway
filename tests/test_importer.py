@@ -296,3 +296,21 @@ def test_counterparty_ids_do_not_collide_and_one_name_is_one_counterparty(tmp_pa
     assert inv["A2"].counterparty_id == inv["A3"].counterparty_id  # "Acme Ltd" and "ACME LTD."
     assert cps[inv["P1"].counterparty_id].kind == "supplier"  # same name as a customer, paid as supplier
     assert cps[inv["INV1"].counterparty_id].kind == "customer"  # the receipt stays with the customer
+
+
+OPEN = "number,counterparty,issue_date,due_date,amount\n"
+
+
+def test_open_item_listed_twice_rejected(tmp_path):
+    row = "A1,Acme Ltd,2026-09-01,2026-10-01,100\n"
+    with pytest.raises(ImportErrorReport, match="open receivables row 2: invoice A1 of Acme Ltd is listed twice"):
+        import_files(tmp_path / "t.db", TB, BS, OPEN + row + row)
+
+
+def test_receipt_for_an_invoice_still_open_is_not_rebuilt_as_paid(tmp_path):
+    bs = "date,description,amount,category\n2026-09-01,Payment from Acme Ltd A1,40,sales_receipt\n"
+    result = import_files(tmp_path / "t.db", TB, bs, OPEN + "A1,Acme Ltd,2026-08-01,2026-09-01,100\n")
+    assert result["paid_history_rebuilt"] == 0
+    assert "A1" in result["warnings"][0] and "still open" in result["warnings"][0]
+    with db.session_scope(tmp_path / "t.db") as s:
+        assert [(i.number, i.status) for i in s.exec(select(db.Invoice))] == [("A1", "open")]
