@@ -316,6 +316,28 @@ def test_tool_result_masking_failure_withholds_result(session_factory, monkeypat
     assert "Cartonia" not in json.dumps(adapter.seen) and "DE89" not in json.dumps(adapter.seen)
 
 
+def test_non_ascii_names_in_document_metadata_and_tool_notes_are_masked(session_factory):
+    # By default json.dumps escapes the u-umlaut of "Müller" (backslash-u00fc), which the name pattern does not match.
+    with session_factory() as s:
+        s.add(db.Counterparty(id="SUP-MUELLER", name="Müller Papier GmbH", kind="supplier"))
+        s.add(db.Document(id="DOC-0001", filename="rechnung.pdf", kind="invoice", sender="Müller Papier GmbH",
+                          content_text="Rechnung 42"))
+        s.commit()
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "draft_email", "arguments": {"to": "<SUPPLIER_2>"}}]},
+        {"content": "Drafted.", "tool_calls": []},
+        {"content": "ok", "tool_calls": []},
+    ])
+    log = []
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner(log))
+    agent.chat("Please review DOC-0001")
+    agent.chat("and now?")
+    assert log[0][1] == {"to": "Müller Papier GmbH"}
+    blob = json.dumps(adapter.seen, ensure_ascii=False)
+    for secret in ("Papier", "Müller", "u00fcller"):
+        assert secret not in blob, secret
+
+
 def test_unknown_placeholder_args_rejected(session_factory):
     log = []
     adapter = ScriptedAdapter([

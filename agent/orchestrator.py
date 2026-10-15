@@ -54,7 +54,9 @@ def unbacked_figures(reply: str, evidence: set[str]) -> list[str]:
 
 def steps_note(steps: list[dict]) -> str:
     """Compact record of a turn's tool calls, kept in history so later turns know what really ran."""
-    calls = "; ".join(f"{s['tool']}({json.dumps(s['args'], sort_keys=True, default=str)[:160]}) -> {s['status']}"
+    # ensure_ascii=False: a name with non-ASCII letters, once escaped, would not be masked when the note is resent.
+    calls = "; ".join(f"{s['tool']}({json.dumps(s['args'], sort_keys=True, default=str, ensure_ascii=False)[:160]})"
+                      f" -> {s['status']}"
                       + (f": {s['reason'][:120]}" if s["reason"] else "") for s in steps)
     return f"[Tool calls made in that turn: {calls or 'none'}]"
 
