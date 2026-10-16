@@ -29,6 +29,7 @@ from agent import documents as docs_mod  # noqa: E402
 from agent import executor  # noqa: E402
 from agent.orchestrator import Agent  # noqa: E402
 from audit import anchor  # noqa: E402
+from audit import archive  # noqa: E402
 from audit import log as audit  # noqa: E402
 from bank.client import BankClient, BankError  # noqa: E402
 from common import db  # noqa: E402
@@ -124,16 +125,32 @@ def on_kill_toggle() -> None:
             st.session_state.kill = db.kill_switch_on(s)
         st.session_state.flash = "Sign in to change the kill switch."
         return
+    if on:  # stopping the agent is the safe direction: one person is enough
+        with session_scope() as s:
+            db.set_setting(s, "kill_switch", "on")
+            log_human(s, "set_kill_switch", {"state": "on"}, "INFO", "Human turned the kill switch on")
+        return
+    st.session_state.kill = True  # it stays on until the other role approves
     with session_scope() as s:
-        db.set_setting(s, "kill_switch", "on" if on else "off")
-        log_human(s, "set_kill_switch", {"state": "on" if on else "off"}, "INFO",
-                  "Human toggled the kill switch from the UI")
+        res = executor.request_human_action(s, "kill_switch_off", {}, st.session_state.role, auth.approver_id())
+    st.session_state.kill = res.status != "ok"
+    st.session_state.flash = ("The kill switch is off." if res.status == "ok" else
+                              f"Request {res.approval_id} recorded. The other role must approve turning the kill "
+                              "switch off, from a different browser session." if res.status == "needs_approval"
+                              else f"Not possible: {res.reason}")
+
+
+def archive_current() -> dict:
+    """Copy the database aside before a wipe; the new log's first human entry points back to the old head."""
+    with session_scope() as s:
+        return archive.archive_before_wipe(s)
 
 
 def reset_demo() -> None:
+    prev = archive_current()
     generate(out_dir=SAMPLE_DIR)
-    with session_scope() as s:  # first entry of the new log: who wiped the old one
-        log_human(s, "reset_demo", {}, "HUMAN_ACTION", "Demo data reset from the UI")
+    with session_scope() as s:  # first entry of the new log: who wiped the old one, and where it went
+        log_human(s, "reset_demo", prev, "HUMAN_ACTION", "Demo data reset from the UI; old log archived")
     st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
                             confirm_reset=False)
     st.session_state.pop("scenario", None)
@@ -221,8 +238,8 @@ def controls() -> None:
     sb.markdown(f'<span class="live {"" if agent_on else "off"}"><span class="led"></span>'
                 f'{"Agent active within rules" if agent_on else "Agent read-only"}</span>',
                 unsafe_allow_html=True)
-    if st.session_state.pop("flash", None):
-        sb.warning("Sign in to change the kill switch.")
+    if msg := st.session_state.pop("flash", None):
+        sb.warning(safe_text(msg))
     sb.markdown('<div class="panel-label">Display</div>', unsafe_allow_html=True)
     sb.radio("Display currency", ["eu", "cn"], key="pack", horizontal=True,
              format_func=lambda c: pack_for(c).currency, label_visibility="collapsed",
@@ -231,7 +248,8 @@ def controls() -> None:
     if sb.button("Reset demo data", width="stretch") and auth.require_login("reset the demo"):
         st.session_state.confirm_reset = True
     if st.session_state.confirm_reset and auth.signed_in():
-        sb.warning("This wipes the database (incl. audit log) and regenerates sample data.")
+        sb.warning("This rebuilds the database with sample data. The current audit log is archived in "
+                   "var/archive/ and the new log starts with a link to its last entry.")
         a, b = sb.columns(2)
         if a.button("Confirm reset", type="primary"):
             reset_demo()
@@ -276,16 +294,18 @@ def page_onboarding() -> None:
     notice = st.session_state.pop("notice", None)
     if notice:
         st.success(notice)
-    st.caption("Generated sample data REPLACES the database, including the audit log.")
+    st.caption("Generated sample data REPLACES the database. The current audit log is archived in "
+               "var/archive/ and the new log starts with a link to its last entry.")
     if st.button("Use generated sample data") and auth.require_login("load the sample data"):
         with st.spinner("Generating 12 months of sample data..."):
+            prev = archive_current()
             summary = generate(out_dir=SAMPLE_DIR)
         st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
                                 notice="Sample data loaded.")
         st.session_state.pop("scenario", None)
         with session_scope() as s:
-            log_human(s, "load_sample_data", {k: v for k, v in summary.items() if k != "warnings"},
-                      "HUMAN_ACTION", "Sample data regenerated from the UI")
+            log_human(s, "load_sample_data", {**{k: v for k, v in summary.items() if k != "warnings"}, **prev},
+                      "HUMAN_ACTION", "Sample data regenerated from the UI; old log archived")
         st.rerun()
     if tb is not None and (rows := read_csv(tb)) is not None:
         debit, credit = sum(num(r.get("debit")) for r in rows), sum(num(r.get("credit")) for r in rows)
@@ -303,12 +323,22 @@ def page_onboarding() -> None:
         st.info(f"{len(rows)} transactions. Money in {total_in:,.2f}, money out {abs(total_out):,.2f}.")
     if tb is not None and bs is not None:
         st.warning("Importing REPLACES the whole database with the uploaded company. The current audit log "
-                   "will be replaced too. Payees created by an import are unverified until a human "
-                   "verifies them.")
-        sure = st.checkbox("I understand the current data and audit log will be replaced", key="imp_confirm")
-        if st.button("Import uploaded files", type="primary", disabled=not sure) \
-                and auth.require_login("import data"):
+                   "is archived in var/archive/ and the new log starts with a link to its last entry. Payees "
+                   "created by an import are unverified until a human verifies them.")
+        if st.button("Import uploaded files", type="primary") and auth.require_login("import data"):
+            st.session_state.confirm_import = True
+        go = False
+        if st.session_state.get("confirm_import") and auth.signed_in():  # second step, like Reset demo data
+            st.error("Replace the current database with the uploaded files?")
+            a, b = st.columns(2)
+            go = a.button("Confirm import", type="primary")
+            if b.button("Cancel", key="cancel_import"):
+                st.session_state.confirm_import = False
+                st.rerun()
+        if go:
+            st.session_state.confirm_import = False
             try:
+                prev = archive_current()
                 summary = import_files(
                     None, tb.getvalue(), bs.getvalue(),
                     ar.getvalue() if ar is not None else None, ap.getvalue() if ap is not None else None,
@@ -320,8 +350,8 @@ def page_onboarding() -> None:
                 st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None)
                 st.session_state.pop("scenario", None)
                 with session_scope() as s:
-                    log_human(s, "import_files", {k: v for k, v in summary.items() if k != "warnings"},
-                              "HUMAN_ACTION", "Company data imported from uploaded CSV files")
+                    log_human(s, "import_files", {**{k: v for k, v in summary.items() if k != "warnings"}, **prev},
+                              "HUMAN_ACTION", "Company data imported from uploaded CSV files; old log archived")
                 st.success("Imported. The forecast now uses the uploaded data.")
                 for w in summary["warnings"]:
                     st.warning(w)
@@ -663,7 +693,8 @@ def page_approvals() -> None:
                 with st.container(border=True, key=f"approval_{rid}"):
                     st.markdown(f'<div class="approval-meta">{badge("NEEDS_APPROVAL")}<span>{esc(rid)}</span></div>', unsafe_allow_html=True)
                     titles = {"reschedule_payment": "Move a supplier payment", "prepare_financing_application": "Prepare a financing application",
-                              "schedule_payment": "Schedule a payment", "send_payment_reminder": "Send a payment reminder"}
+                              "schedule_payment": "Schedule a payment", "send_payment_reminder": "Send a payment reminder",
+                              "kill_switch_off": "Turn the kill switch off", "advance_clock": "Advance the simulated clock"}
                     st.subheader(titles.get(tool, tool.replace("_", " ").capitalize()))
                     for line in summary:
                         st.markdown(safe_text(line))
@@ -900,18 +931,11 @@ def page_bank() -> None:
                                         "automatic": "Auto (T2)", "created_by": "Created by",
                                         "idempotency_key": "Idempotency key"})
     st.subheader("Advance the simulated clock")
-    st.caption("Moves 'today' forward and executes scheduled payments that fall due.")
+    st.caption("Moves 'today' forward and executes scheduled payments that fall due. Needs owner and "
+               "accountant: moving the clock restarts daily limits and expires pending requests.")
     days = st.number_input("Days", 1, 120, 7)
     if st.button("Advance") and auth.require_login("advance the clock"):
-        try:
-            with human_bank() as bank:
-                res = bank.advance(int(days))
-            with session_scope() as s:
-                log_human(s, "simulate_advance", {"days": int(days)}, "HUMAN_ACTION", "Simulated clock advanced")
-            st.success("Clock advanced.")
-            st.json(res, expanded=False)
-        except BankError as exc:
-            st.error(exc.detail)
+        human_request("advance_clock", {"days": int(days)})
 
 
 # --------------------------------------------------------------------------- #

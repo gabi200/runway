@@ -1,6 +1,7 @@
 """Smoke test: click through the Streamlit UI on a temp DB, offline LLM."""
 
 from pathlib import Path
+import json
 import os
 
 import pytest
@@ -117,7 +118,15 @@ def test_kill_switch_shown_from_db_in_every_session(at):
     at.run()
     assert at.toggle(key="kill").value is True
     assert any("Agent read-only" in m.value for m in at.sidebar.markdown)
-    other.toggle(key="kill").set_value(False).run()
+    other.toggle(key="kill").set_value(False).run()  # one person cannot switch the agent back on
+    assert other.toggle(key="kill").value is True
+    assert any("other role must approve" in w.value for w in other.sidebar.warning)
+    from sqlmodel import select
+    from agent.executor import approve as approve_request
+    with db.session_scope() as s:
+        assert db.kill_switch_on(s)
+        request = s.exec(select(db.ApprovalRequest).where(db.ApprovalRequest.tool_name == "kill_switch_off")).one()
+        assert approve_request(s, request.id, "accountant", "accountant@other-session").status == "ok"
     at.run()
     assert at.toggle(key="kill").value is False
     assert any("Agent active within rules" in m.value for m in at.sidebar.markdown)
@@ -445,6 +454,10 @@ def test_reset_demo_is_audited_with_the_acting_role(at):
         assert entry.actor == "accountant" and entry.decision == "HUMAN_ACTION"
         assert at.session_state["sid"] in entry.args_json
         assert verify_chain(s).ok
+        from agent.outbox import var_dir
+        from audit import archive
+        name = json.loads(entry.args_json)["archive"]
+        assert archive.check_link(s, var_dir() / "archive" / name)  # the old log survives the reset
 
 
 def test_sample_data_needs_sign_in_and_works_signed_in(at):

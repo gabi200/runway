@@ -21,7 +21,8 @@ from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
 from bank.client import BankClient, BankError
-from common.db import Account, ApprovalRequest, Document, Payee, Payment, Setting, get_setting, get_today, utcnow
+from common.db import (Account, ApprovalRequest, Document, Payee, Payment, Setting, get_setting, get_today,
+                       kill_switch_on, set_setting, utcnow)
 from policy import engine as policy
 
 VALID_ROLES = ("owner", "accountant")
@@ -286,6 +287,11 @@ def _human_check(session: Session, action: str, args: dict) -> str | None:
         if payee is None:
             return "Payee not found"
         return "Payee is already verified" if payee.verified else None
+    if action == "kill_switch_off":
+        return None if kill_switch_on(session) else "The kill switch is already off"
+    if action == "advance_clock":
+        days = args.get("days")
+        return None if type(days) is int and 1 <= days <= 120 else "days must be a whole number from 1 to 120"
     doc = session.get(Document, args.get("document_id"), populate_existing=True)
     if doc is None or not doc.flagged or doc.cleared:
         return "Document not found or not flagged"
@@ -304,12 +310,32 @@ def _checked(session: Session, action: str, args: dict) -> None:
         raise ToolError(reason)
 
 
+def _human_bank() -> BankClient:
+    """Bank client with the human scope; only two-person handlers use it, never agent tools."""
+    return BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None,
+                      token=os.getenv("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token"))
+
+
 def _verify_payee(session: Session, args: dict, ctx: dict) -> dict:
     _checked(session, "verify_payee", args)
     try:  # two people approved: the human bank scope is used here, never by agent tools
-        with BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None,
-                        token=os.getenv("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token")) as bank:
+        with _human_bank() as bank:
             return bank.verify_payee(args["payee_id"], True)
+    except BankError as exc:
+        raise ToolError(f"bank refused ({exc.status_code}): {exc.detail}") from exc
+
+
+def _kill_switch_off(session: Session, args: dict, ctx: dict) -> dict:
+    _checked(session, "kill_switch_off", args)
+    set_setting(session, "kill_switch", "off")
+    return {"kill_switch": "off"}
+
+
+def _advance_clock(session: Session, args: dict, ctx: dict) -> dict:
+    _checked(session, "advance_clock", args)
+    try:  # moving the clock resets daily caps and expires requests, so two people must agree
+        with _human_bank() as bank:
+            return bank.advance(args["days"])
     except BankError as exc:
         raise ToolError(f"bank refused ({exc.status_code}): {exc.detail}") from exc
 
@@ -332,7 +358,8 @@ def _release_supplier(session: Session, args: dict, ctx: dict) -> dict:
 
 
 HUMAN_HANDLERS = {"verify_payee": _verify_payee, "clear_document_flag": _clear_flag,
-                  "release_supplier": _release_supplier}
+                  "release_supplier": _release_supplier, "kill_switch_off": _kill_switch_off,
+                  "advance_clock": _advance_clock}
 
 
 def request_human_action(session: Session, action: str, args: dict, role: str,

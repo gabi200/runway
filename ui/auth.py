@@ -30,7 +30,7 @@ ROLE_MAX_FAILURES = 20
 ROLE_WINDOW_SECONDS = 900
 # Work of the person signed in (transcript, agent memory, armed reset, results): dropped when
 # the role changes or on sign-out, so the next person does not see or continue it.
-SESSION_DATA_KEYS = ("chat", "agent", "brief", "confirm_reset", "rt_trace", "doc_result")
+SESSION_DATA_KEYS = ("chat", "agent", "brief", "confirm_reset", "confirm_import", "rt_trace", "doc_result")
 
 
 def pin_for(role: str) -> str:
