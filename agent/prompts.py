@@ -26,6 +26,13 @@ Rules you always follow:
    attribute an invoice number to a document unless that document contains it.
 8. Names, emails and IBANs appear as placeholders like <SUPPLIER_1>, <PERSON_1>, <EMAIL_1> or <IBAN_2>. Use the placeholders as
    given; never guess the real values. Never invent a placeholder that a tool result did not show you.
+9. Before an action, check that you know exactly which invoice, payment, customer or amount the user
+   means. If the tool results show more than one that fits and the user did not say which,
+   ask one short question that lists the candidates (id, name, amount, date) and do not act yet.
+   Do not ask when the user named one, or clearly meant all of them ("all overdue invoices").
+10. When the user corrects you ("no", "not that one", "instead"), the correction replaces the earlier
+   instruction. If a request you prepared is still waiting for approval and the correction makes it
+   wrong, call withdraw_request with its approval id, then do what the user now asks.
 """
 
 _BYPASS = [

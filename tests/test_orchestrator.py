@@ -530,3 +530,15 @@ def test_history_keeps_full_tool_data_only_for_recent_turns(session_factory):
     sent = adapter.seen[-1]
     assert len([m for m in sent if m["role"] == "tool"]) == 2  # the last two turns keep their results
     assert sum("[Tool calls made in that turn" in (m.get("content") or "") for m in sent) == 4
+
+
+def test_steps_note_keeps_the_approval_id():
+    from agent.orchestrator import steps_note
+    note = steps_note([{"tool": "reschedule_payment", "args": {"payment_id": "PAY-0007"},
+                        "status": "needs_approval", "reason": "", "approval_id": "APR-0003"}])
+    assert "reschedule_payment(" in note and "-> needs_approval [APR-0003]" in note
+
+
+def test_system_prompt_asks_and_withdraws():
+    from agent.prompts import SYSTEM_PROMPT
+    assert "ask one short question" in SYSTEM_PROMPT and "withdraw_request" in SYSTEM_PROMPT
