@@ -25,6 +25,10 @@ _PLAN = re.compile(r"\b(plan|brief|monday|go ahead|do it)\b")
 _ALL = re.compile(r"\b(all|both|every|each)\b|\b(customers|invoices|reminders)\b")
 _ASKED_WHICH = "Which one should I remind"
 _AR_ID = re.compile(r"\bar-\d+\b")
+_CORRECTION = re.compile(r"^\s*(no|nope|wait)\b|\b(instead|not that|don'?t move|do not move|cancel|withdraw|undo)\b")
+# [^)]*: stay inside one call of a history note, never run on into the next call's status
+_NOTE_PENDING = re.compile(r"reschedule_payment\(\{[^)]*\}\) -> needs_approval \[(APR-\d+)\]")
+_NOTE_WITHDRAWN = re.compile(r'withdraw_request\(\{"approval_id": "(APR-\d+)"[^)]*\) -> ok')
 HELP = ("I can explain your cash forecast, send reminders on overdue invoices, suggest moving a "
         "non-critical payment, compare financing options and review incoming documents. "
         "Try: 'Give me the Monday brief'.")
@@ -47,6 +51,13 @@ class OfflinePlanner:
         m = _DOC_BLOCK.search(text)
         if m:
             return self._review_document(m, done)
+        withdrawn = [(a, r) for n, a, r in done if n == "withdraw_request"]
+        if withdrawn:
+            return self._say(self._withdraw_reply(*withdrawn[0]))
+        pending = self._pending_reschedule(messages[:idx])
+        if pending and _CORRECTION.search(low) and not low.rstrip().endswith("?"):
+            return {"content": None, "tool_calls": [self._call(1, "withdraw_request", {
+                "approval_id": pending, "reason": "Corrected by the user"})]}
         wants = self._wants(low)
         prev = next((m.get("content") or "" for m in reversed(messages[:idx]) if m["role"] == "assistant"), "")
         if not wants and _ASKED_WHICH in prev and _AR_ID.search(low):
@@ -188,6 +199,36 @@ class OfflinePlanner:
             return {"content": None, "tool_calls": [self._call(5, "prepare_financing_application", {
                 "product_id": rec["product_id"], **fin_args})]}
         return self._say(self._reply(wants, fc, short, by, cand, rec, need))
+
+    @staticmethod
+    def _pending_reschedule(msgs: list[dict]) -> str | None:
+        """Latest reschedule request still waiting for approval, from tool results or turn notes in history."""
+        found: list[str] = []
+        gone: set[str] = set()
+        for m in msgs:
+            if m["role"] == "tool":
+                try:
+                    res = json.loads(m["content"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if res.get("tool") == "reschedule_payment" and res.get("status") == "needs_approval":
+                    found.append(res.get("approval_id"))
+                if res.get("tool") == "withdraw_request" and res.get("status") == "ok":
+                    gone.add((res.get("data") or {}).get("approval_id"))
+            elif m["role"] == "assistant" and m.get("content"):
+                found += _NOTE_PENDING.findall(m["content"])
+                gone |= set(_NOTE_WITHDRAWN.findall(m["content"]))
+        live = [f for f in found if f and f not in gone]
+        return live[-1] if live else None
+
+    @staticmethod
+    def _withdraw_reply(args: dict, res: dict) -> str:
+        if res.get("status") == "ok":
+            return (f"I withdrew request {args['approval_id']}, so that payment stays on its original date. "
+                    "Which payment should I move instead? I can also leave all payments as they are.")
+        return (f"I could not withdraw request {args['approval_id']}: {res.get('reason', res.get('status'))}. "
+                "If it was already approved, nothing I say can undo it; the owner can review it on the "
+                "Approvals and Bank pages.")
 
     @staticmethod
     def _which(overdue: list[dict]) -> str:
