@@ -1,5 +1,5 @@
 tiers:
-  T0: [get_balances, list_transactions, list_receivables, list_payables, flag_document, list_documents]
+  T0: [get_balances, list_transactions, list_receivables, list_payables, flag_document, list_documents, withdraw_request]  # withdraw only lowers risk, so it works under the kill switch
   T1: [get_financing_need, get_forecast, run_scenario, compare_financing, draft_email, explain_figure]
   T2: [send_payment_reminder, schedule_payment]
   T3: [reschedule_payment, prepare_financing_application]

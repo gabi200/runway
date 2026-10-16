@@ -40,6 +40,7 @@ _SCHEMAS: dict[str, tuple[str, dict[str, str]]] = {
     "list_payables": ("", dict(status=STRING, counterparty_id=STRING)),
     "list_documents": ("", dict(flagged_only=BOOLEAN)),
     "flag_document": ("document_id reason", dict(document_id=STRING, reason=STRING)),
+    "withdraw_request": ("approval_id reason", dict(approval_id=STRING, reason=STRING)),
     "get_financing_need": ("", dict(scenario=SCENARIO_LIST)),
     "get_forecast": ("", dict(weeks=POSITIVE_INTEGER, include_lines=BOOLEAN)),
     "run_scenario": ("changes", dict(changes=SCENARIO_LIST)),

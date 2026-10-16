@@ -11,17 +11,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Callable
 
 from pydantic import BaseModel
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from agent import outbox
 from agent.financing import compare_financing, ledger_money
 from common.config import load_country_pack
-from common.db import (Account, Document, Invoice, OutboxEmail, Transaction, account_balance_cents,
-                       get_today)
+from common.db import (Account, ApprovalRequest, Document, Invoice, OutboxEmail, Transaction,
+                       account_balance_cents, get_today, utcnow)
 
 
 class ToolResult(BaseModel):
@@ -67,6 +68,9 @@ TOOL_SPECS: list[dict] = [
         "flagged_only": {"type": "boolean"}}),
     _fn("flag_document", "Flag a suspicious document and alert the owner.", {
         "document_id": _S, "reason": _S}, ["document_id", "reason"]),
+    _fn("withdraw_request", "Withdraw a pending approval request you prepared, for example after the user "
+        "corrects you. Nothing runs; the request leaves the approval queue.", {
+        "approval_id": _S, "reason": _S}, ["approval_id", "reason"]),
     _fn("get_forecast", "13-week cash forecast with weekly balances and the shortfall weeks.", {
         "weeks": _I, "include_lines": {"type": "boolean"}}),
     _fn("run_scenario", "Re-run the forecast with changes, e.g. a customer paying 30 days later.", {
@@ -378,10 +382,28 @@ def prepare_financing_application(session: Session, args: dict, ctx: dict) -> di
     return {**_row(row), "amount_display": load_country_pack().display(row.amount_cents), **signed}
 
 
+def withdraw_request(session: Session, args: dict, ctx: dict) -> dict:
+    """Withdraw a pending request the agent made. Human two-person requests are not the agent's to touch."""
+    req = session.get(ApprovalRequest, args["approval_id"], populate_existing=True)
+    if req is None or req.status != "pending":
+        raise ToolError("No pending request with that id (it may already be approved, rejected or expired)")
+    if req.tool_name not in HANDLERS:
+        raise ToolError("Only requests the agent prepared can be withdrawn")
+    stmt = (update(ApprovalRequest)
+            .where(ApprovalRequest.id == req.id, ApprovalRequest.status == "pending")
+            .values(status="withdrawn", decided_at=datetime.combine(get_today(session), utcnow().timetz()),
+                    result_json=json.dumps({"withdrawn_by": "agent", "reason": args["reason"]})))
+    if session.execute(stmt).rowcount != 1:  # an approver decided at the same moment
+        session.rollback()
+        raise ToolError("The request was decided at the same moment; it was not withdrawn")
+    session.commit()
+    return {"approval_id": req.id, "tool": req.tool_name, "status": "withdrawn"}
+
+
 HANDLERS: dict[str, Handler] = {
     "get_balances": get_balances, "list_transactions": list_transactions,
     "list_receivables": list_receivables, "list_payables": list_payables,
-    "list_documents": list_documents, "flag_document": flag_document,
+    "list_documents": list_documents, "flag_document": flag_document, "withdraw_request": withdraw_request,
     "get_forecast": get_forecast, "get_financing_need": get_financing_need,
     "run_scenario": run_scenario, "compare_financing": tool_compare_financing,
     "draft_email": draft_email, "explain_figure": explain_figure,

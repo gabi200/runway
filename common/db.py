@@ -143,7 +143,7 @@ class ApprovalRequest(SQLModel, table=True):
     args_json: str
     required_roles_json: str  # JSON list, e.g. ["owner", "accountant"]
     approvals_json: str = "[]"  # JSON list of roles that approved so far
-    status: str = "pending"  # "pending" | "executing" | "rejected" | "executed" | "failed" | "expired"
+    status: str = "pending"  # "pending" | "executing" | "rejected" | "executed" | "failed" | "expired" | "withdrawn"
     reason: str = ""
     result_json: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
