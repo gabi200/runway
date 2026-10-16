@@ -151,7 +151,7 @@ def evaluate(session, tool_name: str, args: dict, actor: str = "agent",
   `export_data`, `set_kill_switch`) → DENY.
 
 Tool tiers: T0 `get_balances list_transactions list_receivables list_payables flag_document list_documents`;
-T1 `get_forecast run_scenario compare_financing draft_email explain_figure`;
+T1 `get_forecast run_scenario compare_financing draft_email explain_figure make_chart`;
 T2 `send_payment_reminder`, `schedule_payment` (conditional); T3 `reschedule_payment
 prepare_financing_application` (and `schedule_payment` above limits).
 

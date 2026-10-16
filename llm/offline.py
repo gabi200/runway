@@ -21,6 +21,13 @@ ACTIONS = {"reminders", "reschedule", "application"}
 _NEGATED = re.compile(r"\b(don'?t|do not|never|without|not)\b[^.?!]{0,40}"
                       r"\b(send|remind|chase|move|resched|postpone|delay|apply|prepare|change|act)")
 _QUESTION = re.compile(r"^\s*(should|shall|do|does|would|is|are|what|which|how|when|why|who)\b[^?]*\?")
+_CHART_ASK = re.compile(r"\b(chart|graph|plot|visuali[sz]e)")
+_ACCEPT = re.compile(r"^\s*(yes|yeah|yep|sure|ok(ay)?|please|show me)\b(?![^.?!]*\b(no|not|don'?t)\b)")
+_NO_CHART = re.compile(r"\b(don'?t|do not|no|without)\b[^.?!]{0,30}\b(chart|graph|plot)")
+_OFFER = re.compile(r"Would you like a chart of ([^?]+)\?")
+CHART_OFFERS = {"forecast_balance": "the weekly balance", "receivables": "the overdue customer invoices",
+                "financing_options": "the financing costs"}
+_NAMED_AR = re.compile(r"\bAR-\d+\b")
 HELP = ("I can explain your cash forecast, send reminders on overdue invoices, suggest moving a "
         "non-critical payment, compare financing options and review incoming documents. "
         "Try: 'Give me the Monday brief'.")
@@ -43,10 +50,13 @@ class OfflinePlanner:
         m = _DOC_BLOCK.search(text)
         if m:
             return self._review_document(m, done)
+        chart = self._chart_request(low, messages[:idx])
+        if chart:
+            return self._chart(chart, done)
         wants = self._wants(low)
         if not wants:
             return self._say(HELP)
-        return self._plan(wants, done)
+        return self._plan(wants, done, named=_NAMED_AR.findall(_DOC_BLOCK.sub('', text)))
 
     # -- plumbing ----------------------------------------------------------
     @staticmethod
@@ -98,6 +108,46 @@ class OfflinePlanner:
             w -= ACTIONS  # asked about, or told not to: report only
         return w
 
+    # -- charts ------------------------------------------------------------
+    @staticmethod
+    def _dataset(text: str) -> dict:
+        """make_chart arguments for what the text is about."""
+        if re.search(r"financ|loan|credit|borrow", text):
+            return {"dataset": "financing_options"}
+        if re.search(r"\bag(e|ing)\b|ageing|aging|how (old|overdue)", text):
+            return {"dataset": "receivables_ageing"}
+        if re.search(r"receivabl|customer|overdue|owed to us", text):
+            return {"dataset": "receivables", **({"overdue_only": True} if "overdue" in text else {})}
+        if re.search(r"payabl|supplier|bills|we owe", text):
+            return {"dataset": "payables"}
+        if re.search(r"transaction|month|spend|booked", text):
+            return {"dataset": "transactions_monthly"}
+        if re.search(r"money in|cash ?flow|receipts|in and out|inflow|outflow", text):
+            return {"dataset": "forecast_cashflow"}
+        return {"dataset": "forecast_balance"}
+
+    def _chart_request(self, low: str, earlier: list[dict]) -> dict | None:
+        """make_chart arguments if the user asks for a chart or accepts the last offer of one."""
+        if _CHART_ASK.search(low) and not _NO_CHART.search(low):
+            return self._dataset(low)
+        last = next((m.get("content") or "" for m in reversed(earlier) if m["role"] == "assistant" and m.get("content")), "")
+        offer = _OFFER.search(last)
+        if offer and _ACCEPT.search(low):
+            return self._dataset(offer.group(1).lower())
+        return None
+
+    def _chart(self, args: dict, done: list) -> dict:
+        res = next((r for n, _, r in done if n == "make_chart"), None)
+        if res is None:
+            return {"content": None, "tool_calls": [self._call(1, "make_chart", args)]}
+        if res.get("status") != "ok":
+            return self._say(f"I could not draw that chart: {res.get('reason') or res.get('status')}.")
+        spec = res["data"]
+        if not spec["rows"]:
+            return self._say(f"There is nothing to chart for {spec['title'].lower()}. {spec.get('note', '')}".strip())
+        return self._say(f"Here is the chart: {spec['title']}. It is drawn from figures computed from your ledger."
+                         + (f" {spec['note']}" if spec.get("note") else ""))
+
     # -- document review ---------------------------------------------------
     def _review_document(self, m: re.Match, done: list) -> dict:
         doc_id, flagged, body = m.group(1), m.group(2) == "yes", m.group(4)
@@ -121,7 +171,7 @@ class OfflinePlanner:
                          "before any payment.")
 
     # -- plan / brief ------------------------------------------------------
-    def _plan(self, wants: set[str], done: list) -> dict:
+    def _plan(self, wants: set[str], done: list, named: list[str] | None = None) -> dict:
         by: dict[str, list[tuple[dict, dict]]] = {}
         for n, a, r in done:
             by.setdefault(n, []).append((a, r))
@@ -147,9 +197,11 @@ class OfflinePlanner:
         overdue = [r for r in ((first("list_receivables") or {}).get("data") or [])] if "reminders" in wants else []
         reminded = {a.get("invoice_id") for a, _ in by.get("send_payment_reminder", [])}
         # reminders are useful whenever invoices are overdue; reschedule/financing only on a shortfall
-        for inv in overdue:
-            if inv["id"] not in reminded:
-                stage2.append(self._call(2, "send_payment_reminder", {"invoice_id": inv["id"]}))
+        # invoices the user names are reminded as asked (the rules engine decides); otherwise all overdue
+        targets = list(dict.fromkeys(named)) if named and "reminders" in wants else [inv["id"] for inv in overdue]
+        for inv_id in targets:
+            if inv_id not in reminded:
+                stage2.append(self._call(2, "send_payment_reminder", {"invoice_id": inv_id}))
         cand = self._reschedule_candidate(fc, first("list_payables")) if (short and "reschedule" in wants) else None
         if cand and "reschedule_payment" not in by:
             stage2.append(self._call(2, "reschedule_payment", cand["args"]))
@@ -331,6 +383,11 @@ class OfflinePlanner:
             out.append("No financing option can deliver in time and fit the amount.")
             for e in cmpd.get("excluded", []):
                 out.append(f"Excluded: {e['name']} ({e['reason']})")
+        offer = ("financing_options" if rec else
+                 "receivables" if "overdue" in wants and "list_receivables" in by and not by.get("send_payment_reminder")
+                 else "forecast_balance" if fc else None)
+        if offer:
+            out.append(f"Would you like a chart of {CHART_OFFERS[offer]}?")
         pack = load_country_pack()
         if fc and pack.fx_from_eur != 1:
             out.append(f"Amounts are shown in {pack.currency}, converted for display from the EUR ledger.")

@@ -43,13 +43,19 @@ export RUNWAY_BANK_URL=http://localhost:8001     # make the UI and agent use it
 
 Without `RUNWAY_BANK_URL` the bank runs in-process, which is enough for the demo. The UI also generates data on first start if the database is empty.
 
+### Invoices, reminders and charts in the copilot
+
+- **Invoice buttons.** Wherever an invoice is named (a copilot reply, an approval card, a test-inbox email, a document, the forecast's source rows), a button with its number opens its details: amounts, dates, payments, reminders already sent and a PDF copy rendered from the ledger. Only ids and numbers that exist in the ledger become buttons.
+- **Reminder buttons.** For an overdue customer invoice, **Remind: <number>** (or **Send reminder via copilot** in the details) asks the copilot to send the reminder. The request goes through the agent and the rules engine like any other: cooldown, daily limit and overdue checks still apply, and the result appears in the chat.
+- **Charts.** After a reply with a table or a series of figures, the copilot asks whether you want a chart. Say yes, or ask for a chart, graph or plot, and it calls the T1 tool `make_chart`. The figures are computed in Python from the ledger (`agent/charts.py`), not by the model, and the app draws the chart below the reply.
+
 ### Offline, DeepSeek and Gemini modes
 
 Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, or **Gemini**. The selection applies to chat, the Monday brief and chat injection tests in that browser session. Switching modes clears the conversation and displayed brief; saved actions and approvals remain in the database. `RUNWAY_LLM=offline|deepseek|gemini` sets the startup mode. With no explicit mode, DeepSeek is used if its key is set; otherwise the app starts offline. Selecting a provider without its key displays setup instructions.
 
 - **Offline (default)**: with no API key, a deterministic planner (`llm/offline.py`) plays the language model and issues the real tool calls of the demo. No network needed. Force it with `RUNWAY_LLM=offline`.
 - **DeepSeek**: copy `.env.example` to `.env` and put the key after `DEEPSEEK_API_KEY=` (or export the variable; the environment wins over `.env`, which git ignores). Provider, base URL and model are in `config/llm.yaml`; any OpenAI-compatible provider works by editing that file. Names (known counterparties, people found in headers and signatures), e-mails and IBANs are replaced by placeholders before the API call; amounts, dates and invoice numbers are sent as they are.
-- **Gemini**: add `GEMINI_API_KEY=your-key` to your existing `.env` and restart Runway, then choose **Gemini**. Get a key from [Google AI Studio](https://aistudio.google.com/apikey). `config/gemini.yaml` sets `gemini-3.8-flash` and Google's [OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai). Gemini uses the same pseudonymisation, tool checks and approval gates. Both keys can coexist in `.env`; never commit that file.
+- **Gemini (Vertex AI)**: add `GEMINI_API_KEY=your-key` and `GOOGLE_CLOUD_PROJECT=your-project-id-or-number` to your existing `.env` and restart Runway, then choose **Gemini**. The key is a Google Cloud API key allowed to call the Vertex AI API in that project. `config/gemini.yaml` sets `google/gemini-3.8-flash` and Vertex AI's OpenAI-compatible endpoint; the key is sent in the `x-goog-api-key` header, because Vertex rejects it as a Bearer token. Gemini uses the same pseudonymisation, tool checks and approval gates. Both keys can coexist in `.env`; never commit that file.
 
 ### Environment variables
 
@@ -65,7 +71,8 @@ Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, or **Gemini**. 
 | `RUNWAY_OWNER_PIN` | `1111` | UI sign-in PIN of the owner role (demo-grade) |
 | `RUNWAY_ACCOUNTANT_PIN` | `2222` | UI sign-in PIN of the accountant role (demo-grade) |
 | `DEEPSEEK_API_KEY` | unset | LLM key (variable name set by `api_key_env` in `config/llm.yaml`) |
-| `GEMINI_API_KEY` | unset | Gemini API key for Gemini mode |
+| `GEMINI_API_KEY` | unset | Google Cloud API key for Gemini mode (Vertex AI) |
+| `GOOGLE_CLOUD_PROJECT` | unset | Google Cloud project id or number for Gemini mode |
 | `RUNWAY_LLM` | unset | Startup mode: `offline`, `deepseek`, or `gemini`; the sidebar overrides it per session |
 | `RUNWAY_LLM_MODEL`, `RUNWAY_LLM_BASE_URL` | from `config/llm.yaml` | Override model and endpoint |
 | `RUNWAY_LLM_THINKING` | unset | `on` enables DeepSeek thinking mode (not recommended) |

@@ -16,6 +16,8 @@ class LLMAdapter:
         self.config = config or load_yaml("llm.yaml")
         self.model = os.environ.get("RUNWAY_LLM_MODEL") or self.config["model"]
         self.base_url = os.environ.get("RUNWAY_LLM_BASE_URL") or self.config["base_url"]
+        if self.config.get("project_env"):
+            self.base_url = self.base_url.format(project=os.environ.get(self.config["project_env"], "").strip())
         self.api_key = os.environ.get(self.config["api_key_env"], "")
         self._client = client
 
@@ -24,10 +26,12 @@ class LLMAdapter:
         if self._client is None:
             from openai import OpenAI
 
+            header = self.config.get("api_key_header")
             self._client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=float(self.config.get("timeout_seconds", 60)),
+                default_headers={header: self.api_key} if header else None,
             )
         return self._client
 
@@ -43,6 +47,10 @@ class LLMAdapter:
         if self.config.get("provider") == "deepseek" and os.environ.get("RUNWAY_LLM_THINKING") != "on":
             # thinking mode needs reasoning_content echoed back across tool turns; keep it simple
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        if self.config.get("api_key_header"):
+            from openai import Omit
+
+            kwargs["extra_headers"] = {"Authorization": Omit()}  # the key goes only in api_key_header
         resp = self.client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         calls = []
@@ -66,9 +74,11 @@ def get_adapter(mode: str | None = None) -> "LLMAdapter | Any":
         cfg = load_yaml("gemini.yaml")
     elif selected not in {"offline", cfg["provider"]}:
         raise ValueError(f"Unknown LLM mode: {selected}")
-    if selected != "offline" and not os.environ.get(cfg["api_key_env"], "").strip():
+    required = [cfg["api_key_env"]] + ([cfg["project_env"]] if cfg.get("project_env") else [])
+    missing = [name for name in required if not os.environ.get(name, "").strip()]
+    if selected != "offline" and missing:
         if mode or os.environ.get("RUNWAY_LLM"):
-            raise ValueError(f"Set {cfg['api_key_env']} in .env and restart Runway to use {selected}.")
+            raise ValueError(f"Set {' and '.join(missing)} in .env and restart Runway to use {selected}.")
         selected = "offline"
     if selected == "offline":
         from llm.offline import OfflinePlanner

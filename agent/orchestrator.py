@@ -207,6 +207,8 @@ class Agent:
                     payload = {"status": "error", "tool": c["name"], "reason": f"{type(exc).__name__}: {exc}"}
                 steps.append({"tool": c["name"], "args": args, "status": payload["status"],
                               "reason": payload.get("reason", ""), "approval_id": payload.get("approval_id")})
+                if c["name"] == "make_chart" and payload["status"] == "ok":
+                    steps[-1]["chart"] = payload.get("data")  # drawn by the UI from computed figures
                 safe = json.loads(json.dumps(payload, default=str))
                 self._evidence |= amounts_in(json.dumps(safe))
                 pseudo.learn_obj(safe)

@@ -176,7 +176,7 @@ The **idempotency key** makes sure the same payment request can never be execute
 |---|---|---|
 | `get_balances`, `list_transactions`, `list_receivables`, `list_payables` | T0 Read | Automatic |
 | `get_forecast`, `run_scenario` ("what if Brightfield pays 30 days later?") | T1 Analyse | Automatic, logged |
-| `compare_financing`, `draft_email`, `explain_figure` | T1 Analyse | Automatic, logged |
+| `compare_financing`, `draft_email`, `explain_figure`, `make_chart` | T1 Analyse | Automatic, logged |
 | `send_payment_reminder` | T2 Low-risk | Automatic within daily limits |
 | `schedule_payment` | T2 or T3 | T2 only if the payee is verified and the amount is under 1,000 |
 | `reschedule_payment` | T3 | Must stay within the contract terms |

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from agent import outbox
+from agent.charts import DATASETS, build_chart
 from agent.financing import compare_financing, ledger_money
 from common.config import load_country_pack
 from common.db import (Account, Document, Invoice, OutboxEmail, Transaction, account_balance_cents,
@@ -96,6 +97,13 @@ TOOL_SPECS: list[dict] = [
         "product_id": _S, "amount_cents": _I, "needed_by": _D,
         "days_needed": {"type": "integer", "description": "Optional, defaults to get_financing_need."}},
         ["product_id"]),
+    _fn("make_chart", "Chart a dataset for the user. The app draws it below your reply from figures computed "
+        "in code; only call it when the user asks for a chart or accepts your offer of one.", {
+        "dataset": {"type": "string", "enum": sorted(DATASETS), "description": "; ".join(
+            f"{k}: {v}" for k, v in DATASETS.items())},
+        "scenario": {**_SCENARIO, "description": "Optional scenario changes (forecast_balance only)."},
+        "overdue_only": {"type": "boolean", "description": "receivables only: overdue invoices only."}},
+        ["dataset"]),
 ]
 
 
@@ -314,6 +322,13 @@ def draft_email(session: Session, args: dict, ctx: dict) -> dict:
             "tone": "neutral", "sent": False}
 
 
+def make_chart(session: Session, args: dict, ctx: dict) -> dict:
+    try:
+        return build_chart(session, args["dataset"], args.get("scenario") or None, bool(args.get("overdue_only")))
+    except (KeyError, ValueError) as e:
+        raise ToolError(f"invalid arguments: {e}") from e
+
+
 def explain_figure(session: Session, args: dict, ctx: dict) -> dict:
     from forecast.engine import explain_figure as _explain
 
@@ -384,7 +399,7 @@ HANDLERS: dict[str, Handler] = {
     "list_documents": list_documents, "flag_document": flag_document,
     "get_forecast": get_forecast, "get_financing_need": get_financing_need,
     "run_scenario": run_scenario, "compare_financing": tool_compare_financing,
-    "draft_email": draft_email, "explain_figure": explain_figure,
+    "draft_email": draft_email, "explain_figure": explain_figure, "make_chart": make_chart,
     "send_payment_reminder": send_payment_reminder, "schedule_payment": schedule_payment,
     "reschedule_payment": reschedule_payment,
     "prepare_financing_application": prepare_financing_application,
