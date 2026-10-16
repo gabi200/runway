@@ -21,6 +21,10 @@ ACTIONS = {"reminders", "reschedule", "application"}
 _NEGATED = re.compile(r"\b(don'?t|do not|never|without|not)\b[^.?!]{0,40}"
                       r"\b(send|remind|chase|move|resched|postpone|delay|apply|prepare|change|act)")
 _QUESTION = re.compile(r"^\s*(should|shall|do|does|would|is|are|what|which|how|when|why|who)\b[^?]*\?")
+_PLAN = re.compile(r"\b(plan|brief|monday|go ahead|do it)\b")
+_ALL = re.compile(r"\b(all|both|every|each)\b|\b(customers|invoices|reminders)\b")
+_ASKED_WHICH = "Which one should I remind"
+_AR_ID = re.compile(r"\bar-\d+\b")
 HELP = ("I can explain your cash forecast, send reminders on overdue invoices, suggest moving a "
         "non-critical payment, compare financing options and review incoming documents. "
         "Try: 'Give me the Monday brief'.")
@@ -44,9 +48,12 @@ class OfflinePlanner:
         if m:
             return self._review_document(m, done)
         wants = self._wants(low)
+        prev = next((m.get("content") or "" for m in reversed(messages[:idx]) if m["role"] == "assistant"), "")
+        if not wants and _ASKED_WHICH in prev and _AR_ID.search(low):
+            wants = {"overdue", "reminders"}  # the user answered the question with an invoice id
         if not wants:
             return self._say(HELP)
-        return self._plan(wants, done)
+        return self._plan(wants, done, low)
 
     # -- plumbing ----------------------------------------------------------
     @staticmethod
@@ -78,7 +85,7 @@ class OfflinePlanner:
 
     @staticmethod
     def _wants(low: str) -> set[str]:
-        plan = re.search(r"\b(plan|brief|monday|go ahead|do it)\b", low)
+        plan = _PLAN.search(low)
         w: set[str] = set()
         if plan:
             w = {"forecast", "reminders", "reschedule", "financing", "application"}
@@ -121,7 +128,7 @@ class OfflinePlanner:
                          "before any payment.")
 
     # -- plan / brief ------------------------------------------------------
-    def _plan(self, wants: set[str], done: list) -> dict:
+    def _plan(self, wants: set[str], done: list, low: str = "") -> dict:
         by: dict[str, list[tuple[dict, dict]]] = {}
         for n, a, r in done:
             by.setdefault(n, []).append((a, r))
@@ -145,6 +152,13 @@ class OfflinePlanner:
 
         stage2: list[dict] = []
         overdue = [r for r in ((first("list_receivables") or {}).get("data") or [])] if "reminders" in wants else []
+        if overdue and not _PLAN.search(low):
+            # ponytail: matches invoice ids/numbers only; customer names reach this planner as placeholders
+            named = [i for i in overdue if i["id"].lower() in low or i["number"].lower() in low]
+            if named:
+                overdue = named
+            elif len(overdue) > 1 and not _ALL.search(low):
+                return self._say(self._which(overdue))
         reminded = {a.get("invoice_id") for a, _ in by.get("send_payment_reminder", [])}
         # reminders are useful whenever invoices are overdue; reschedule/financing only on a shortfall
         for inv in overdue:
@@ -174,6 +188,13 @@ class OfflinePlanner:
             return {"content": None, "tool_calls": [self._call(5, "prepare_financing_application", {
                 "product_id": rec["product_id"], **fin_args})]}
         return self._say(self._reply(wants, fc, short, by, cand, rec, need))
+
+    @staticmethod
+    def _which(overdue: list[dict]) -> str:
+        items = "; ".join(f"{i['id']} ({i['counterparty_id']}, {_money(i['amount_cents'])}, "
+                          f"{i['days_overdue']} days overdue)" for i in overdue)
+        return (f"{len(overdue)} customer invoices are overdue: {items}. {_ASKED_WHICH}, "
+                "or should I remind all of them?")
 
     @staticmethod
     def _move(cand: dict) -> dict:
