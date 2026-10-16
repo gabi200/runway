@@ -91,14 +91,38 @@ def create_payee(session: Session, name: str, iban: str,
     return row.model_dump(mode="json")
 
 
-def verify_payee(session: Session, payee_id: str, verified: bool) -> dict:
-    """Set a payee's verification status after human authorization."""
+def _check_mandate(session: Session, mandate: dict | None, tool: str, args: dict) -> str:
+    """Approval id of a valid, unused mandate for exactly this action, signed with both roles' registered keys."""
+    from agent.mandate import registered_keys, verify_mandate
+
+    problems = verify_mandate(mandate, registered_keys()) if mandate else ["no signed mandate was sent"]
+    body = (mandate or {}).get("mandate") or {}
+    if not problems and (body.get("tool") != tool or body.get("args") != args
+                         or not {"owner", "accountant"} <= set(body.get("required_roles") or [])):
+        problems = ["the mandate is for a different action"]
+    if not problems and session.get(Setting, f"bank.mandate.{body.get('approval_id')}") is not None:
+        problems = ["the mandate was already used"]
+    if problems:
+        raise BankServiceError(403, "Verifying a payee needs a mandate signed by owner and accountant: "
+                               + "; ".join(problems))
+    return str(body["approval_id"])
+
+
+def verify_payee(session: Session, payee_id: str, verified: bool, mandate: dict | None = None) -> dict:
+    """Set a payee's verification status after human authorization.
+
+    Unverifying only adds a block, so the human token is enough. Verifying lifts one, so the bank
+    itself also needs a mandate that owner and accountant signed for this payee (used once).
+    """
     _lock(session)
     row = session.get(Payee, payee_id)
     if row is None:
         raise BankServiceError(404, "Payee not found")
     if verified and not iban_is_valid(row.iban):
         raise BankServiceError(422, "A payee can only be verified with a valid IBAN")
+    if verified:
+        used = _check_mandate(session, mandate, "verify_payee", {"payee_id": payee_id})
+        session.add(Setting(key=f"bank.mandate.{used}", value=payee_id))
     row.verified = verified
     session.add(row)
     session.commit()

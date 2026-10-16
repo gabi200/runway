@@ -246,6 +246,14 @@ def test_advance_matching_category_and_cancelled_payment():
         assert len(client.list_payments("cancelled")) == 1
 
 
+def _mandate(payee_id, approval_id="APR-T1", roles=("owner", "accountant")):
+    """What the executor sends after owner and accountant approved verify_payee."""
+    from agent import mandate
+    body = {"type": mandate.MANDATE_TYPE, "company": mandate.COMPANY, "approval_id": approval_id,
+            "tool": "verify_payee", "args": {"payee_id": payee_id}, "currency": "EUR", "required_roles": list(roles)}
+    return mandate.document(body, [mandate.sign(body, role, f"{role}@test") for role in roles])
+
+
 def test_verify_payee_requires_human_and_updates_in_place():
     with TestClient(app) as client:
         assert client.patch("/payees/PAYEE-TEST", json={"verified": False}).status_code == 401
@@ -259,7 +267,10 @@ def test_verify_payee_requires_human_and_updates_in_place():
         with pytest.raises(BankError) as error:
             human.create_payment("unverified", "PAYEE-TEST", 100, "EUR", TODAY)
         assert error.value.status_code == 422
-        assert human.verify_payee("PAYEE-TEST") == before
+        with pytest.raises(BankError) as error:
+            human.verify_payee("PAYEE-TEST")  # the human token alone cannot lift the block
+        assert error.value.status_code == 403
+        assert human.verify_payee("PAYEE-TEST", True, _mandate("PAYEE-TEST")) == before
         assert len(human.list_payees()) == 2
         assert human.create_payment("verified", "PAYEE-TEST", 100, "EUR", TODAY)["status"] == "scheduled"
         with pytest.raises(BankError) as error:
@@ -512,4 +523,38 @@ def test_missing_iban_can_be_set_once_by_a_human():
     row = client.put(url, json={"iban": "DE89 3704 0044 0532 0130 00"}, headers=human).json()
     assert row["iban"] == "DE89 3704 0044 0532 0130 00" and row["verified"] is False
     assert client.put(url, json={"iban": "GB82 WEST 1234 5698 7654 32"}, headers=human).status_code == 409
-    assert client.patch("/payees/PAYEE-IMPORTED", json={"verified": True}, headers=human).json()["verified"]
+    body = {"verified": True, "mandate": _mandate("PAYEE-IMPORTED")}
+    assert client.patch("/payees/PAYEE-IMPORTED", json=body, headers=human).json()["verified"]
+
+
+def _forged(kind):
+    if kind == "one role":
+        return _mandate("PAYEE-TEST", roles=("owner",))
+    if kind == "other payee":
+        return _mandate("PAYEE-OTHER")
+    m = _mandate("PAYEE-TEST")
+    if kind == "edited after signing":
+        m["mandate"]["args"]["payee_id"] = "PAYEE-TEST "
+        return m
+    m["signatures"] = [m["signatures"][0], {**m["signatures"][0], "role": "accountant"}]  # one key for both roles
+    return m
+
+
+@pytest.mark.parametrize("kind", ["one role", "other payee", "edited after signing", "one key for both"])
+def test_bank_refuses_a_mandate_that_does_not_prove_two_people(kind):
+    with BankClient(token="human-dev-token") as human:
+        human.verify_payee("PAYEE-TEST", False)
+        with pytest.raises(BankError) as error:
+            human.verify_payee("PAYEE-TEST", True, _forged(kind))
+        assert error.value.status_code == 403
+        assert not next(p for p in human.list_payees() if p["id"] == "PAYEE-TEST")["verified"]
+
+
+def test_a_mandate_verifies_only_once():
+    with BankClient(token="human-dev-token") as human:
+        human.verify_payee("PAYEE-TEST", False)
+        human.verify_payee("PAYEE-TEST", True, _mandate("PAYEE-TEST"))
+        human.verify_payee("PAYEE-TEST", False)
+        with pytest.raises(BankError) as error:  # replaying the old approval does not re-verify
+            human.verify_payee("PAYEE-TEST", True, _mandate("PAYEE-TEST"))
+        assert error.value.status_code == 403 and "already used" in error.value.detail

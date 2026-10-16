@@ -75,6 +75,7 @@ class PaymentPatch(BaseModel):
 class PayeePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     verified: bool = Field(strict=True)
+    mandate: dict | None = None  # required to verify: owner and accountant signatures (agent/mandate.py)
 
 
 class PayeeIban(BaseModel):
@@ -106,7 +107,7 @@ def add_payee(body: PayeeCreate, session: DB) -> dict:
 
 @app.patch("/payees/{payee_id}", dependencies=[Depends(authorize("payees"))])
 def patch_payee(payee_id: str, body: PayeePatch, session: DB) -> dict:
-    return service.verify_payee(session, payee_id, body.verified)
+    return service.verify_payee(session, payee_id, body.verified, body.mandate)
 
 
 @app.put("/payees/{payee_id}/iban", dependencies=[Depends(authorize("payees"))])

@@ -102,9 +102,10 @@ class BankClient:
         return self._request("POST", "/payees", json=dict(name=name, iban=iban,
             counterparty_id=counterparty_id, verified=verified))
 
-    def verify_payee(self, payee_id: str, verified: bool = True) -> dict:
-        """Set verification status using a human bank token."""
-        return self._request("PATCH", f"/payees/{payee_id}", json={"verified": verified})
+    def verify_payee(self, payee_id: str, verified: bool = True, mandate: dict | None = None) -> dict:
+        """Set verification status using a human bank token; verifying also needs a two-role mandate."""
+        return self._request("PATCH", f"/payees/{payee_id}",
+                             json={"verified": verified, **({"mandate": mandate} if mandate else {})})
 
     def set_payee_iban(self, payee_id: str, iban: str) -> dict:
         """Fill in a missing IBAN using a human bank token."""

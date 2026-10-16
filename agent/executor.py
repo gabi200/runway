@@ -318,8 +318,8 @@ def _human_bank() -> BankClient:
 def _verify_payee(session: Session, args: dict, ctx: dict) -> dict:
     _checked(session, "verify_payee", args)
     try:  # two people approved: the human bank scope is used here, never by agent tools
-        with _human_bank() as bank:
-            return bank.verify_payee(args["payee_id"], True)
+        with _human_bank() as bank:  # the bank checks both signatures itself
+            return bank.verify_payee(args["payee_id"], True, ctx.get("mandate"))
     except BankError as exc:
         raise ToolError(f"bank refused ({exc.status_code}): {exc.detail}") from exc
 
