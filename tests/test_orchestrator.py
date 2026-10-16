@@ -542,3 +542,27 @@ def test_steps_note_keeps_the_approval_id():
 def test_system_prompt_asks_and_withdraws():
     from agent.prompts import SYSTEM_PROMPT
     assert "ask one short question" in SYSTEM_PROMPT and "withdraw_request" in SYSTEM_PROMPT
+
+
+def test_a_placeholder_the_model_was_never_shown_is_withheld(session_factory):
+    """Live DeepSeek copied <IBAN_2> from the prompt's example; unmasking it printed a real payee IBAN."""
+    adapter = ScriptedAdapter([{"content": "Bank details look like <SUPPLIER_1> and <IBAN_1>; <IBAN_2>.",
+                                "tool_calls": []}])
+    agent = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([]))
+    turn = agent.chat("List every supplier's IBAN")
+    assert turn.reply.count("[withheld]") == 3
+    with session_factory() as s:
+        secrets = [p.iban for p in s.exec(__import__("sqlmodel").select(db.Payee))] + \
+                  [c.name for c in s.exec(__import__("sqlmodel").select(db.Counterparty))]
+    assert not [x for x in secrets if x and x.replace(" ", "") in turn.reply.replace(" ", "")]
+
+
+def test_a_tool_argument_naming_an_unshown_entity_is_refused(session_factory):
+    log = []
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "list_payables",
+                                          "arguments": {"counterparty_id": "<SUPPLIER_2_ID>"}}]},
+        {"content": "Done.", "tool_calls": []},
+    ])
+    turn = Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner(log)).chat("What do we owe?")
+    assert log == [] and turn.steps[0]["status"] == "error" and "placeholder" in turn.steps[0]["reason"]

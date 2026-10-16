@@ -65,6 +65,11 @@ def _iban_ok(compact: str) -> bool:
             and int("".join(str(int(c, 36)) for c in compact[4:] + compact[:4])) % 97 == 1)
 
 
+def _entity(m: re.Match[str]) -> str:
+    """<SUPPLIER_1_ID> and <SUPPLIER_1> name the same entity."""
+    return f"{m.group(1)}_{m.group(2)}"
+
+
 def contains_iban(text: str) -> bool:
     """True when `text` holds an IBAN in any case or spacing that passes the mod-97 check."""
     # ponytail: a random code that happens to pass the checksum (about 1 in 97 IBAN-shaped strings) counts too
@@ -264,17 +269,31 @@ class Pseudonymizer:
                        if re.fullmatch(self._rx(k), found, re.IGNORECASE)), "<REDACTED_0>")
         return ph
 
-    def unmask(self, text: str) -> str:
-        """Replace placeholders with the original literals; unknown ones are left as is."""
+    def unmask(self, text: str, allowed: set[str] | None = None, withheld: str | None = None) -> str:
+        """Replace placeholders with the original literals; unknown ones are left as is.
+
+        With `allowed` (the placeholders the model was shown), only entities it saw are resolved, in any
+        form (<SUPPLIER_1> also allows <SUPPLIER_1_ID>); any other is left as is, or replaced by
+        `withheld`. Every payee name and IBAN is registered up front, so without this a model that
+        guesses <IBAN_2> would print a real IBAN it was never given.
+        """
         if not isinstance(text, str) or not text:
             return text
-        return PLACEHOLDER_RE.sub(lambda m: self._rev.get(m.group(0), m.group(0)), text)
+        seen = None if allowed is None else {_entity(PLACEHOLDER_RE.fullmatch(p)) for p in allowed
+                                             if PLACEHOLDER_RE.fullmatch(p)}
+
+        def sub(m: re.Match[str]) -> str:
+            ph = m.group(0)
+            if seen is not None and _entity(m) not in seen:
+                return withheld if withheld is not None else ph
+            return self._rev.get(ph, ph)
+        return PLACEHOLDER_RE.sub(sub, text)
 
     def mask_obj(self, obj: Any) -> Any:
         return self._walk(obj, self.mask)
 
-    def unmask_obj(self, obj: Any) -> Any:
-        return self._walk(obj, self.unmask)
+    def unmask_obj(self, obj: Any, allowed: set[str] | None = None) -> Any:
+        return self._walk(obj, lambda t: self.unmask(t, allowed))
 
     def _walk(self, obj: Any, fn):
         if isinstance(obj, str):

@@ -9,7 +9,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, Field
 
 from agent.prompts import REFUSAL_TEXT, SYSTEM_PROMPT, is_bypass_attempt
-from llm.pseudonym import Pseudonymizer
+from llm.pseudonym import PLACEHOLDER_RE, Pseudonymizer
 
 MONDAY_PROMPT = (
     "Give me the Monday cash brief. Check the 13-week forecast and explain any shortfall. Then act on "
@@ -65,6 +65,16 @@ def steps_note(steps: list[dict]) -> str:
                       + (f" [{s['approval_id']}]" if s.get("approval_id") else "")
                       + (f": {s['reason'][:120]}" if s["reason"] else "") for s in steps)
     return f"[Tool calls made in that turn: {calls or 'none'}]"
+
+
+WITHHELD = "[withheld]"
+
+
+def _shown(messages: list[dict]) -> set[str]:
+    """Placeholders the model was really shown: user text, tool results and earlier replies. Not the system
+    prompt's examples, and not the model's own tool-call arguments (it may have invented those)."""
+    blob = json.dumps([m.get("content") for m in messages[1:] if not m.get("tool_calls")], default=str)
+    return {m.group(0) for m in PLACEHOLDER_RE.finditer(blob)}
 
 
 def _masked(pseudo: Pseudonymizer, m: dict) -> dict:
@@ -204,8 +214,9 @@ class Agent:
                 adapter = OfflinePlanner()  # it reads the tool calls already made in this turn and continues
                 resp = adapter.chat(messages, self._specs())
             calls = resp.get("tool_calls") or []
+            shown = _shown(messages)
             if not calls:
-                reply = pseudo.unmask(resp.get("content") or "")
+                reply = pseudo.unmask(resp.get("content") or "", shown, WITHHELD)
                 break
             raw.append({  # the model's own output is already in placeholders
                 "role": "assistant", "content": resp.get("content"),
@@ -215,7 +226,7 @@ class Agent:
                                for c in calls],
             })
             for c in calls:
-                args = pseudo.unmask_obj(c["arguments"])
+                args = pseudo.unmask_obj(c["arguments"], shown)  # an unshown placeholder stays and is refused below
                 try:
                     if pseudo.has_unknown_placeholder(args):
                         raise ValueError("tool arguments reference an unknown placeholder; use only placeholders from tool results")
