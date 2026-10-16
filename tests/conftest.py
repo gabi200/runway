@@ -13,6 +13,8 @@ def unbacked_automatic(monkeypatch):
 def no_live_llm(monkeypatch):
     """A real key loaded from .env must never make a test call the API."""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("RUNWAY_LLM", raising=False)
 
 
 

@@ -1,0 +1,6 @@
+provider: gemini
+base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+model: gemini-3.8-flash
+api_key_env: GEMINI_API_KEY
+temperature: 0.2
+timeout_seconds: 60

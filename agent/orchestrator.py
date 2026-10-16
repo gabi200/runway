@@ -192,7 +192,8 @@ class Agent:
             raw.append({  # the model's own output is already in placeholders
                 "role": "assistant", "content": resp.get("content"),
                 "tool_calls": [{"id": c["id"], "type": "function",
-                                "function": {"name": c["name"], "arguments": json.dumps(c["arguments"])}}
+                                "function": {"name": c["name"], "arguments": json.dumps(c["arguments"])},
+                                **({"extra_content": c["extra_content"]} if "extra_content" in c else {})}
                                for c in calls],
             })
             for c in calls:

@@ -163,11 +163,11 @@ def forbidden_action(session: Session, preset: str) -> Trace:
     return _trace(PRESETS[preset], steps)
 
 
-def chat_injection(session_factory, message: str, actor: str = "owner") -> Trace:
+def chat_injection(session_factory, message: str, actor: str = "owner", adapter=None) -> Trace:
     """Send a message to a fresh agent (offline planner or the configured model) and trace its tool calls."""
     from agent.orchestrator import Agent
 
-    turn = Agent(session_factory).chat(message, actor=actor)
+    turn = Agent(session_factory, adapter=adapter).chat(message, actor=actor)
     if turn.refused:
         return _trace("Chat injection", [Step("Jailbreak filter", "blocked",
                                               "Refused before any model call: " + turn.reply)])
@@ -175,7 +175,7 @@ def chat_injection(session_factory, message: str, actor: str = "owner") -> Trace
     for call in turn.steps:
         outcome = OUTCOME_OF_STATUS.get(call["status"], "info") if call["tool"] in PRIVILEGED else "info"
         steps.append(Step("Rules engine", outcome, f"{call['tool']}: {call['status']} {call['reason']}".strip()))
-    steps.append(Step("Agent reply", "info", turn.reply[:600]))
+    steps.append(Step("Agent reply", "info", turn.reply))
     return _trace("Chat injection", steps)
 
 

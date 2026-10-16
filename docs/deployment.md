@@ -2,7 +2,7 @@
 
 Runway is a local application: a Python package, one SQLite file, an optional FastAPI server for the mock bank, and a Streamlit UI. There is no Docker setup or hosted deployment in this repository.
 
-Requirements: Python 3.11 or newer (the lock file and `.python-version` use 3.12), about 500 MB for dependencies. Network access is needed only for installing packages and, optionally, for the DeepSeek API.
+Requirements: Python 3.11 or newer (the lock file and `.python-version` use 3.12), about 500 MB for dependencies. Network access is needed only for installing packages and, optionally, for the DeepSeek or Gemini API.
 
 ## 1. Local setup
 
@@ -120,7 +120,8 @@ Complete list, found by searching the code for `os.environ` and `os.getenv`:
 | `RUNWAY_OWNER_PIN` | `1111` | `ui/auth.py:pin_for` | PIN for the owner sign-in in the UI. Demo-grade. |
 | `RUNWAY_ACCOUNTANT_PIN` | `2222` | `ui/auth.py:pin_for` | PIN for the accountant sign-in in the UI. Demo-grade. |
 | `DEEPSEEK_API_KEY` | unset | `llm/adapter.py:get_adapter` | API key. The variable name comes from `api_key_env` in `config/llm.yaml`. If unset, the offline planner is used. |
-| `RUNWAY_LLM` | unset | `llm/adapter.py:get_adapter` | `offline` forces the offline planner even if a key is set. |
+| `GEMINI_API_KEY` | unset | `llm/adapter.py:get_adapter` | API key for Gemini mode (`config/gemini.yaml`). |
+| `RUNWAY_LLM` | unset | `llm/adapter.py:get_adapter` | Startup mode: `offline`, `deepseek`, or `gemini`. Sidebar selection overrides it per session. Explicit online modes require their key. |
 | `RUNWAY_LLM_MODEL` | `model` in `config/llm.yaml` | `llm/adapter.py` | Override the model id. |
 | `RUNWAY_LLM_BASE_URL` | `base_url` in `config/llm.yaml` | `llm/adapter.py` | Override the API base URL. |
 | `RUNWAY_LLM_THINKING` | unset | `llm/adapter.py:chat` | Set to `on` to stop sending `thinking: disabled` to DeepSeek. Leave it unset: the adapter does not echo `reasoning_content` between tool turns. |
@@ -156,7 +157,9 @@ For anything beyond a demo, set both bank tokens to long random values and repla
 
 The list also covers `config/llm.yaml`, whose `api_key_env` names one more variable (`DEEPSEEK_API_KEY` by default).
 
-## 4. Offline mode and DeepSeek mode
+## 4. Offline, DeepSeek and Gemini modes
+
+Use **Model mode** in the sidebar to switch providers for the current browser session, including the red-team chat injection test. Each switch starts a fresh conversation and clears the displayed brief and red-team result; it does not undo stored actions or approvals. Keys are loaded from `.env` at process startup, so restart Runway after editing them. An explicitly selected provider without its key shows a setup warning and disables model actions.
 
 **Offline (default).** No `DEEPSEEK_API_KEY`, or `RUNWAY_LLM=offline`. `llm/adapter.py:get_adapter()` returns `OfflinePlanner`, a deterministic stand-in that issues the real tool calls of the demo story (forecast, reminders, reschedule, financing, document review, refusals). Everything the agent does still passes the rules engine, approval queue and audit log. It needs no network. Use it for the demo video, tests and judging machines without internet.
 
@@ -171,6 +174,8 @@ cp .env.example .env                  # then set DEEPSEEK_API_KEY=sk-... in .env
 
 Tests never call the API.
 
+**Gemini.** Add `GEMINI_API_KEY=your-key` to the existing `.env` (keep `DEEPSEEK_API_KEY` too), restart Runway and select **Gemini**. Get a key from [Google AI Studio](https://aistudio.google.com/apikey). To start in Gemini mode, set `RUNWAY_LLM=gemini` in `.env` or the process environment. `config/gemini.yaml` uses `gemini-3.8-flash` via Google's [OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai), using the installed OpenAI SDK. Provider tool-call metadata is retained across tool turns. Both online modes use the same pseudonymisation and policy checks. API integration tests use fake responses; a live key and successful chat are still needed to confirm account access and quotas.
+
 ## 5. Switching the LLM provider (one config change)
 
 Any OpenAI-compatible chat API with tool calling works. Edit `config/llm.yaml`:
@@ -184,7 +189,7 @@ temperature: 0.2
 timeout_seconds: 60
 ```
 
-Then `export PROVIDER_API_KEY=...`. Without editing the file you can also set `RUNWAY_LLM_BASE_URL` and `RUNWAY_LLM_MODEL`, but the key variable name still comes from `api_key_env`. Look up the exact endpoint and model names in the provider's documentation; they are not verified here. No code change is needed.
+Then `export PROVIDER_API_KEY=...`. Without editing the file you can also set `RUNWAY_LLM_BASE_URL` and `RUNWAY_LLM_MODEL`, but the key variable name still comes from `api_key_env`. These overrides apply to either selected online provider; remove them when switching if they point to a different provider. For Gemini-specific settings edit `config/gemini.yaml`. Look up the exact endpoint and model names in the provider's documentation; custom providers are not verified here. No adapter code change is needed.
 
 ## 6. Switching the country pack
 

@@ -51,14 +51,26 @@ class LLMAdapter:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {"_invalid_json": tc.function.arguments}
-            calls.append({"id": tc.id, "name": tc.function.name, "arguments": args})
+            call = {"id": tc.id, "name": tc.function.name, "arguments": args}
+            if getattr(tc, "extra_content", None):
+                call["extra_content"] = tc.extra_content
+            calls.append(call)
         return {"content": msg.content, "tool_calls": calls}
 
 
-def get_adapter() -> "LLMAdapter | Any":
-    """Return the real adapter, or the OfflinePlanner without an API key / RUNWAY_LLM=offline."""
+def get_adapter(mode: str | None = None) -> "LLMAdapter | Any":
+    """Select a provider per session or from RUNWAY_LLM; unconfigured defaults run offline."""
     cfg = load_yaml("llm.yaml")
-    if os.environ.get("RUNWAY_LLM", "").lower() == "offline" or not os.environ.get(cfg["api_key_env"]):
+    selected = (mode or os.environ.get("RUNWAY_LLM") or cfg["provider"]).lower()
+    if selected == "gemini":
+        cfg = load_yaml("gemini.yaml")
+    elif selected not in {"offline", cfg["provider"]}:
+        raise ValueError(f"Unknown LLM mode: {selected}")
+    if selected != "offline" and not os.environ.get(cfg["api_key_env"], "").strip():
+        if mode or os.environ.get("RUNWAY_LLM"):
+            raise ValueError(f"Set {cfg['api_key_env']} in .env and restart Runway to use {selected}.")
+        selected = "offline"
+    if selected == "offline":
         from llm.offline import OfflinePlanner
 
         return OfflinePlanner()

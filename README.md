@@ -43,10 +43,13 @@ export RUNWAY_BANK_URL=http://localhost:8001     # make the UI and agent use it
 
 Without `RUNWAY_BANK_URL` the bank runs in-process, which is enough for the demo. The UI also generates data on first start if the database is empty.
 
-### Offline mode and DeepSeek mode
+### Offline, DeepSeek and Gemini modes
+
+Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, or **Gemini**. The selection applies to chat, the Monday brief and chat injection tests in that browser session. Switching modes clears the conversation and displayed brief; saved actions and approvals remain in the database. `RUNWAY_LLM=offline|deepseek|gemini` sets the startup mode. With no explicit mode, DeepSeek is used if its key is set; otherwise the app starts offline. Selecting a provider without its key displays setup instructions.
 
 - **Offline (default)**: with no API key, a deterministic planner (`llm/offline.py`) plays the language model and issues the real tool calls of the demo. No network needed. Force it with `RUNWAY_LLM=offline`.
 - **DeepSeek**: copy `.env.example` to `.env` and put the key after `DEEPSEEK_API_KEY=` (or export the variable; the environment wins over `.env`, which git ignores). Provider, base URL and model are in `config/llm.yaml`; any OpenAI-compatible provider works by editing that file. Names (known counterparties, people found in headers and signatures), e-mails and IBANs are replaced by placeholders before the API call; amounts, dates and invoice numbers are sent as they are.
+- **Gemini**: add `GEMINI_API_KEY=your-key` to your existing `.env` and restart Runway, then choose **Gemini**. Get a key from [Google AI Studio](https://aistudio.google.com/apikey). `config/gemini.yaml` sets `gemini-3.8-flash` and Google's [OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai). Gemini uses the same pseudonymisation, tool checks and approval gates. Both keys can coexist in `.env`; never commit that file.
 
 ### Environment variables
 
@@ -62,7 +65,8 @@ Without `RUNWAY_BANK_URL` the bank runs in-process, which is enough for the demo
 | `RUNWAY_OWNER_PIN` | `1111` | UI sign-in PIN of the owner role (demo-grade) |
 | `RUNWAY_ACCOUNTANT_PIN` | `2222` | UI sign-in PIN of the accountant role (demo-grade) |
 | `DEEPSEEK_API_KEY` | unset | LLM key (variable name set by `api_key_env` in `config/llm.yaml`) |
-| `RUNWAY_LLM` | unset | `offline` forces the offline planner |
+| `GEMINI_API_KEY` | unset | Gemini API key for Gemini mode |
+| `RUNWAY_LLM` | unset | Startup mode: `offline`, `deepseek`, or `gemini`; the sidebar overrides it per session |
 | `RUNWAY_LLM_MODEL`, `RUNWAY_LLM_BASE_URL` | from `config/llm.yaml` | Override model and endpoint |
 | `RUNWAY_LLM_THINKING` | unset | `on` enables DeepSeek thinking mode (not recommended) |
 | `RUNWAY_SAMPLE_DIR` | `data/sample` | UI sample-data folder (generated CSVs and demo documents) |

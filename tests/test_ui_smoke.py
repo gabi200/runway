@@ -1,6 +1,7 @@
 """Smoke test: click through the Streamlit UI on a temp DB, offline LLM."""
 
 from pathlib import Path
+import os
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -41,6 +42,51 @@ def test_all_pages_render(at):
     for page in ["Onboarding", "Monday brief & chat", "Forecast", "Approval queue", "Documents",
                  "Payees (humans only)", "Mock bank", "Test inbox", "Audit log", "Red team"]:
         goto(at, page)
+
+
+def test_llm_mode_switch_is_session_local(at, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    at.session_state["chat"] = [("user", "Old conversation", None)]
+    at.session_state["agent"] = object()
+    at.selectbox(key="llm_mode").set_value("gemini").run()
+    assert not at.exception
+    assert at.session_state["chat"] == [] and "agent" not in at.session_state
+    assert at.session_state["llm_ready"]
+    assert os.environ["RUNWAY_LLM"] == "offline"
+    other = AppTest.from_file(APP, default_timeout=60).run()
+    assert other.selectbox(key="llm_mode").value == "offline"
+
+
+def test_missing_gemini_key_disables_agent(at):
+    at.selectbox(key="llm_mode").set_value("gemini").run()
+    assert not at.exception
+    assert not at.session_state["llm_ready"]
+    assert any("GEMINI_API_KEY" in w.value for w in at.warning)
+    sign_in(at)
+    goto(at, "Red team")
+    assert at.button(key="rt_chat_run").disabled
+
+
+def test_gemini_startup_without_key_shows_setup(at, monkeypatch):
+    monkeypatch.setenv("RUNWAY_LLM", "gemini")
+    other = AppTest.from_file(APP, default_timeout=60).run()
+    assert not other.exception
+    assert other.selectbox(key="llm_mode").value == "gemini"
+    assert any("GEMINI_API_KEY" in w.value for w in other.warning)
+
+
+@pytest.mark.parametrize("mode,key", [("deepseek", "DEEPSEEK_API_KEY"), ("gemini", "GEMINI_API_KEY")])
+def test_chat_uses_selected_provider(at, monkeypatch, mode, key):
+    from llm.adapter import LLMAdapter
+
+    monkeypatch.setenv(key, "test-key")
+    monkeypatch.setattr(LLMAdapter, "chat", lambda self, messages, tools:
+                        {"content": f"Reply from {self.config['provider']}.", "tool_calls": []})
+    sign_in(at)
+    at.selectbox(key="llm_mode").set_value(mode).run()
+    at.chat_input(key="copilot_input").set_value("Hello").run()
+    assert not at.exception
+    assert at.session_state["chat"][-1][1] == f"Reply from {mode}."
 
 
 def test_brief_approvals_kill_switch_and_audit(at):

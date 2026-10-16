@@ -147,6 +147,58 @@ def test_get_adapter_offline_without_key(monkeypatch):
     assert isinstance(get_adapter(), OfflinePlanner)
 
 
+@pytest.mark.parametrize("mode,key,model", [
+    ("deepseek", "DEEPSEEK_API_KEY", "deepseek-flash"),
+    ("gemini", "GEMINI_API_KEY", "gemini-3.8-flash"),
+])
+def test_provider_selection(monkeypatch, mode, key, model):
+    monkeypatch.setenv(key, "test-key")
+    monkeypatch.setenv("RUNWAY_LLM", "offline")
+    adapter = get_adapter(mode)
+    assert adapter.config["provider"] == mode
+    assert adapter.api_key == "test-key" and adapter.model == model
+    monkeypatch.setenv("RUNWAY_LLM", mode)
+    assert get_adapter().config["provider"] == mode
+
+
+@pytest.mark.parametrize("mode,key", [("deepseek", "DEEPSEEK_API_KEY"), ("gemini", "GEMINI_API_KEY")])
+def test_explicit_provider_requires_its_key(mode, key):
+    with pytest.raises(ValueError, match=key):
+        get_adapter(mode)
+
+
+def test_gemini_tool_call_uses_compatible_endpoint(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    adapter = get_adapter("gemini")
+    assert adapter.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    requests = []
+    fn = types.SimpleNamespace(name="get_balances", arguments="{}")
+    extra = {"google": {"thought_signature": "opaque-signature"}}
+    msg = types.SimpleNamespace(content=None, tool_calls=[types.SimpleNamespace(id="t1", function=fn,
+                                                                               extra_content=extra)])
+    def create(**kwargs):
+        requests.append(kwargs)
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    adapter._client = types.SimpleNamespace(chat=types.SimpleNamespace(
+        completions=types.SimpleNamespace(create=create)))
+    tools = [{"type": "function", "function": {"name": "get_balances"}}]
+    out = adapter.chat([{"role": "user", "content": "Balance?"}], tools)
+    assert out["tool_calls"] == [{"id": "t1", "name": "get_balances", "arguments": {}, "extra_content": extra}]
+    assert requests[0]["tools"] == tools and "extra_body" not in requests[0]
+
+
+def test_tool_call_metadata_survives_agent_loop(session_factory):
+    extra = {"google": {"thought_signature": "opaque-signature"}}
+    adapter = ScriptedAdapter([
+        {"content": None, "tool_calls": [{"id": "c1", "name": "get_balances", "arguments": {},
+                                           "extra_content": extra}]},
+        {"content": "Done.", "tool_calls": []},
+    ])
+    Agent(session_factory, adapter, tool_specs=[], tool_runner=fake_runner([])).chat("Balance?")
+    assistant = next(m for m in adapter.seen[-1] if m["role"] == "assistant")
+    assert assistant["tool_calls"][0]["extra_content"] == extra
+
+
 # --------------------------------------------------------------------------- #
 # end to end with real modules and the OfflinePlanner
 # --------------------------------------------------------------------------- #

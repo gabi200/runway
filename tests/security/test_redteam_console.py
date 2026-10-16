@@ -109,6 +109,25 @@ def test_runs_are_audited(stack):
     assert json.loads(last.args_json) == {"scenario": trace.scenario, "verdict": "Stopped"}
 
 
+def test_chat_injection_preserves_full_reply(monkeypatch):
+    from agent.orchestrator import Agent, AgentTurn
+
+    reply = "A complete reply. " * 100 + "The end."
+    monkeypatch.setattr(Agent, "chat", lambda *args, **kwargs: AgentTurn(reply=reply))
+    trace = chat_injection(None, "What can you do?")
+    assert trace.steps[-1] == Step("Agent reply", "info", reply)
+
+
+def test_chat_injection_uses_selected_adapter(stack):
+    from types import SimpleNamespace
+
+    s, _, _ = stack
+    s.commit()
+    adapter = SimpleNamespace(chat=lambda messages, tools: {"content": "Selected provider reply.", "tool_calls": []})
+    trace = chat_injection(db.session_scope, "Hello", adapter=adapter)
+    assert trace.steps[-1].detail == "Selected provider reply."
+
+
 from sqlalchemy import text
 
 from agent.executor import run_tool
