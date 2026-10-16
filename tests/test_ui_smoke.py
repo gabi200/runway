@@ -381,6 +381,32 @@ def test_model_markdown_is_neutralised():
     assert "`http://a.example`" in out
 
 
+def test_reply_markdown_keeps_formatting():
+    from ui.render import reply_markdown
+    text = "## Plan\n\n- **Pay** the *supplier*\n- Call `INV-7`\n\n| Week | Balance |\n|---|---|\n| 3 | -1,200 |"
+    assert reply_markdown(text) == text
+
+
+def test_reply_markdown_neutralises_links_images_and_html():
+    from ui.render import reply_markdown
+    out = reply_markdown(r"**Act now:** [click](http://evil.example/x) ![p](http://evil.example/p.png) "
+                         r"<img src=x> <https://evil.example> [ref]: http://evil.example \[a](b) ops@evil.example")
+    assert out.startswith("**Act now:** ")
+    assert "![" not in out and "](http" not in out
+    assert r"\[click\](`http://evil.example/x`)" in out
+    assert r"\<img src=x>" in out and r"\<`https://evil.example`>" in out
+    assert reply_markdown("Done.\n\n> Check by Runway: x") == "Done.\n\n> Check by Runway: x"  # quote blocks stay
+    assert r"\[ref\]: `http://evil.example`" in out
+    assert r"\\[a\](b)" in out  # a model's own backslash cannot cancel the escape
+    assert out.endswith("`ops@evil.example`")
+
+
+def test_reply_markdown_leaves_code_untouched():
+    from ui.render import reply_markdown
+    text = "Run `rate[0] < 5` then:\n```\nif a[1] > b: print('<x>')\n```"
+    assert reply_markdown(text) == text
+
+
 def test_bare_email_addresses_are_not_autolinked():
     from ui.render import safe_text
     out = safe_text("From billing.team+x@evil-pay.example.com, reply to xmpp:bot@evil.example now.")
@@ -677,3 +703,38 @@ def test_forecast_table_shows_the_lowest_point_of_each_week(at):
     goto(at, "Forecast")
     table = next(df for df in at.dataframe if "Lowest in week" in df.value.columns)
     assert "Lowest in week" in (table.proto.column_order or table.value.columns)
+
+
+def test_reply_shows_chart_and_invoice_buttons_and_reminder_goes_through_agent(at):
+    from agent.orchestrator import AgentTurn
+    from common.db import Invoice
+    from sqlmodel import select
+
+    with db.session_scope() as s:
+        today = db.get_today(s)
+        inv = next(i for i in s.exec(select(Invoice).where(Invoice.direction == "AR", Invoice.status == "open"))
+                   if i.due_date < today)
+        inv_id, number = inv.id, inv.number
+    chart = {"dataset": "receivables", "title": "Open customer invoices by customer", "kind": "bar",
+             "x_label": "Customer", "y_label": "Open amount", "note": "", "x_order": ["A"],
+             "rows": [{"x": "A", "series": "Open amount", "value_cents": 12345}]}
+    sign_in(at)
+    at.session_state["brief"] = AgentTurn(reply=f"Invoice {number} is overdue.", steps=[
+        {"tool": "make_chart", "args": {"dataset": "receivables"}, "status": "ok", "reason": "", "chart": chart}])
+    goto(at, "Monday brief & chat")
+    assert any("Figures computed from the ledger, not by AI." in c.value for c in at.caption)  # under the agent's chart
+    labels = [b.label for b in at.button]
+    assert number in labels and f"Remind: {number}" in labels
+    at.session_state["brief"] = None
+    next(b for b in at.button if b.label == f"Remind: {number}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    user, reply = at.session_state["chat"][-2], at.session_state["chat"][-1]
+    assert user[1] == f"Send a payment reminder for invoice {number} ({inv_id})."
+    steps = [(s["tool"], s["args"].get("invoice_id"), s["status"]) for s in reply[2].steps]
+    assert ("send_payment_reminder", inv_id, "ok") in steps
+
+
+def test_chat_send_button_icon_contrasts_with_its_fill():
+    css = (Path(__file__).resolve().parent.parent / "ui" / "style.css").read_text(encoding="utf-8")
+    rule = next(line for line in css.splitlines() if line.startswith('[data-testid="stChatInputSubmitButton"] {'))
+    assert "background: var(--accent)" in rule and "color: var(--accent)" not in rule

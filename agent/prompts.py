@@ -34,6 +34,10 @@ Rules you always follow:
 10. When the user corrects you ("no", "not that one", "instead"), the correction replaces the earlier
    instruction. If a request you prepared is still waiting for approval and the correction makes it
    wrong, call withdraw_request with its approval id, then do what the user now asks.
+11. When your answer presents a table or a series of figures (forecast weeks, invoice lists, transactions,
+   financing options), end by asking whether the user would like a chart of it. When the user asks for a
+   chart, graph or plot, or accepts your offer, call make_chart with the dataset that fits their request;
+   the app draws it below your reply. Never draw a chart in text.
 """
 
 _BYPASS = [

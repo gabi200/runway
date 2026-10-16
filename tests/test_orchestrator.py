@@ -149,7 +149,7 @@ def test_get_adapter_offline_without_key(monkeypatch):
 
 @pytest.mark.parametrize("mode,key,model", [
     ("deepseek", "DEEPSEEK_API_KEY", "deepseek-flash"),
-    ("gemini", "GEMINI_API_KEY", "gemini-3.8-flash"),
+    ("gemini", "GEMINI_API_KEY", "google/gemini-3.8-flash"),
 ])
 def test_provider_selection(monkeypatch, mode, key, model):
     monkeypatch.setenv(key, "test-key")
@@ -167,10 +167,35 @@ def test_explicit_provider_requires_its_key(mode, key):
         get_adapter(mode)
 
 
+def test_gemini_requires_vertex_project(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT")
+    with pytest.raises(ValueError, match="GOOGLE_CLOUD_PROJECT"):
+        get_adapter("gemini")
+
+
+def test_gemini_sends_key_only_in_vertex_header(monkeypatch):
+    """Vertex rejects an API key sent as a Bearer token, so the SDK's Authorization header is dropped."""
+    import httpx
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    seen = []
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"id": "r1", "object": "chat.completion", "created": 0,
+                                         "model": "google/gemini-3.8-flash", "choices": [
+            {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "OK"}}]})
+    adapter = get_adapter("gemini")
+    adapter.client._client = httpx.Client(transport=httpx.MockTransport(handler))  # SDK's own headers, fake network
+    assert adapter.chat([{"role": "user", "content": "Hi"}], [])["content"] == "OK"
+    assert str(seen[0].url) == ("https://aiplatform.googleapis.com/v1/projects/test-project/locations/global"
+                                "/endpoints/openapi/chat/completions")
+    assert seen[0].headers["x-goog-api-key"] == "test-key" and "authorization" not in seen[0].headers
+
+
 def test_gemini_tool_call_uses_compatible_endpoint(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     adapter = get_adapter("gemini")
-    assert adapter.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
     requests = []
     fn = types.SimpleNamespace(name="get_balances", arguments="{}")
     extra = {"google": {"thought_signature": "opaque-signature"}}

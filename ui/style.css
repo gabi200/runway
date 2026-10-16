@@ -96,7 +96,14 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .st-key-prompt-actions button { color: var(--muted); }
 [data-testid="stChatInput"] { border: 1px solid var(--control); background: var(--bg); border-radius: .75rem; min-height: 90px; box-shadow: 0 3px 12px #00000008; }
 [data-testid="stChatInput"] textarea { font-size: .85rem; }
-[data-testid="stChatInputSubmitButton"] { min-width: 44px; min-height: 44px; color: var(--accent); }
+/* Filled accent button with a contrasting arrow; the icon used to be accent-on-accent and invisible. */
+[data-testid="stChatInputSubmitButton"] { min-width: 44px; min-height: 44px; border-radius: .5rem; background: var(--accent); color: light-dark(#ffffff, #15251a); }
+[data-testid="stChatInputSubmitButton"] svg { fill: currentColor; color: inherit; width: 1.25rem; height: 1.25rem; }
+[data-testid="stChatInputSubmitButton"]:disabled { background: var(--green-bg); color: var(--muted); }
+[data-testid="stChatInputSubmitButton"]:not(:disabled):hover { filter: brightness(1.12); }
+[class*="st-key-invoice-links-"] { gap: .4rem; flex-wrap: wrap; }
+[class*="st-key-invoice-links-"] button { min-height: 36px; }
+[class*="st-key-invoice-links-"] button p { font-size: .75rem; }
 .st-key-cash-context { border-left: 1px solid var(--border); padding-left: 1.6rem; }
 .context-heading { font-size: .86rem; font-weight: 600; letter-spacing: 0; padding: 0; display: flex; justify-content: space-between; gap: .5rem; }
 .context-heading span { font-size: .65rem; color: var(--muted); font-weight: 400; }

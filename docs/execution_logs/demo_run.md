@@ -617,7 +617,7 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 
 ```json
 {
-  "reply": "Heads up: your cash goes below zero. The forecast starts from \u20ac40,000.00 today.\nThe balance is below zero from 2026-11-25 (week 6) and lowest at -\u20ac29,303.32 on 2026-11-26.\nBiggest payments in that stretch: Payroll (estimate) (\u20ac55,060.00); Scheduled payment PAY-0001 (\u20ac12,000.00); VAT payment (estimate) (\u20ac11,491.66).\nIt ends with Receipt LUM-2026-0093 (\u20ac90,000.00, AR-1093), expected 2026-12-03 in week 7 (due 2026-11-28, adjusted +5 days for avg lateness).\nThe balance is below zero from 2026-12-25 (week 10) and lowest at -\u20ac9,494.98 on 2026-12-25.\nBiggest payments in that stretch: Payroll (estimate) (\u20ac55,060.00); VAT payment (estimate) (\u20ac11,491.66).\nIt ends with Receipt LUM-2026-0101 (\u20ac95,000.00, AR-1101), expected 2026-12-31 in week 11 (due 2026-12-26, adjusted +5 days for avg lateness).\nReminders for overdue customer invoices (low risk, allowed automatically): AR-1091: reminder sent; AR-1092: reminder sent.\nMove the payment for Scheduled payment PAY-0001 (\u20ac12,000.00) from 2026-11-26 to 2026-12-14, its due date: prepared and waiting for approval by owner (request APR-0001).\nFinancing need (computed by the system, with the proposed reschedule applied): \u20ac18,000.00 needed by 2026-11-25 for 36 days. Shortfall in week(s) 6, 7, 10, 11: the balance first goes below zero on 2026-11-25 and is lowest at -\u20ac17,303.32 on 2026-11-25 (week 6; same-day payments counted before receipts). Amount = that deficit rounded up to a whole 1,000: \u20ac18,000.00. Needed from 2026-11-25 for 36 days: balance is back above zero with Receipt LUM-2026-0101 (\u20ac95,000.00) expected 2026-12-31 in week 11.\nIf the reschedule is not approved, the need is \u20ac30,000.00 (worst week 6).\nFinancing: for \u20ac18,000.00 for 36 days, the cheapest option that arrives in time is Supply-chain finance (Brightfield Appliances programme), true cost \u20ac216.00 (1.2%), cash by 2026-10-23 (needed by 2026-11-25).\nAll options that arrive in time: Supply-chain finance (Brightfield Appliances programme) \u20ac216.00, cash 2026-10-23; Overdraft \u20ac413.04, cash 2026-10-20; Invoice financing \u20ac540.00, cash 2026-10-21; Short-term loan (6 months) \u20ac992.22, cash 2026-10-24; State-guaranteed SME loan \u20ac1,260.00, cash 2026-11-09.\nNothing was excluded for speed: the State-guaranteed SME loan arrives in time (2026-11-09, before 2026-11-25) but is the most expensive at \u20ac1,260.00, because its interest runs for the full term.\nApplication: prepared and waiting for approval by owner and accountant (request APR-0002). This application assumes reschedule APR-0001 is approved; without it the need is \u20ac30,000.00.",
+  "reply": "Heads up: your cash goes below zero. The forecast starts from \u20ac40,000.00 today.\nThe balance is below zero from 2026-11-25 (week 6) and lowest at -\u20ac29,303.32 on 2026-11-26.\nBiggest payments in that stretch: Payroll (estimate) (\u20ac55,060.00); Scheduled payment PAY-0001 (\u20ac12,000.00); VAT payment (estimate) (\u20ac11,491.66).\nIt ends with Receipt LUM-2026-0093 (\u20ac90,000.00, AR-1093), expected 2026-12-03 in week 7 (due 2026-11-28, adjusted +5 days for avg lateness).\nThe balance is below zero from 2026-12-25 (week 10) and lowest at -\u20ac9,494.98 on 2026-12-25.\nBiggest payments in that stretch: Payroll (estimate) (\u20ac55,060.00); VAT payment (estimate) (\u20ac11,491.66).\nIt ends with Receipt LUM-2026-0101 (\u20ac95,000.00, AR-1101), expected 2026-12-31 in week 11 (due 2026-12-26, adjusted +5 days for avg lateness).\nReminders for overdue customer invoices (low risk, allowed automatically): AR-1091: reminder sent; AR-1092: reminder sent.\nMove the payment for Scheduled payment PAY-0001 (\u20ac12,000.00) from 2026-11-26 to 2026-12-14, its due date: prepared and waiting for approval by owner (request APR-0001).\nFinancing need (computed by the system, with the proposed reschedule applied): \u20ac18,000.00 needed by 2026-11-25 for 36 days. Shortfall in week(s) 6, 7, 10, 11: the balance first goes below zero on 2026-11-25 and is lowest at -\u20ac17,303.32 on 2026-11-25 (week 6; same-day payments counted before receipts). Amount = that deficit rounded up to a whole 1,000: \u20ac18,000.00. Needed from 2026-11-25 for 36 days: balance is back above zero with Receipt LUM-2026-0101 (\u20ac95,000.00) expected 2026-12-31 in week 11.\nIf the reschedule is not approved, the need is \u20ac30,000.00 (worst week 6).\nFinancing: for \u20ac18,000.00 for 36 days, the cheapest option that arrives in time is Supply-chain finance (Brightfield Appliances programme), true cost \u20ac216.00 (1.2%), cash by 2026-10-23 (needed by 2026-11-25).\nAll options that arrive in time: Supply-chain finance (Brightfield Appliances programme) \u20ac216.00, cash 2026-10-23; Overdraft \u20ac413.04, cash 2026-10-20; Invoice financing \u20ac540.00, cash 2026-10-21; Short-term loan (6 months) \u20ac992.22, cash 2026-10-24; State-guaranteed SME loan \u20ac1,260.00, cash 2026-11-09.\nNothing was excluded for speed: the State-guaranteed SME loan arrives in time (2026-11-09, before 2026-11-25) but is the most expensive at \u20ac1,260.00, because its interest runs for the full term.\nApplication: prepared and waiting for approval by owner and accountant (request APR-0002). This application assumes reschedule APR-0001 is approved; without it the need is \u20ac30,000.00.\nWould you like a chart of the financing costs?",
   "steps": [
     {
       "tool": "get_forecast",
@@ -729,16 +729,16 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 
 ```json
 {
-  "required_roles_json": "[\"owner\"]",
   "id": "APR-0001",
+  "required_roles_json": "[\"owner\"]",
   "status": "pending",
   "result_json": null,
   "decided_at": null,
   "approvals_json": "[]",
-  "args_json": "{\"new_date\":\"2026-12-14\",\"payment_id\":\"PAY-0001\"}",
   "tool_name": "reschedule_payment",
+  "args_json": "{\"new_date\":\"2026-12-14\",\"payment_id\":\"PAY-0001\"}",
   "reason": "Rescheduling requires owner approval",
-  "created_at": "2026-10-19T21:08:20.984536Z"
+  "created_at": "2026-10-19T21:17:32.154385Z"
 }
 ```
 
@@ -758,8 +758,8 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "automatic": false,
     "created_at": "2026-10-15T09:00:00Z",
     "transaction_id": null,
-    "id": "PAY-0001",
     "payee_id": "PAYEE-INKWORKS",
+    "id": "PAY-0001",
     "currency": "EUR",
     "status": "scheduled",
     "document_id": null,
@@ -774,16 +774,16 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 
 ```json
 {
-  "required_roles_json": "[\"owner\", \"accountant\"]",
   "result_json": null,
   "status": "pending",
   "id": "APR-0002",
   "decided_at": null,
-  "created_at": "2026-10-19T21:08:21.039219Z",
+  "required_roles_json": "[\"owner\", \"accountant\"]",
   "tool_name": "prepare_financing_application",
-  "args_json": "{\"amount_cents\":1800000,\"days_needed\":36,\"needed_by\":\"2026-11-25\",\"product_id\":\"supply_chain_finance\"}",
   "reason": "Financing application requires approval",
-  "approvals_json": "[]"
+  "args_json": "{\"amount_cents\":1800000,\"days_needed\":36,\"needed_by\":\"2026-11-25\",\"product_id\":\"supply_chain_finance\"}",
+  "approvals_json": "[]",
+  "created_at": "2026-10-19T21:17:32.211984Z"
 }
 ```
 
@@ -818,7 +818,7 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "id": "FIN-0001",
     "currency": "EUR",
     "pdf_path": "<demo-workdir>/var/applications/FIN-0001.pdf",
-    "created_at": "2026-10-16 21:08:21.326448+00:00",
+    "created_at": "2026-10-16 21:17:32.537625+00:00",
     "needed_by": "2026-11-25",
     "product_id": "supply_chain_finance",
     "amount_cents": 1800000,
@@ -846,14 +846,14 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
         {
           "role": "owner",
           "approver_id": "owner@demo",
-          "public_key": "z5y+2WmQDNSPir0J2BP6HcouSp4FMogUsVSdfCEEJT4=",
-          "signature": "+HobeW/jK0Sy01H7q7+zeR/aNvppYJGqQMtesNheng0qUaGzJnjtnnIDeSWwTRG5O1mYrioyi1npM2lFASYQCA=="
+          "public_key": "LYrY8ZBP9bbgGQduimYhSQ51BjHDRsz9H0w+aPZ9FyM=",
+          "signature": "U9lGpZF1JdDDQpydvzNP2NsC+tM8BvRshFKp5TL5p+cBZKsjbts1C2HQOqvihCQ3553dHHKKfsFQNIrRre6OAw=="
         },
         {
           "role": "accountant",
           "approver_id": "accountant@demo",
-          "public_key": "ivYRwGO3OU7Pj6X8JACQS2CLBzDppe9tFfXRLutYrPo=",
-          "signature": "Fub3ZQIRDP+XqmDkpwi4c0hjJSW4MY3fPZMJ/RYgjrBSxaytIt6umzEG4hbtC6OTF/Zzk3XU2b1k1FiiSyCXCg=="
+          "public_key": "+yB98gEhVGwZwMoRQ5UdEf71V4ycxsvr+FfTwlccb4E=",
+          "signature": "tdJdZFv+ON3V/s8tZpZwDQmk9gnvm7mR1W6r1d7xKWSAGPkZTn7qKXQa3AdeAcJcpNESnRMJi/UFXY54pDyTDQ=="
         }
       ]
     }
@@ -870,19 +870,19 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "to": "ap@bergmann-toys.example",
     "body": "Dear Bergmann Toys,\n\nInvoice LUM-2026-0091 for \u20ac7,400.00, due on 2026-10-04, is 15 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
     "kind": "reminder",
-    "sent_at": "2026-10-19T21:08:20.968980Z",
-    "invoice_id": "AR-1091",
+    "sent_at": "2026-10-19T21:17:32.137718Z",
+    "subject": "Payment overdue: invoice LUM-2026-0091",
     "id": "MAIL-0001",
-    "subject": "Payment overdue: invoice LUM-2026-0091"
+    "invoice_id": "AR-1091"
   },
   {
     "to": "billing@lindqvist-candles.example",
     "body": "Dear Lindqvist Candles,\n\nInvoice LUM-2026-0092 for \u20ac5,200.00, due on 2026-10-11, is 8 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
     "kind": "reminder",
-    "sent_at": "2026-10-19T21:08:20.978157Z",
-    "invoice_id": "AR-1092",
+    "sent_at": "2026-10-19T21:17:32.147852Z",
+    "subject": "Payment overdue: invoice LUM-2026-0092",
     "id": "MAIL-0002",
-    "subject": "Payment overdue: invoice LUM-2026-0092"
+    "invoice_id": "AR-1092"
   }
 ]
 ```
@@ -920,7 +920,7 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 {
   "sender": null,
   "id": "DOC-0001",
-  "received_at": "2026-10-16T21:08:21.338244Z",
+  "received_at": "2026-10-16T21:17:32.551174Z",
   "flag_reason": "bank-detail change requested; contains an IBAN alongside a bank-detail change; asks to skip approval; contains instructions aimed at an AI assistant (ignore previous instructions); urgency combined with a payment request",
   "invoice_ids": "[]",
   "released_counterparty_ids": "[]",
@@ -1098,10 +1098,10 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "execute_date": "2026-10-19",
     "invoice_id": null,
     "automatic": false,
-    "created_at": "2026-10-16T21:08:21.403157Z",
+    "created_at": "2026-10-16T21:17:32.628494Z",
     "transaction_id": null,
-    "id": "PAY-0002",
     "payee_id": "PAYEE-INKWORKS",
+    "id": "PAY-0002",
     "currency": "EUR",
     "status": "scheduled",
     "document_id": null,
@@ -1127,10 +1127,10 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "execute_date": "2026-10-19",
     "invoice_id": null,
     "automatic": false,
-    "created_at": "2026-10-16T21:08:21.403157Z",
+    "created_at": "2026-10-16T21:17:32.628494Z",
     "transaction_id": null,
-    "id": "PAY-0002",
     "payee_id": "PAYEE-INKWORKS",
+    "id": "PAY-0002",
     "currency": "EUR",
     "status": "scheduled",
     "document_id": null,

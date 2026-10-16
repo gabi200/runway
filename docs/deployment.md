@@ -120,7 +120,8 @@ Complete list, found by searching the code for `os.environ` and `os.getenv`:
 | `RUNWAY_OWNER_PIN` | `1111` | `ui/auth.py:pin_for` | PIN for the owner sign-in in the UI. Demo-grade. |
 | `RUNWAY_ACCOUNTANT_PIN` | `2222` | `ui/auth.py:pin_for` | PIN for the accountant sign-in in the UI. Demo-grade. |
 | `DEEPSEEK_API_KEY` | unset | `llm/adapter.py:get_adapter` | API key. The variable name comes from `api_key_env` in `config/llm.yaml`. If unset, the offline planner is used. |
-| `GEMINI_API_KEY` | unset | `llm/adapter.py:get_adapter` | API key for Gemini mode (`config/gemini.yaml`). |
+| `GEMINI_API_KEY` | unset | `llm/adapter.py:get_adapter` | Google Cloud API key for Gemini mode (`config/gemini.yaml`), sent in the `x-goog-api-key` header. |
+| `GOOGLE_CLOUD_PROJECT` | unset | `llm/adapter.py` | Project id or number filled into the Vertex AI URL in `config/gemini.yaml` (`project_env`). Gemini mode requires it. |
 | `RUNWAY_LLM` | unset | `llm/adapter.py:get_adapter` | Startup mode: `offline`, `deepseek`, or `gemini`. Sidebar selection overrides it per session. Explicit online modes require their key. |
 | `RUNWAY_LLM_MODEL` | `model` in `config/llm.yaml` | `llm/adapter.py` | Override the model id. |
 | `RUNWAY_LLM_BASE_URL` | `base_url` in `config/llm.yaml` | `llm/adapter.py` | Override the API base URL. |
@@ -174,7 +175,7 @@ cp .env.example .env                  # then set DEEPSEEK_API_KEY=sk-... in .env
 
 Tests never call the API.
 
-**Gemini.** Add `GEMINI_API_KEY=your-key` to the existing `.env` (keep `DEEPSEEK_API_KEY` too), restart Runway and select **Gemini**. Get a key from [Google AI Studio](https://aistudio.google.com/apikey). To start in Gemini mode, set `RUNWAY_LLM=gemini` in `.env` or the process environment. `config/gemini.yaml` uses `gemini-3.8-flash` via Google's [OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai), using the installed OpenAI SDK. Provider tool-call metadata is retained across tool turns. Both online modes use the same pseudonymisation and policy checks. API integration tests use fake responses; a live key and successful chat are still needed to confirm account access and quotas.
+**Gemini (Vertex AI).** Add `GEMINI_API_KEY=your-key` and `GOOGLE_CLOUD_PROJECT=your-project-id-or-number` to the existing `.env` (keep `DEEPSEEK_API_KEY` too), restart Runway and select **Gemini**. The key is a Google Cloud API key that may call the Vertex AI API in that project. To start in Gemini mode, set `RUNWAY_LLM=gemini` in `.env` or the process environment. `config/gemini.yaml` uses `google/gemini-3.8-flash` via Vertex AI's OpenAI-compatible endpoint (`https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/`), using the installed OpenAI SDK. Vertex accepts API keys only in the `x-goog-api-key` header and rejects them as a Bearer token, so `api_key_header` makes the adapter send that header and drop `Authorization`. Provider tool-call metadata is retained across tool turns. Both online modes use the same pseudonymisation and policy checks. API integration tests use fake responses; a live key and successful chat are still needed to confirm account access and quotas.
 
 ## 5. Switching the LLM provider (one config change)
 

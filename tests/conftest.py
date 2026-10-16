@@ -15,6 +15,7 @@ def no_live_llm(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("RUNWAY_LLM", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")  # harmless without a key
 
 
 

@@ -44,7 +44,7 @@ def _decisions(s) -> list[str]:
 
 def test_tool_specs_expose_no_forbidden_capability():
     names = {t["function"]["name"] for t in TOOL_SPECS}
-    assert len(names) == 17 and {"schedule_payment", "compare_financing", "flag_document"} <= names
+    assert len(names) == 18 and {"schedule_payment", "compare_financing", "flag_document"} <= names
     for bad in ("payee", "limit", "export", "kill"):
         assert not [n for n in names if bad in n]
     assert "iban" not in json.dumps(TOOL_SPECS).lower()

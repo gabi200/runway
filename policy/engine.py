@@ -49,6 +49,7 @@ _SCHEMAS: dict[str, tuple[str, dict[str, str]]] = {
     "compare_financing": ("amount_cents needed_by days_needed", dict(amount_cents=POSITIVE_INTEGER, needed_by=DATE, days_needed=POSITIVE_INTEGER)),
     "draft_email": ("purpose", dict(invoice_id=STRING, purpose=STRING, recipient_name=STRING, note=STRING)),
     "explain_figure": ("week", dict(week=POSITIVE_INTEGER, field=STRING, scenario=SCENARIO_LIST)),
+    "make_chart": ("dataset", dict(dataset=STRING, scenario=SCENARIO_LIST, overdue_only=BOOLEAN)),
     "send_payment_reminder": ("invoice_id", dict(invoice_id=STRING)),
     "schedule_payment": ("payee_id amount_cents execute_date", dict(payee_id=STRING, amount_cents=POSITIVE_INTEGER, execute_date=DATE, invoice_id=STRING, document_id=STRING, idempotency_key=STRING, currency=STRING)),
     "reschedule_payment": ("payment_id new_date", dict(payment_id=STRING, new_date=DATE)),
@@ -64,7 +65,9 @@ _SCENARIO_SCHEMAS = {
 
 _ENUMS = {"status": {"open", "paid", "all"},
          "purpose": {"payment_reminder", "payment_extension_request", "general"},
-         "field": {"opening_cents", "receipts_cents", "payments_cents", "closing_cents"}}
+         "field": {"opening_cents", "receipts_cents", "payments_cents", "closing_cents"},
+         "dataset": {"forecast_balance", "forecast_cashflow", "receivables", "receivables_ageing", "payables",
+                     "transactions_monthly", "financing_options"}}
 
 
 @lru_cache(maxsize=1)

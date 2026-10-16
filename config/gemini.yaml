@@ -1,7 +1,11 @@
 provider: gemini
-base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-model: gemini-3.8-flash
+# Vertex AI's OpenAI-compatible endpoint; {project} is filled from the env var named by project_env.
+base_url: https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/
+project_env: GOOGLE_CLOUD_PROJECT
+model: google/gemini-3.8-flash
 api_key_env: GEMINI_API_KEY
+# Vertex accepts API keys only in this header and rejects them as a Bearer token.
+api_key_header: x-goog-api-key
 temperature: 0.2
 timeout_seconds: 20   # a stalled provider falls back to the offline planner within ~40 s (one retry)
 max_retries: 1

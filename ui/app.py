@@ -28,6 +28,7 @@ from sqlmodel import select  # noqa: E402
 
 from agent import documents as docs_mod  # noqa: E402
 from agent import executor  # noqa: E402
+from agent.invoices import find_invoice_refs, invoice_details, invoice_pdf  # noqa: E402
 from agent.orchestrator import Agent  # noqa: E402
 from audit import anchor  # noqa: E402
 from audit import archive  # noqa: E402
@@ -47,7 +48,7 @@ import redteam.console as redteam  # noqa: E402
 from policy import engine as policy_engine  # noqa: E402
 from ui import auth  # noqa: E402
 from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
-from ui.render import code_span, describe_approval, format_step, safe_text  # noqa: E402
+from ui.render import code_span, describe_approval, format_step, reply_markdown, safe_text  # noqa: E402
 
 SECTIONS = ["Monday brief & chat", "Forecast", "Approval queue", "Documents",
             "Payees (humans only)", "Mock bank", "Test inbox", "Audit log", "Red team", "Onboarding"]
@@ -385,6 +386,111 @@ def page_onboarding() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Invoices: details dialog, links wherever an invoice is named, reminders via the copilot
+# --------------------------------------------------------------------------- #
+MAX_INVOICE_LINKS = 8
+
+
+def ask_copilot(message: str) -> None:
+    """Button callback: hand a request to the agent on the copilot page (runs before the next script run)."""
+    st.session_state.queued_msg = message
+    st.session_state.page = "Monday brief & chat"
+
+
+def reminder_request(d: dict) -> str:
+    return f"Send a payment reminder for invoice {d['number']} ({d['id']})."
+
+
+@st.dialog("Invoice", width="large")
+def invoice_dialog(invoice_id: str) -> None:
+    pack = pack_for(st.session_state.pack)
+    with session_scope() as s:
+        d = invoice_details(s, invoice_id)
+        pdf = invoice_pdf(s, invoice_id) if d else None
+    if d is None:
+        st.error(f"Invoice {safe_text(invoice_id)} was not found.")
+        return
+    st.subheader(safe_text(d["number"]))
+    st.caption(safe_text(f"{d['kind']} · {d['counterparty']} · ledger id {d['id']}"))
+    a, b, c = st.columns(3)
+    a.metric("Total", money(pack, d["amount_cents"]))
+    b.metric("Due date", d["due_date"])
+    c.metric("Status", "Paid" if d["status"] == "paid" else f"{d['days_overdue']} days overdue" if d["overdue"] else "Open")
+    rows = [("Counterparty", d["counterparty"]), ("Email", d["counterparty_email"] or "-"),
+            ("Invoice date", d["issue_date"]), ("Due date", d["due_date"]),
+            ("Net amount", money(pack, d["net_cents"])), ("VAT", money(pack, d["vat_cents"])),
+            ("Total", money(pack, d["amount_cents"])), ("Paid on", d["paid_date"] or "-")]
+    if d["critical"]:
+        rows.append(("Critical", "Yes: this payment must not be moved"))
+    st.dataframe(pd.DataFrame(rows, columns=["Field", "Value"]), hide_index=True, width="stretch")
+    if d["payments"]:
+        st.markdown("**Payments**")
+        st.dataframe(pd.DataFrame([{"Payment": p["id"], "Date": p["execute_date"], "Status": p["status"],
+                                    "Amount": money(pack, p["amount_cents"])} for p in d["payments"]]),
+                     hide_index=True, width="stretch")
+    if d["reminders"]:
+        st.markdown("**Reminders sent**")
+        for m in d["reminders"]:
+            st.caption(safe_text(f"{m['sent_at']} · {m['id']} · {m['subject']}"))
+    if d["document"]:
+        doc = d["document"]
+        (st.warning if doc["flagged"] else st.caption)(
+            safe_text(f"Source document {doc['id']} ({doc['filename']})" + (": flagged as suspicious" if doc["flagged"] else "")))
+    left, right = st.columns(2)
+    left.download_button("Download PDF", pdf, file_name=f"{d['number']}.pdf", mime="application/pdf",
+                         on_click="ignore", width="stretch", icon=":material/picture_as_pdf:")
+    if d["can_remind"]:
+        if right.button("Send reminder via copilot", type="primary", width="stretch", icon=":material/send:",
+                        on_click=ask_copilot, args=(reminder_request(d),)):
+            st.rerun()
+    st.caption("The PDF is a copy rendered from the ledger, not the original document."
+               + (" The copilot sends the reminder only if the rules allow it (overdue, cooldown, daily limit)."
+                  if d["can_remind"] else ""))
+
+
+def invoice_links(invoice_ids: list[str], key: str, remind: bool = True) -> None:
+    """A 'view' button per invoice (opens its details) and a reminder button for overdue receivables."""
+    ids = list(dict.fromkeys(invoice_ids))[:MAX_INVOICE_LINKS]
+    if not ids:
+        return
+    with session_scope() as s:
+        details = [d for d in (invoice_details(s, i) for i in ids) if d]
+    with st.container(horizontal=True, key=f"invoice-links-{key}"):
+        for d in details:
+            if st.button(d["number"], key=f"{key}_view_{d['id']}", icon=":material/receipt_long:",
+                         help=f"Open invoice {d['number']} ({d['counterparty']})"):
+                invoice_dialog(d["id"])
+        for d in details:
+            if remind and d["can_remind"]:
+                st.button(f"Remind: {d['number']}", key=f"{key}_remind_{d['id']}", icon=":material/send:",
+                          on_click=ask_copilot, args=(reminder_request(d),),
+                          help="Ask the copilot to send a payment reminder; the rules engine decides")
+
+
+def agent_chart(spec: dict, pack):
+    """Altair chart for a make_chart result; every value comes from the tool, converted for display."""
+    df = pd.DataFrame(spec["rows"])
+    df["value"] = df["value_cents"].map(lambda c: pack.convert_from_eur_cents(int(c)) / 100)
+    many = len(spec["x_order"]) > 6 and spec["kind"] != "line"
+    x = alt.X("x:N", sort=spec["x_order"], title=spec["x_label"],
+              axis=alt.Axis(labelAngle=-30 if many else 0, labelLimit=160))
+    y = alt.Y("value:Q", title=f"{spec['y_label']} ({pack.currency})")
+    series = df["series"].nunique() > 1
+    color = alt.Color("series:N", title=None, legend=alt.Legend(orient="top") if series else None)
+    tip = [alt.Tooltip("x:N", title=spec["x_label"]), alt.Tooltip("series:N", title="Series"),
+           alt.Tooltip("value:Q", title=spec["y_label"], format=",.2f")]
+    base = alt.Chart(df)
+    if spec["kind"] == "line":
+        chart = base.mark_line(point=True, strokeWidth=2.5).encode(x=x, y=y, color=color, tooltip=tip)
+        chart += alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#818d84", strokeDash=[5, 5]).encode(y="y:Q")
+    elif spec["kind"] == "grouped_bar":
+        chart = base.mark_bar().encode(x=x, y=y, color=color, xOffset="series:N", tooltip=tip)
+    else:
+        chart = base.mark_bar().encode(x=x, y=y, color=color, tooltip=tip)
+    return chart.properties(height=320, title=spec["title"])
+
+
+# --------------------------------------------------------------------------- #
 # 2. Monday brief + chat
 # --------------------------------------------------------------------------- #
 def render_steps(steps: list[dict]) -> None:
@@ -402,10 +508,20 @@ def render_steps(steps: list[dict]) -> None:
             st.json(step.get("args") or {})
 
 
-def render_turn(turn) -> None:
+def render_turn(turn, key: str) -> None:
     if turn.refused:
         st.warning("The agent refused this request (logged in the audit trail).")
-    st.markdown(safe_text(turn.reply))
+    st.markdown(reply_markdown(turn.reply))
+    pack = pack_for(st.session_state.pack)
+    for i, step in enumerate(s for s in turn.steps if s.get("chart")):
+        spec = step["chart"]
+        if spec["rows"]:
+            st.altair_chart(agent_chart(spec, pack), width="stretch", key=f"{key}_chart_{i}")
+            st.caption(safe_text((spec.get("note") or "") + " Figures computed from the ledger, not by AI."))
+    named = " ".join([turn.reply] + [str(s["args"].get("invoice_id", "")) for s in turn.steps])
+    with session_scope() as s:
+        refs = find_invoice_refs(s, named)
+    invoice_links(refs, key)
     with st.expander(f"Policy & source details ({len(turn.steps)} steps)", expanded=False):
         st.caption("Every tool call is checked by the rules engine first: ALLOW runs, NEEDS_APPROVAL "
                    "waits for a human, DENY is blocked.")
@@ -437,7 +553,7 @@ def page_chat() -> None:
                         unsafe_allow_html=True)
             if st.session_state.brief is not None:
                 with st.chat_message("assistant", avatar=":material/account_balance:"):
-                    render_turn(st.session_state.brief)
+                    render_turn(st.session_state.brief, "brief")
             elif not st.session_state.chat:
                 with st.container(key="copilot-welcome"):
                     st.markdown('<div class="assistant-label"><span class="assistant-mark">r.</span> Runway '
@@ -456,12 +572,12 @@ def page_chat() -> None:
                     st.markdown('<div class="welcome-next"><strong>Start with your Monday brief</strong>'
                                 '<p>Runway reviews cash, follows up on overdue invoices and prepares proposals. '
                                 'Actions above its limits wait for human approval.</p></div>', unsafe_allow_html=True)
-            for role, content, turn in st.session_state.chat:
+            for n, (role, content, turn) in enumerate(st.session_state.chat):
                 with st.chat_message(role, avatar=":material/account_balance:" if role == "assistant" else ":material/person:"):
                     if turn is None:
                         st.markdown(safe_text(content))
                     else:
-                        render_turn(turn)
+                        render_turn(turn, f"chat{n}")
             with st.container(key="prompt-actions"):
                 a, b = st.columns(2)
                 if a.button("Explain the shortfall", key="prompt_shortfall", width="stretch"):
@@ -469,7 +585,7 @@ def page_chat() -> None:
                 if b.button("Compare financing", key="prompt_financing", width="stretch"):
                     msg = "Compare financing options for the forecast cash shortfall."
             typed = st.chat_input("Ask about cash, invoices or your next move...", key="copilot_input")
-            msg = typed or msg
+            msg = typed or msg or st.session_state.pop("queued_msg", None)
             st.caption("Forecasts are estimates. Review proposals before approving.")
         with context, st.container(key="cash-context"):
             st.markdown('<div class="context-heading" role="heading" aria-level="2">Cash at a glance <span>13 weeks</span></div>', unsafe_allow_html=True)
@@ -606,6 +722,11 @@ def page_forecast() -> None:
             "Label": ln["label"], "Kind": ln["kind"], "Amount": money(pack, ln["amount_cents"]),
             "Expected": ln["expected_date"], "Sources": ", ".join(ln["source_refs"]), "Note": ln["note"],
         } for ln in ex["lines"]]), width="stretch", hide_index=True)
+        with session_scope() as s:
+            refs = find_invoice_refs(s, " ".join(r for ln in ex["lines"] for r in ln["source_refs"]))
+        if refs:
+            st.caption("Invoices behind this figure")
+            invoice_links(refs, f"fc_{week}_{field}")
     for name, rows in ex["sources"].items():
         if rows:
             with st.expander(f"Source ledger rows: {name} ({len(rows)})"):
@@ -678,6 +799,12 @@ def scenario_panel(fc, pack) -> None:
 # --------------------------------------------------------------------------- #
 # 4. Approval queue
 # --------------------------------------------------------------------------- #
+def approval_invoices(session, args: dict) -> list[str]:
+    """Invoices an approval request concerns: named in its arguments or paid by its payment."""
+    pay = session.get(Payment, args.get("payment_id")) if args.get("payment_id") else None
+    return find_invoice_refs(session, " ".join([str(args.get("invoice_id") or ""), pay.invoice_id if pay and pay.invoice_id else ""]))
+
+
 def page_approvals() -> None:
     page_heading("You make the final call.", "Review the reason, the amount and the people needed to approve.")
     role = st.session_state.role
@@ -692,14 +819,15 @@ def page_approvals() -> None:
                               .order_by(ApprovalRequest.created_at.desc())))
         pending_view = [(r.id, r.tool_name, json.loads(r.args_json), json.loads(r.required_roles_json),
                          [g['role'] if isinstance(g, dict) else g for g in json.loads(r.approvals_json)], r.reason,
-                         describe_approval(s, r.tool_name, json.loads(r.args_json), pack)) for r in pending]
+                         describe_approval(s, r.tool_name, json.loads(r.args_json), pack),
+                         approval_invoices(s, json.loads(r.args_json))) for r in pending]
     with st.container(key="approval-layout"):
         queue, guidance = st.columns([3, 1], gap="large")
         with queue:
             st.subheader(f"Needs your review ({len(pending_view)})")
             if not pending_view:
                 st.info("Nothing waiting for approval. Run the Monday brief or ask the copilot to prepare a proposal.")
-            for rid, tool, args, required, given, reason, summary in pending_view:
+            for rid, tool, args, required, given, reason, summary, inv_ids in pending_view:
                 with st.container(border=True, key=f"approval_{rid}"):
                     st.markdown(f'<div class="approval-meta">{badge("NEEDS_APPROVAL")}<span>{esc(rid)}</span></div>', unsafe_allow_html=True)
                     titles = {"reschedule_payment": "Move a supplier payment", "prepare_financing_application": "Prepare a financing application",
@@ -708,6 +836,7 @@ def page_approvals() -> None:
                     st.subheader(titles.get(tool, tool.replace("_", " ").capitalize()))
                     for line in summary:
                         st.markdown(safe_text(line))
+                    invoice_links(inv_ids, f"apr_{rid}", remind=False)
                     st.markdown("**Why this is proposed**")
                     st.write(safe_text(reason))
                     st.markdown(f'<div class="approval-roles"><span>Required: {esc(", ".join(required))}</span>'
@@ -824,6 +953,7 @@ def page_documents() -> None:
             if inv_ids or cp_ids:
                 st.caption(safe_text(f"Linked to: invoices {', '.join(inv_ids) or 'none'}, "
                                      f"counterparties {', '.join(cp_ids) or 'none'}"))
+                invoice_links(inv_ids, f"doc_{did}", remind=False)
             st.text(text[:3000])
             if flagged and not cleared:
                 if auth.signed_in():
@@ -971,6 +1101,8 @@ def page_inbox() -> None:
         with st.expander(safe_text(f"[{kind}] {subj}  ->  {to}")):
             st.caption(safe_text(f"{mid} | invoice: {inv or '-'} | {sent}"))
             st.text(body)
+            if inv:
+                invoice_links([inv], f"mail_{mid}", remind=False)
     st.subheader(f"Financing applications ({len(aview)})")
     st.caption("Prepared, never submitted. A human reviews and signs the PDF.")
     if not aview:

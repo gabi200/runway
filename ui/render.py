@@ -27,6 +27,38 @@ def safe_text(text: str | None) -> str:
     return "".join(out)
 
 
+_CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+_LINK_SYNTAX = re.compile(r"([\\\[\]<])")  # a lone ">" only starts a quote block, so it stays
+
+
+def reply_markdown(text: str | None) -> str:
+    """Model replies for st.markdown with formatting kept (bold, lists, headings, tables, code).
+
+    Only what could reach out or mislead is neutralised, as in safe_text: images are dropped,
+    URLs and e-mail addresses become inline code, and brackets, '<' and backslashes
+    are escaped so no link, autolink or HTML can form. Code spans and fences pass through,
+    since nothing inside them renders.
+    """
+    t = _IMG.sub(lambda m: f"[image removed: {m.group(1)[:40]}]", str(text or ""))
+    out, pos = [], 0
+    for m in _CODE.finditer(t):
+        out.append(_reply_prose(t[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_reply_prose(t[pos:]))
+    return "".join(out)
+
+
+def _reply_prose(t: str) -> str:
+    out, pos = [], 0
+    for m in _URL.finditer(t):
+        out.append(_LINK_SYNTAX.sub(r"\\\1", t[pos:m.start()]))
+        out.append("`" + m.group(0).replace("`", "") + "`")
+        pos = m.end()
+    out.append(_LINK_SYNTAX.sub(r"\\\1", t[pos:]))
+    return "".join(out)
+
+
 def code_span(text) -> str:
     """Untrusted text as one inline code span, shown literally even where HTML is enabled.
 
