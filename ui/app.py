@@ -31,7 +31,7 @@ from agent.orchestrator import Agent  # noqa: E402
 from audit import anchor  # noqa: E402
 from audit import archive  # noqa: E402
 from audit import log as audit  # noqa: E402
-from bank.client import BankClient, BankError  # noqa: E402
+from bank.client import BankClient, BankError, bank_token  # noqa: E402
 from common import db  # noqa: E402
 from common.config import load_yaml  # noqa: E402
 from common.db import (  # noqa: E402
@@ -69,8 +69,7 @@ def ensure_data() -> None:
 
 def human_bank() -> BankClient:
     """Bank client with the HUMAN token. The agent never receives this token."""
-    return BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None,
-                      token=os.getenv("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token"))
+    return BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None, token=bank_token("human"))
 
 
 def log_human(session, action: str, args: dict, decision: str, reason: str = "") -> None:
@@ -176,6 +175,9 @@ def sign_in_box(col) -> None:
         col.button("Sign in", key="login_btn", on_click=pin_sign_in, args=("login_role", "login_pin"))
         if err := st.session_state.pop("auth_error", None):
             col.error(err)
+        if auth.default_pins():
+            col.caption("Public demo PINs are active. Set RUNWAY_OWNER_PIN and RUNWAY_ACCOUNTANT_PIN "
+                        "before anyone else can reach this page.")
         return
     col.markdown(f'<span class="pill ok">{esc(auth.identity())}</span>', unsafe_allow_html=True)
     other = [r for r in auth.ROLES if r != st.session_state.role]

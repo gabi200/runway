@@ -134,10 +134,9 @@ def idempotency_key(args: dict) -> str:
 
 def bank_client():
     """BankClient with the executor token (never exposed to the agent). Use as a context manager."""
-    from bank.client import BankClient
+    from bank.client import BankClient, bank_token
 
-    return BankClient(base_url=os.environ.get("RUNWAY_BANK_URL") or None,
-                      token=os.environ.get("RUNWAY_BANK_EXECUTOR_TOKEN", "executor-dev-token"))
+    return BankClient(base_url=os.environ.get("RUNWAY_BANK_URL") or None, token=bank_token("executor"))
 
 
 Handler = Callable[[Session, dict, dict], Any]

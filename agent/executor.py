@@ -20,7 +20,7 @@ from agent.financing import account_currency, compare_financing  # noqa: F401  (
 from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
 from audit import log as audit
-from bank.client import BankClient, BankError
+from bank.client import BankClient, BankError, bank_token
 from common.db import (Account, ApprovalRequest, Document, Payee, Payment, Setting, get_setting, get_today,
                        kill_switch_on, set_setting, utcnow)
 from policy import engine as policy
@@ -312,8 +312,7 @@ def _checked(session: Session, action: str, args: dict) -> None:
 
 def _human_bank() -> BankClient:
     """Bank client with the human scope; only two-person handlers use it, never agent tools."""
-    return BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None,
-                      token=os.getenv("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token"))
+    return BankClient(base_url=os.getenv("RUNWAY_BANK_URL") or None, token=bank_token("human"))
 
 
 def _verify_payee(session: Session, args: dict, ctx: dict) -> dict:

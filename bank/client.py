@@ -6,8 +6,37 @@ import os
 from datetime import date
 from typing import Any
 
+import secrets
+from pathlib import Path
+
 import httpx
 from fastapi.testclient import TestClient
+
+from common.db import REPO_ROOT
+
+
+def bank_token(kind: str) -> str:
+    """Bearer token for "executor" or "human": RUNWAY_BANK_<KIND>_TOKEN, else a random one kept in var/secrets/.
+
+    The random token is made on first use (mode 0600) and shared by every process that uses the same
+    var/ folder, so no token is ever public. Set the variables when the bank runs on another machine.
+    """
+    value = os.environ.get(f"RUNWAY_BANK_{kind.upper()}_TOKEN", "").strip()
+    if value:
+        return value
+    path = Path(os.environ.get("RUNWAY_VAR_DIR", REPO_ROOT / "var")) / "secrets" / f"bank-{kind}.token"
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as stream:
+            stream.write(secrets.token_urlsafe(32))
+        try:
+            os.link(tmp, path)  # atomic: the first process wins and nobody reads a half-written file
+        except FileExistsError:
+            pass
+        finally:
+            tmp.unlink()
+    return path.read_text(encoding="utf-8").strip()
 
 
 class BankError(Exception):
@@ -23,7 +52,7 @@ class BankClient:
     """Use the local bank by default, or a remote HTTP bank."""
 
     def __init__(self, base_url: str | None = None, token: str | None = None):
-        headers = {"Authorization": f"Bearer {token if token is not None else os.getenv('RUNWAY_BANK_EXECUTOR_TOKEN', 'executor-dev-token')}"}
+        headers = {"Authorization": f"Bearer {token if token is not None else bank_token('executor')}"}
         if base_url is None:
             from bank.app import app
             self._client = TestClient(app, headers=headers)

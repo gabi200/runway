@@ -1,7 +1,6 @@
 """Authenticated FastAPI interface for the mock bank."""
 from __future__ import annotations
 
-import os
 import secrets
 from datetime import date
 from typing import Annotated
@@ -12,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
 from bank import service
+from bank.client import bank_token
 from common.db import iter_session
 from policy.engine import load_rules
 
@@ -25,9 +25,10 @@ def authorize(scope: str):
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(401, "Bearer token required", headers={"WWW-Authenticate": "Bearer"})
         token = authorization[7:]
-        human = os.getenv("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token")
-        executor = os.getenv("RUNWAY_BANK_EXECUTOR_TOKEN", "executor-dev-token")
+        human, executor = bank_token("human"), bank_token("executor")
         # Ambiguous configuration must not grant executor credentials human scope.
+        if not token:
+            raise HTTPException(401, "Invalid token", headers={"WWW-Authenticate": "Bearer"})
         if secrets.compare_digest(token, executor):
             actor = "agent"
         elif secrets.compare_digest(token, human):

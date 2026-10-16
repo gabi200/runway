@@ -78,6 +78,24 @@ def test_environment_tokens(monkeypatch):
         assert error.value.status_code == 401
 
 
+def test_tokens_default_to_random_private_files(tmp_path, monkeypatch):
+    import os
+    from bank.client import bank_token
+
+    monkeypatch.delenv("RUNWAY_BANK_EXECUTOR_TOKEN")
+    monkeypatch.delenv("RUNWAY_BANK_HUMAN_TOKEN")
+    monkeypatch.setenv("RUNWAY_VAR_DIR", str(tmp_path / "var"))
+    executor, human = bank_token("executor"), bank_token("human")
+    assert len(executor) > 30 and executor != human and "dev-token" not in executor + human
+    assert bank_token("executor") == executor  # stable: other processes on this var/ folder read the same file
+    if os.name != "nt":
+        assert (tmp_path / "var" / "secrets" / "bank-executor.token").stat().st_mode & 0o777 == 0o600
+    with BankClient() as client:
+        assert client.get_accounts()
+    for public in ("executor-dev-token", "human-dev-token", ""):
+        assert TestClient(app).get("/accounts", headers={"Authorization": f"Bearer {public}"}).status_code == 401
+
+
 def test_idempotency_survives_rescheduling_and_execution():
     with BankClient(token="human-dev-token") as client:
         args = ("once", "PAYEE-TEST", 1200, "EUR", TODAY + timedelta(days=2))

@@ -2,7 +2,7 @@ import json
 from datetime import timedelta
 from agent.documents import ingest_file, ingest_text
 from agent.executor import approve, clear_document_flag, run_tool
-from bank.client import BankClient, BankError
+from bank.client import BankClient, BankError, bank_token
 from common.db import get_today
 from common.config import load_country_pack
 
@@ -66,7 +66,7 @@ def test_scheduled_payment_fails_at_bank_when_flagged_doc_arrives_later(stack):
                                   load_country_pack().currency, when)
     ingest_file(s, docs / "cartonia_invoice_A1.pdf", "invoice", None, docs)
     s.commit()
-    with BankClient(token="human-dev-token") as human:
+    with BankClient(token=bank_token("human")) as human:
         human.advance(3)
         status = {p["id"]: p["status"] for p in human.list_payments()}[pay["id"]]
     assert status == "failed"

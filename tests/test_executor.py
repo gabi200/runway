@@ -251,13 +251,13 @@ def test_reused_key_different_body_denied(session, change):
 
 
 def test_replay_after_execution_uses_original_request(session):
-    from bank.client import BankClient
+    from bank.client import BankClient, bank_token
 
     args = _pay_args(95_000, idempotency_key="after-execution")
     first = run_tool(session, "schedule_payment", args)
     assert first.status == "ok"
     session.commit()
-    with BankClient(token="human-dev-token") as bank:
+    with BankClient(token=bank_token("human")) as bank:
         bank.advance(4)
     replay = run_tool(session, "schedule_payment", args)
     assert replay.status == "ok" and replay.data["idempotent_replay"]

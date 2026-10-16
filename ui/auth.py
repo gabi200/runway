@@ -34,7 +34,12 @@ SESSION_DATA_KEYS = ("chat", "agent", "brief", "confirm_reset", "confirm_import"
 
 
 def pin_for(role: str) -> str:
-    return os.environ.get(f"RUNWAY_{role.upper()}_PIN", {"owner": "1111", "accountant": "2222"}[role])
+    return os.environ.get(f"RUNWAY_{role.upper()}_PIN") or {"owner": "1111", "accountant": "2222"}[role]
+
+
+def default_pins() -> bool:
+    """True while a role still uses its public demo PIN."""
+    return any(not os.environ.get(f"RUNWAY_{role.upper()}_PIN") for role in ROLES)
 
 
 def check_pin(role: str, pin: str) -> bool:

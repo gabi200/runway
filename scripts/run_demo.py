@@ -21,7 +21,7 @@ from agent.executor import approve, pending_approvals, run_tool
 from agent.mandate import from_pdf, registered_keys, verify_mandate
 from agent.orchestrator import Agent
 from audit import log as audit
-from bank.client import BankClient
+from bank.client import BankClient, bank_token
 from common import db
 from common.db import FinancingApplication, OutboxEmail, Payment
 from data.generate import generate
@@ -112,7 +112,7 @@ def run(out: Path, seed: int) -> dict:
                 assert first.status == replay.status == "ok" and replay.data["idempotent_replay"]
                 assert first.data["id"] == replay.data["id"]
                 s.commit()
-                with BankClient(token=os.environ.get("RUNWAY_BANK_HUMAN_TOKEN", "human-dev-token")) as bank:
+                with BankClient(token=bank_token("human")) as bank:
                     advance = record("5. Advance simulated clock to rescheduled due date", bank.advance((new_date - db.get_today(s)).days))
                 s.expire_all()
                 assert summary["inkworks_payment_id"] in advance["executed_payment_ids"]
