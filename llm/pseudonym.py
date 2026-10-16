@@ -65,6 +65,12 @@ def _iban_ok(compact: str) -> bool:
             and int("".join(str(int(c, 36)) for c in compact[4:] + compact[:4])) % 97 == 1)
 
 
+def contains_iban(text: str) -> bool:
+    """True when `text` holds an IBAN in any case or spacing that passes the mod-97 check."""
+    # ponytail: a random code that happens to pass the checksum (about 1 in 97 IBAN-shaped strings) counts too
+    return any(_iban_ok(_norm_iban(m.group(0))) for m in _IBAN_LOOSE_RE.finditer(text))
+
+
 class Pseudonymizer:
     """Mask/unmask text and nested objects. Placeholders are stable per instance."""
 

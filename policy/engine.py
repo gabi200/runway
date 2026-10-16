@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -14,7 +15,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from common.db import (Account, Invoice, OutboxEmail, Payee, Payment, Setting, blocking_documents,
-                       get_setting, get_today)
+                       get_setting, get_today, set_setting)
+from llm.pseudonym import contains_iban
 
 
 @dataclass(frozen=True)
@@ -68,10 +70,27 @@ _ENUMS = {"status": {"open", "paid", "all"},
 @lru_cache(maxsize=1)
 def load_rules() -> dict:
     """Load policy configuration once; invalid configuration fails closed."""
-    with Path(__file__).with_name("rules.yaml").open(encoding="utf-8") as stream:
-        rules = yaml.safe_load(stream)
+    raw = Path(__file__).with_name("rules.yaml").read_bytes()
+    rules = yaml.safe_load(raw)
+    rules["sha256"] = hashlib.sha256(raw).hexdigest()  # which file is in force; see record_rules
     rules["tool_tiers"] = {name: tier for tier, names in rules["tiers"].items() for name in names}
     return rules
+
+
+def record_rules(session: Session) -> None:
+    """Audit the rules file in force whenever it differs from the one recorded last.
+
+    ponytail: detection, not prevention. Someone who can edit rules.yaml before a process starts can also
+    edit this code; the entry makes the change visible in the hash-chained log (and in a published head).
+    """
+    digest = load_rules()["sha256"]
+    previous = get_setting(session, "policy_sha256")
+    if previous != digest:
+        from audit import log as audit
+
+        audit.append(session, "system", "policy_loaded", {"sha256": digest, "previous": previous}, "INFO",
+                     "Rules file in force" + (" changed since the last record" if previous else ""))
+        set_setting(session, "policy_sha256", digest)
 
 
 def reload_rules() -> dict:
@@ -93,6 +112,15 @@ def _forbidden(value: Any) -> bool:
         return any(type(k) is not str or "iban" in k.lower() or k.lower() in {"bank_details", "account_number"}
                    or _forbidden(v) for k, v in value.items())
     return isinstance(value, (list, tuple)) and any(_forbidden(v) for v in value)
+
+
+def _iban_in_values(value: Any) -> bool:
+    """An IBAN smuggled into a free-text value (a note, an id) rather than an argument named for it."""
+    if isinstance(value, dict):
+        return any(_iban_in_values(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_iban_in_values(v) for v in value)
+    return isinstance(value, str) and contains_iban(value)
 
 
 def _validate(args: dict, required: str, fields: dict[str, str]) -> None:
@@ -147,6 +175,8 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
             return Decision("DENY", "Unknown or forbidden tool", tier)
         if type(args) is not dict or _forbidden(args):
             return Decision("DENY", "Invalid arguments or forbidden bank details", tier)
+        if tier != "T0" and _iban_in_values(args):  # T0 may quote one: a flag reason citing the fraud IBAN
+            return Decision("DENY", "Bank details are not allowed in tool arguments", tier)
         _validate(args, *_SCHEMAS[tool_name])
         if tool_name == "schedule_payment" and args["amount_cents"] > rules["payment"]["max_payment_cents"]:
             return Decision("DENY", "Payment exceeds maximum amount", tier)

@@ -307,14 +307,15 @@ def blocking_documents(s: Session, payee_id: str, invoice_id: str | None = None,
     invoice = s.get(Invoice, invoice_id, populate_existing=True) if invoice_id else None
     explicit = {document_id, invoice.document_id if invoice else None} - {None}
     cp = payee.counterparty_id if payee else None
-    docs = s.exec(select(Document).order_by(Document.id).execution_options(populate_existing=True)).all()
-    found = {d.id for d in docs}
+    found = set(s.exec(select(Document.id).where(Document.id.in_(explicit)))) if explicit else set()
+    docs = s.exec(select(Document).where(Document.flagged == True, Document.cleared == False)  # noqa: E712
+                  .order_by(Document.id).execution_options(populate_existing=True)).all()
     out = sorted(explicit - found)
     for d in docs:
         linked = (d.id in explicit or (invoice_id and invoice_id in json.loads(d.invoice_ids or "[]"))
                   or (cp and cp in json.loads(d.counterparty_ids or "[]")
                       and cp not in json.loads(d.released_counterparty_ids or "[]")))
-        if linked and d.flagged and not d.cleared:
+        if linked:
             out.append(d.id)
     return out
 

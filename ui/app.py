@@ -23,6 +23,7 @@ if str(REPO_ROOT) not in sys.path:
 import altair as alt  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
+from pypdf.errors import PyPdfError  # noqa: E402
 from sqlmodel import select  # noqa: E402
 
 from agent import documents as docs_mod  # noqa: E402
@@ -43,6 +44,7 @@ from forecast.engine import build_forecast, explain_figure  # noqa: E402
 from llm.adapter import get_adapter  # noqa: E402
 from data.importer import ImportErrorReport, import_files  # noqa: E402
 import redteam.console as redteam  # noqa: E402
+from policy import engine as policy_engine  # noqa: E402
 from ui import auth  # noqa: E402
 from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
 from ui.render import code_span, describe_approval, format_step, safe_text  # noqa: E402
@@ -114,6 +116,7 @@ def init_state() -> None:
     # before the toggle exists (its on_change callback has already saved this session's click).
     with session_scope() as s:
         st.session_state.kill = db.kill_switch_on(s)
+        policy_engine.record_rules(s)  # a changed rules.yaml shows up in the audit log
 
 
 def on_kill_toggle() -> None:
@@ -234,6 +237,9 @@ def controls() -> None:
     except ValueError as exc:
         st.session_state.llm_ready = False
         sb.warning(str(exc))
+    if st.session_state.llm_mode != "offline" and st.session_state.llm_ready:
+        sb.caption("Live model: amounts, dates, invoice numbers and ids are sent to the provider. Names, "
+                   "e-mail addresses and IBANs are replaced by placeholders first.")
     sb.toggle("Kill switch", key="kill", on_change=on_kill_toggle,
               help="ON = the agent may only run read-only (T0) tools. Every toggle is audited.")
     agent_on = not st.session_state.kill
@@ -764,15 +770,19 @@ def page_documents() -> None:
     kind = st.selectbox("Kind", ["invoice", "email", "other"])
     sender = st.text_input("Sender (optional)")
     if up is not None and st.button("Ingest uploaded document"):
-        with session_scope() as s:
-            data = up.getvalue()
-            if data[:5] == b"%PDF-":
-                doc = docs_mod.ingest_document(s, data, up.name, kind, sender or None)
-            else:
-                doc = docs_mod.ingest_text(s, data.decode("utf-8", errors="replace"), up.name, kind,
-                                           sender or None)
-            st.session_state.doc_result = (doc.id, doc.flagged, doc.flag_reason)
-        st.rerun()
+        try:
+            with session_scope() as s:
+                data = up.getvalue()
+                if data[:5] == b"%PDF-":
+                    doc = docs_mod.ingest_document(s, data, up.name, kind, sender or None)
+                else:
+                    doc = docs_mod.ingest_text(s, data.decode("utf-8", errors="replace"), up.name, kind,
+                                               sender or None)
+                st.session_state.doc_result = (doc.id, doc.flagged, doc.flag_reason)
+        except (ValueError, PyPdfError) as exc:  # too large, too many pages, or not a readable PDF
+            st.error(f"Not ingested: {safe_text(str(exc))}")
+        else:
+            st.rerun()
     result = st.session_state.pop("doc_result", None)
     if result:  # shown full width after the rerun, so the banner count is already updated
         did, flagged, reason = result

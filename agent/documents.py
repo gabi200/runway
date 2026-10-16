@@ -57,11 +57,19 @@ def scan_document(text: str, sender: str | None = None, filename: str | None = N
     return found
 
 
+# ponytail: size and page caps only; pypdf still runs in-process with no time or memory limit (a parser
+# bug can hang the app). A subprocess with resource limits is the upgrade if untrusted uploads grow.
+MAX_DOCUMENT_BYTES = 10_000_000
+MAX_PDF_PAGES = 200
+
+
 def extract_pdf_text(data: bytes) -> str:
     """Extract all text from a PDF, including white or tiny text (no visibility filtering)."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise ValueError(f"PDF has more than {MAX_PDF_PAGES} pages")
     return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
 
 
@@ -111,19 +119,28 @@ def _store(session, text: str, filename: str, kind: str, sender: str | None) -> 
     doc = Document(id=_next_doc_id(session), filename=sanitize_meta(filename) or "unnamed",
                    kind=sanitize_meta(kind, 40) or "other", sender=sanitize_meta(sender) or None,
                    content_text=text, received_at=datetime.now(timezone.utc),
-                   invoice_ids=json.dumps(inv_ids), counterparty_ids=json.dumps(cp_ids))
+                   invoice_ids=json.dumps(inv_ids), counterparty_ids=json.dumps(cp_ids),
+                   # born flagged: no moment where a concurrent payment sees it unflagged
+                   flagged=bool(indicators), flag_reason="; ".join(indicators)[:500] or None)
     session.add(doc)
     session.commit()
     session.refresh(doc)
     if indicators:
         from agent.executor import run_tool
 
+        # audits the flag and sends the owner the fraud alert
         run_tool(session, "flag_document", {"document_id": doc.id, "reason": "; ".join(indicators)}, actor="system")
         session.refresh(doc)
     return doc
 
 
+def _check_size(n: int) -> None:
+    if n > MAX_DOCUMENT_BYTES:
+        raise ValueError(f"document is larger than {MAX_DOCUMENT_BYTES // 1_000_000} MB")
+
+
 def _bytes_to_text(data: bytes) -> str:
+    _check_size(len(data))
     if data[:5] == b"%PDF-":
         return extract_pdf_text(data)
     return data.decode("utf-8", errors="replace")
@@ -133,6 +150,7 @@ def ingest_text(session, text: str, filename: str, kind: str, sender: str | None
     """Store raw text. The string is data only, never interpreted as a path."""
     if not isinstance(text, str):
         raise TypeError("ingest_text expects str")
+    _check_size(len(text.encode("utf-8")))
     return _store(session, text, filename, kind, sender)
 
 
@@ -144,6 +162,7 @@ def ingest_file(session, path, kind: str, sender: str | None, allowed_root) -> D
         raise ValueError(f"path {path} is outside the allowed directory")
     if not p.is_file():
         raise ValueError(f"not a file: {path}")
+    _check_size(p.stat().st_size)  # before reading it into memory
     return _store(session, _bytes_to_text(p.read_bytes()), p.name, kind, sender)
 
 
