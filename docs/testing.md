@@ -90,7 +90,7 @@ During the bug-fix round a script ran a four-turn session against the DeepSeek A
 - A live blockchain in the automated suite. `EvmBackend` is tested against a fake JSON-RPC node (`httpx.MockTransport`) that checks real `eth-account` signatures and simulates a node that mines a moment later; a run on a local Anvil chain is checked in as evidence (below), a public testnet run is not.
 - Load or performance.
 - The `RUNWAY_COUNTRY=cn` path for payments and for agent text (the display conversion is covered by the UI currency-switch test; the test fixtures use `eu`).
-- The Onboarding import through the UI, including its confirm step (`AppTest` cannot upload files; only `data/importer.py` and `audit/archive.py` are tested directly); the optional paid-invoices and scheduled-payments files exist only in the importer and its test.
+- The Onboarding import through the UI, including its confirm step (`AppTest` cannot upload files; only `data/importer.py` and `audit/archive.py` are tested directly; the two-step import, the archive link and the clock request were checked by hand in a browser on 2026-10-17); the optional paid-invoices and scheduled-payments files exist only in the importer and its test.
 - Two physical browsers: the UI tests simulate a second session with a second `AppTest` instance (kill switch, stale Unverify click) or by calling `executor.approve` with another approver id (the second approval of a two-person request); the two-window case relies on Streamlit giving each session its own state.
 - The two-person rule at the bank for anything but payee verification: clearing a flag, releasing a supplier, the kill switch and the clock are tested through `executor.request_human_action` and the UI only (security self-assessment, KNOWN RISKS 2).
 

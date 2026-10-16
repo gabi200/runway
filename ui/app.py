@@ -335,16 +335,18 @@ def page_onboarding() -> None:
                    "created by an import are unverified until a human verifies them.")
         if st.button("Import uploaded files", type="primary") and auth.require_login("import data"):
             st.session_state.confirm_import = True
-        go = False
+        go, panel = False, st.empty()
         if st.session_state.get("confirm_import") and auth.signed_in():  # second step, like Reset demo data
-            st.error("Replace the current database with the uploaded files?")
-            a, b = st.columns(2)
-            go = a.button("Confirm import", type="primary")
-            if b.button("Cancel", key="cancel_import"):
-                st.session_state.confirm_import = False
-                st.rerun()
+            with panel.container():
+                st.error("Replace the current database with the uploaded files?")
+                a, b = st.columns(2)
+                go = a.button("Confirm import", type="primary")
+                if b.button("Cancel", key="cancel_import"):
+                    st.session_state.confirm_import = False
+                    st.rerun()
         if go:
             st.session_state.confirm_import = False
+            panel.empty()  # the question is answered; do not leave a live Confirm button under the result
             try:
                 prev = archive_current()
                 summary = import_files(
