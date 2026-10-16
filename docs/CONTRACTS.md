@@ -92,9 +92,10 @@ Endpoints (all JSON; money as `amount_cents` + `currency`):
 `POST /simulate/advance?days=N` (moves `today`; executes due scheduled payments →
 creates negative Transaction, marks Payment executed and AP invoice paid).
 Auth: header `Authorization: Bearer <token>`. Tokens from env
-`RUNWAY_BANK_EXECUTOR_TOKEN` (default `executor-dev-token`, scopes: read, payments,
-simulate) and `RUNWAY_BANK_HUMAN_TOKEN` (default `human-dev-token`, scopes: read,
-payees, payments, simulate). Bank independently rejects payments to unverified payees (422).
+`RUNWAY_BANK_EXECUTOR_TOKEN` (scopes: read, payments) and `RUNWAY_BANK_HUMAN_TOKEN`
+(scopes: read, payees, payments, simulate); unset, each is a random token kept in
+`var/secrets/` (`bank.client.bank_token`). `PATCH /payees/{id}` with `verified: true` also
+needs `mandate`: the signed owner+accountant mandate of the approval, used once. Bank independently rejects payments to unverified payees (422).
 Idempotency: same key + same body → return the original payment with
 `"idempotent_replay": true` (no new row); same key + different body → 409.
 ```python

@@ -45,7 +45,7 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 |---|---|
 | Agent | The AI part of Runway. It reads data, writes explanations and requests actions through tools. It cannot act outside the rules engine. |
 | Offline planner | A deterministic stand-in for the language model (`llm/offline.py`), used when no API key is set. It runs the demo story without network access. |
-| Tool | A single action the agent may request, for example `get_forecast` or `schedule_payment`. There are 16; none can change payees, limits or the kill switch. |
+| Tool | A single action the agent may request, for example `get_forecast` or `schedule_payment`. There are 17; none can change payees, limits or the kill switch. `withdraw_request` only cancels the agent's own pending request. |
 | Financing need | The amount, the date and the number of days of financing the forecast calls for, computed in code by `forecast.engine.financing_need` and returned by the tool `get_financing_need`. Amount = lowest running balance (inside the week, same-day payments before receipts) rounded up to a whole 1,000; needed from the first day below zero; term ends at the receipt that brings the balance back above zero (at least 30 days). | Demo: 30,000.00 for 36 days from 2026-11-25, or 18,000.00 if the Inkworks payment is moved. |
 | Permission tier | The risk class of a tool: T0 read, T1 analyse, T2 low-risk automatic action, T3 needs human approval, T4 forbidden. Defined in `policy/rules.yaml`. See `docs/security-self-assessment.md`. |
 | T0 / T1 / T2 / T3 / T4 | T0 reads data. T1 analyses (forecast, scenarios, financing comparison, drafts). T2 acts automatically within limits (payment reminders, small payments). T3 waits for human approval. T4 does not exist as a tool and is always denied. |
@@ -58,7 +58,7 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Material amount | Above `accountant_above_cents` (5,000.00): requires both owner and accountant. |
 | Automatic payment | A payment the agent may schedule without approval: payee verified, an open supplier invoice behind it, amount under 1,000, daily total to the payee under 1,000, daily total of all automatic payments under 3,000. |
 | Daily cap | The per-payee and global daily limits on automatic payments. |
-| Kill switch | A setting (`kill_switch = on`) that drops the agent to T0: only read tools are allowed until a human switches it off. |
+| Kill switch | A setting (`kill_switch = on`) that drops the agent to T0: only read tools are allowed. One signed-in person can switch it on; switching it off needs the owner and the accountant. |
 | Tool executor | `agent/executor.py`. The only code that turns an allowed tool call into a side effect. It owns the audit calls and the approval workflow. |
 | Executor token / human token | The two bearer tokens of the mock bank. The executor token is held only by the tool executor and has the scopes `read` and `payments`: it cannot create or verify payees or advance the clock. The human token also has `payees` and `simulate` and is used by the UI. |
 | Idempotency key | A unique string attached to each payment request. The bank returns the original payment for a repeated key with the same body and rejects (409) a repeated key with a different body. |
