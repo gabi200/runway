@@ -28,6 +28,7 @@ class LLMAdapter:
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=float(self.config.get("timeout_seconds", 60)),
+                max_retries=int(self.config.get("max_retries", 1)),  # SDK default 2 triples the wait before the fallback
             )
         return self._client
 

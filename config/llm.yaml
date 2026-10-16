@@ -5,6 +5,7 @@ base_url: https://api.deepseek.com
 model: deepseek-flash  # current id per api-docs.deepseek.com (Oct 2026); deepseek-v4-pro also available
 api_key_env: DEEPSEEK_API_KEY
 temperature: 0.2
-timeout_seconds: 60
+timeout_seconds: 20   # a stalled provider falls back to the offline planner within ~40 s (one retry)
+max_retries: 1
 # When no API key is present, Runway uses the deterministic offline planner
 # (llm/offline.py) so the demo and tests run without network access.

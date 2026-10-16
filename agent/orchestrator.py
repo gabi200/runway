@@ -20,6 +20,8 @@ MONDAY_PROMPT = (
 )
 MASK_FAILED = ("I could not pseudonymise this message, so nothing was sent to the language model. "
                "Please rephrase it (for example without unusual characters in names) and try again.")
+FALLBACK_NOTE = ("> The language model did not answer ({error}). Runway finished this turn with its built-in "
+                 "offline planner, so this reply is the deterministic version.\n\n")
 _DOC_ID_RE = re.compile(r"DOC-\d+")
 # First-person claims of an action, and the tool that must have run in the same turn to back each one.
 _CLAIM_RE = re.compile(r"\bI(?:['’]ve| have)?\s+(?:just\s+|already\s+|now\s+)?(flagged|sent|scheduled|rescheduled|moved|prepared)\b", re.I)
@@ -84,6 +86,7 @@ class AgentTurn(BaseModel):
     reply: str
     steps: list[dict[str, Any]] = Field(default_factory=list)
     refused: bool = False
+    fallback: bool = False  # the model failed and the offline planner finished the turn
 
 
 class Agent:
@@ -179,12 +182,26 @@ class Agent:
         turn_start = len(raw)
         steps: list[dict] = []
         reply = ""
+        adapter, fallback_error = self.adapter, None
         for _ in range(self.max_steps):
             try:  # masked afresh before every call, so a name learned mid-turn is masked in earlier messages too
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}] + [_masked(pseudo, m) for m in raw]
             except Exception:  # fail closed: never send text that could not be masked
                 return AgentTurn(reply=MASK_FAILED, steps=steps)
-            resp = self.adapter.chat(messages, self._specs())
+            try:
+                resp = adapter.chat(messages, self._specs())
+            except Exception as exc:  # provider down, timeout, bad key: finish this turn offline
+                from llm.offline import OfflinePlanner
+
+                if isinstance(adapter, OfflinePlanner):
+                    raise  # a bug in the planner itself must surface
+                from audit import log as audit_log
+
+                fallback_error = type(exc).__name__  # the type only: messages can echo request details
+                audit_log.append(session, "agent", "llm_fallback", {"error": fallback_error}, "INFO",
+                                 "Language model call failed; the turn continued with the offline planner")
+                adapter = OfflinePlanner()  # it reads the tool calls already made in this turn and continues
+                resp = adapter.chat(messages, self._specs())
             calls = resp.get("tool_calls") or []
             if not calls:
                 reply = pseudo.unmask(resp.get("content") or "")
@@ -222,7 +239,9 @@ class Agent:
         if figures:
             reply += ("\n\n> Check by Runway: these amounts do not appear in any tool result or document: "
                       + ", ".join(figures) + ". Treat them as unverified.")
+        if fallback_error:
+            reply = FALLBACK_NOTE.format(error=fallback_error) + reply
         self._turns.append({"user": user_message, "exchange": raw[turn_start:],
                             "reply": reply + "\n\n" + steps_note(steps)})
         self._people = pseudo.people()  # history keeps raw text, so later turns must still know these names
-        return AgentTurn(reply=reply, steps=steps)
+        return AgentTurn(reply=reply, steps=steps, fallback=fallback_error is not None)
