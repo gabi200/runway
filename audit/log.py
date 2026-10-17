@@ -97,7 +97,10 @@ def append(session: Session, actor: str, action: str, args: dict,
         session.add(count)
         session.commit()
         session.refresh(entry)
-        return entry
     except Exception:
         session.rollback()
         raise
+    from audit import anchor  # imports this module
+
+    anchor.publish_entry(session, entry)
+    return entry

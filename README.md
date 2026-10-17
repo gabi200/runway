@@ -90,7 +90,7 @@ Open **Review team** in the sidebar and tick the agents that should check approv
 | `RUNWAY_LLM_THINKING` | unset | `on` enables DeepSeek thinking mode (not recommended) |
 | `RUNWAY_SAMPLE_DIR` | `data/sample` | UI sample-data folder (generated CSVs and demo documents) |
 | `RUNWAY_ANCHOR` | `notary` | Where the audit head is published: `notary` (a file next to the database) or `evm` (any EVM JSON-RPC chain) |
-| `RUNWAY_AUTO_ANCHOR` | `on` | `off` stops publishing the head automatically after each high-risk action |
+| `RUNWAY_AUTO_ANCHOR` | `every` for `notary`, `high-risk` for `evm` | When the head is published automatically: after `every` audit entry, only after `high-risk` actions, or `off` |
 | `RUNWAY_NOTARY_PATH` | `<db>.notary.jsonl` | Notary file (default: the database path with `.notary.jsonl` as suffix) |
 | `RUNWAY_EVM_RPC_URL` | unset | JSON-RPC URL of the chain, for `RUNWAY_ANCHOR=evm`. Never commit a URL that contains an API key |
 | `RUNWAY_EVM_PRIVATE_KEY` | unset | Funded key that sends the anchor transactions, for `RUNWAY_ANCHOR=evm`. Never commit it |
@@ -101,7 +101,7 @@ Details and switching providers or country packs: [docs/deployment.md](docs/depl
 
 The hash chain detects edits by anyone who cannot also rewrite the stored head. Someone with write access to the SQLite file can recompute every hash. Publishing the head outside the database closes that gap: **Publish head now** on the Audit log page (or `python -m audit.anchor publish`) writes `runway-audit:v1:<count>:<head hash>` to the backend and stores a receipt; **Verify against published heads** (or `python -m audit.anchor verify`) recomputes the chain and compares it with every published head.
 
-The head is also published automatically right after any executed action that moves money or lifts a control (`schedule_payment`, T3 and T4 tools, and the two-person actions such as verifying a payee or switching the kill switch off). Deleting such an action from the end of the log is then caught too. Entries after the last published head, such as reminders and reads, are only as safe as the database until the next publish. If publishing fails, the action stands and the failure is audited.
+The head is also published automatically. With the notary file (the default) it is published after every audit entry, so neither a rewritten nor a deleted entry goes unnoticed; these publishes leave a receipt but no audit entry of their own, so the log does not double. On a chain each publish is a paid transaction, so the default there is `high-risk`: the head is published right after any executed action that moves money or lifts a control (`schedule_payment`, T3 and T4 tools, and the two-person actions such as verifying a payee or switching the kill switch off), and after a demo reset, sample load or import. Entries after the last published head, such as reminders and reads, are then only as safe as the database until the next publish. If publishing fails, the action stands and the failure is audited.
 
 With `RUNWAY_ANCHOR=evm` the payload is the calldata of a zero-value transaction from the anchor account to itself, so it works on any EVM chain without a smart contract (tested against a fake JSON-RPC node that checks real signatures, and run on a local Anvil chain: see `docs/execution_logs/anchor_run.md`; a testnet such as Sepolia works the same way). Publishing waits until the transaction is mined and successful, so a receipt always means the head is on chain. Install Anvil with `brew install foundry` (or `foundryup`), then:
 

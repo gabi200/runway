@@ -501,9 +501,10 @@ def test_confirm_reset_signed_in_with_kill_switch_on(at):
         assert not db.kill_switch_on(s)
 
 
-def test_reset_demo_is_audited_with_the_acting_role(at):
+def test_reset_demo_is_audited_with_the_acting_role(at, monkeypatch):
     from sqlmodel import select
     from audit.log import verify_chain
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "high-risk")
     sign_in(at, "accountant")
     next(b for b in at.button if b.label == "Reset demo data").click().run()
     next(b for b in at.button if b.label == "Confirm reset").click().run()
@@ -517,9 +518,13 @@ def test_reset_demo_is_audited_with_the_acting_role(at):
         from audit import archive
         name = json.loads(entry.args_json)["archive"]
         assert archive.check_link(s, var_dir() / "archive" / name)  # the old log survives the reset
+        from audit.anchor import verify_anchors
+        assert [r.count for r in s.exec(select(db.AuditAnchor))] == [entry.id]  # the fresh log is published at once
+        assert verify_anchors(s).ok
 
 
-def test_sample_data_needs_sign_in_and_works_signed_in(at):
+def test_sample_data_needs_sign_in_and_works_signed_in(at, monkeypatch):
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "high-risk")
     goto(at, "Onboarding")
     before = _audit_count()
     next(b for b in at.button if b.label == "Use generated sample data").click().run()
@@ -533,6 +538,9 @@ def test_sample_data_needs_sign_in_and_works_signed_in(at):
     assert not at.exception, [e.value for e in at.exception]
     assert at.toggle(key="kill").value is False
     assert any("Sample data loaded" in s.value for s in at.success)
+    with db.session_scope() as s:
+        from sqlmodel import select
+        assert len(s.exec(select(db.AuditAnchor)).all()) == 1
 
 
 def test_brief_and_chat_need_sign_in(at):

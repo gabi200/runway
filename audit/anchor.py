@@ -21,7 +21,7 @@ import httpx
 from sqlmodel import Session, select
 
 from audit import log as audit
-from common.db import AuditAnchor, db_path
+from common.db import AuditAnchor, AuditEntry, db_path
 
 PREFIX = "runway-audit:v1:"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -183,8 +183,8 @@ class AnchorReport:
         return self.status == "verified"
 
 
-def anchor_head(session: Session, actor: str, backend=None) -> AuditAnchor:
-    """Publish the current head, store the receipt and audit the act. Refuses a broken or empty chain."""
+def anchor_head(session: Session, actor: str, backend=None, record: bool = True) -> AuditAnchor:
+    """Publish the current head, store the receipt and (if `record`) audit the act. Refuses a broken or empty chain."""
     backend = backend or get_backend()
     report = audit.verify_chain(session)
     if not report.ok:
@@ -198,6 +198,8 @@ def anchor_head(session: Session, actor: str, backend=None) -> AuditAnchor:
     session.add(receipt)
     session.commit()
     session.refresh(receipt)
+    if not record:
+        return receipt
     audit.append(session, actor, "anchor_audit_head",
                  {"count": receipt.count, "head": head, "backend": backend.name, "ref": ref},
                  "INFO", "Audit head published outside the database")
@@ -205,18 +207,41 @@ def anchor_head(session: Session, actor: str, backend=None) -> AuditAnchor:
     return receipt
 
 
-def auto_anchor(session: Session, after: str, backend=None) -> AuditAnchor | None:
-    """Publish the head right after a high-risk action, so deleting that action's entries is caught.
+def auto_mode() -> str:
+    """RUNWAY_AUTO_ANCHOR: 'every' entry, 'high-risk' actions only, or 'off'.
 
-    The action has already run, so a failure here is audited, never raised. RUNWAY_AUTO_ANCHOR=off disables it.
+    The default is 'every' for the notary file, which costs nothing, and 'high-risk' for a chain,
+    where each publish is a paid transaction.
     """
-    if (os.getenv("RUNWAY_AUTO_ANCHOR") or "on").strip().lower() == "off":
-        return None
+    mode = (os.getenv("RUNWAY_AUTO_ANCHOR") or "").strip().lower()
+    if mode in {"every", "high-risk", "off"}:
+        return mode
+    return "every" if (os.getenv("RUNWAY_ANCHOR") or "notary").strip().lower() == "notary" else "high-risk"
+
+
+def _publish_or_audit(session: Session, after: str, record: bool, backend) -> AuditAnchor | None:
+    # The action has already run, so a failure is audited, never raised.
     try:
-        return anchor_head(session, "system", backend)
+        return anchor_head(session, "system", backend, record=record)
     except AnchorError as exc:
         audit.append(session, "system", "anchor_audit_head", {"after": after}, "FAILED", str(exc))
         return None
+
+
+def auto_anchor(session: Session, after: str, backend=None) -> AuditAnchor | None:
+    """In 'high-risk' mode, publish the head right after an action that moves money or lifts a control."""
+    return _publish_or_audit(session, after, True, backend) if auto_mode() == "high-risk" else None
+
+
+def publish_entry(session: Session, entry: AuditEntry, backend=None) -> AuditAnchor | None:
+    """In 'every' mode, publish the head after each new entry, so no entry can be rewritten or deleted unnoticed.
+
+    These publishes write no audit entry of their own (the receipt is the record); otherwise each entry would be
+    followed by an unpublished one, and the log would double in size.
+    """
+    if auto_mode() != "every" or entry.action == "anchor_audit_head":
+        return None
+    return _publish_or_audit(session, entry.action, False, backend)
 
 
 def verify_anchors(session: Session, backend=None) -> AnchorReport:

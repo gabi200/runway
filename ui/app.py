@@ -161,6 +161,7 @@ def reset_demo() -> None:
     generate(out_dir=SAMPLE_DIR)
     with session_scope() as s:  # first entry of the new log: who wiped the old one, and where it went
         log_human(s, "reset_demo", prev, "HUMAN_ACTION", "Demo data reset from the UI; old log archived")
+        anchor.auto_anchor(s, "reset_demo")  # a fresh log is never without a published head
     st.session_state.update(agent=Agent(session_factory=session_scope), chat=[], brief=None,
                             confirm_reset=False)
     st.session_state.pop("scenario", None)
@@ -384,6 +385,7 @@ def page_onboarding() -> None:
         with session_scope() as s:
             log_human(s, "load_sample_data", {**{k: v for k, v in summary.items() if k != "warnings"}, **prev},
                       "HUMAN_ACTION", "Sample data regenerated from the UI; old log archived")
+            anchor.auto_anchor(s, "load_sample_data")
         st.rerun()
     if tb is not None and (rows := read_csv(tb)) is not None:
         debit, credit = sum(num(r.get("debit")) for r in rows), sum(num(r.get("credit")) for r in rows)
@@ -432,6 +434,7 @@ def page_onboarding() -> None:
                 with session_scope() as s:
                     log_human(s, "import_files", {**{k: v for k, v in summary.items() if k != "warnings"}, **prev},
                               "HUMAN_ACTION", "Company data imported from uploaded CSV files; old log archived")
+                    anchor.auto_anchor(s, "import_files")
                 st.success("Imported. The forecast now uses the uploaded data.")
                 for w in summary["warnings"]:
                     st.warning(w)

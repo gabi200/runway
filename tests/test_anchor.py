@@ -171,3 +171,47 @@ def test_cli_publish_and_verify(session, capsys):
     assert '"status": "verified"' in capsys.readouterr().out
     edit_entry(session, 1, "attacker")
     assert main(["verify"]) == 1
+
+
+@pytest.mark.parametrize("anchor, setting, mode", [("notary", None, "every"), ("evm", None, "high-risk"),
+                                                    ("notary", "off", "off"), ("evm", "every", "every")])
+def test_auto_mode_defaults_to_every_entry_for_the_notary_only(monkeypatch, anchor, setting, mode):
+    from audit.anchor import auto_mode
+
+    monkeypatch.setenv("RUNWAY_ANCHOR", anchor)
+    if setting is None:
+        monkeypatch.delenv("RUNWAY_AUTO_ANCHOR")
+    else:
+        monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", setting)
+    assert auto_mode() == mode
+
+
+@pytest.fixture
+def every_entry(session, monkeypatch):
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "every")
+    return session
+
+
+def test_every_entry_is_published_without_extra_entries(every_entry):
+    seed(every_entry)
+    entries = list_entries(every_entry)
+    assert [e.action for e in entries] == ["get_balances"] * 4  # receipts only, no anchoring entries
+    receipts = every_entry.exec(select(AuditAnchor)).all()
+    assert [r.count for r in receipts] == [1, 2, 3, 4] and receipts[-1].head == entries[-1].hash
+    report = verify_anchors(every_entry)
+    assert report.ok and report.message == "All 4 published heads match; entries 1 to 4 are as published"
+
+
+@pytest.mark.parametrize("attack", [lambda s: rewrite_history(s, 2, "attacker"), lambda s: truncate_history(s, 2)])
+def test_every_entry_catches_forgery_and_truncation(every_entry, attack):
+    seed(every_entry)
+    attack(every_entry)
+    assert verify_chain(every_entry).ok
+    assert verify_anchors(every_entry).status == "tampered"
+
+
+def test_manual_publish_in_every_mode_is_still_recorded(every_entry):
+    seed(every_entry, 2)
+    anchor_head(every_entry, "owner")
+    assert list_entries(every_entry)[-1].action == "anchor_audit_head"
+    assert verify_anchors(every_entry).covered == 2

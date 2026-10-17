@@ -25,6 +25,7 @@ def no_live_anchor(tmp_path, monkeypatch):
     for name in ("RUNWAY_ANCHOR", "RUNWAY_NOTARY_PATH", "RUNWAY_EVM_RPC_URL", "RUNWAY_EVM_PRIVATE_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("RUNWAY_NOTARY_PATH", str(tmp_path / "notary.jsonl"))  # automatic publishing stays out of var/
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "off")  # tests that need automatic publishing turn it on
 
 
 @pytest.fixture(autouse=True)

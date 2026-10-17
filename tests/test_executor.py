@@ -596,11 +596,12 @@ def test_approve_and_reject_without_a_role_are_denied_not_crashing(session, role
     assert verify_chain(session).ok
 
 
-def test_high_risk_action_publishes_head_and_its_deletion_is_detected(session):
+def test_high_risk_action_publishes_head_and_its_deletion_is_detected(session, monkeypatch):
     from audit.anchor import verify_anchors
     from common.db import AuditAnchor
     from redteam.tamper import truncate_history
 
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "high-risk")
     assert run_tool(session, "schedule_payment", _pay_args(40_000)).status == "ok"
     anchors = session.exec(select(AuditAnchor)).all()
     entries = session.exec(select(AuditEntry).order_by(AuditEntry.id)).all()
@@ -612,9 +613,10 @@ def test_high_risk_action_publishes_head_and_its_deletion_is_detected(session):
     assert verify_anchors(session).status == "tampered"
 
 
-def test_low_risk_action_does_not_publish(session):
+def test_low_risk_action_does_not_publish(session, monkeypatch):
     from common.db import AuditAnchor
 
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "high-risk")
     assert run_tool(session, "get_balances", {}).status == "ok"
     assert session.exec(select(AuditAnchor)).all() == []
 
@@ -629,6 +631,7 @@ def test_auto_anchor_can_be_switched_off(session, monkeypatch):
 
 def test_auto_anchor_failure_is_audited_and_keeps_the_action(session, monkeypatch):
     monkeypatch.setenv("RUNWAY_ANCHOR", "evm")  # no RPC URL or key: the backend is unavailable
+    monkeypatch.delenv("RUNWAY_AUTO_ANCHOR")  # a chain defaults to high-risk only
     assert run_tool(session, "schedule_payment", _pay_args(40_000)).status == "ok"
     last = session.exec(select(AuditEntry).order_by(AuditEntry.id.desc())).first()
     assert (last.action, last.decision) == ("anchor_audit_head", "FAILED")
