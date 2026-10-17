@@ -131,7 +131,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 702 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 703 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A10 and the red-team console
 .venv/bin/python scripts/run_tasks.py --mode offline   # judge task pack; --mode deepseek for a live run
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
@@ -180,7 +180,7 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 | 1 | Technical documentation: system architecture, core algorithm description, security design | System architecture: [docs/architecture.md](docs/architecture.md). Core algorithms: [docs/algorithms.md](docs/algorithms.md). Security design: [docs/security-self-assessment.md](docs/security-self-assessment.md) sections 1 to 4 (threat model, permission tiers, 29 defense layers) and the design rules in [docs/architecture.md](docs/architecture.md) section 6 | Written |
 | 2 | Presentation deck, 10 minutes or less | Outline and timing in [docs/demo-script.md](docs/demo-script.md) section 3 | Outline only; slides still to be built |
 | 3 | Demo video, 5 minutes or less (optional) | Script in [docs/demo-script.md](docs/demo-script.md) section 2 | Script written; video still to be recorded |
-| 4 | Source code on GitHub with README, deployment instructions and test cases | <https://github.com/gabi200/runway>, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` (702 tests, [docs/testing.md](docs/testing.md)) | Done |
+| 4 | Source code on GitHub with README, deployment instructions and test cases | <https://github.com/gabi200/runway>, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` (703 tests, [docs/testing.md](docs/testing.md)) | Done |
 | 5 | Security self-assessment: permission tiers and known risks | [docs/security-self-assessment.md](docs/security-self-assessment.md) section 3 (permission tiers T0 to T4 and how each is implemented) and section 7 (25 known risks); attacks A1 to A10 in section 5 | Written |
 | 6 | Execution evidence: simulated-account/sandbox operation logs plus the demo video | [docs/execution_logs/](docs/execution_logs/): sandbox run `demo_run.md`, `audit_log.jsonl`, `bank_payments.json`, `outbox.json`, `FIN-0001.pdf` with `mandate_keys.json`; judge task pack `task_report_offline.md`, `task_report_deepseek.md` with traces; audit head on a local Anvil chain `anchor_run.md`, `anchor_receipt.json`; video as item 3 | Logs generated; video pending |
 

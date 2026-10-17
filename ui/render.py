@@ -230,4 +230,6 @@ OUTCOME_BADGES = {"blocked": ":green-badge[blocked]", "detected": ":green-badge[
 def format_step(step) -> str:
     """One red-team trace line as safe markdown; the detail may be attacker- or model-written."""
     badge = OUTCOME_BADGES.get(step.outcome, ":gray-badge[info]")
+    if step.layer == "Agent reply":  # the model's answer keeps its formatting, as in the chat
+        return f"{badge} **Agent reply**\n\n{reply_markdown(step.detail)}"
     return f"{badge} **{safe_text(step.layer)}** {safe_text(step.detail)}"

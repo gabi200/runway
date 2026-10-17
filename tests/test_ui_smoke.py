@@ -702,6 +702,16 @@ def test_red_team_step_text_is_neutralised():
     assert "](https://" not in out and "image removed" in out
 
 
+def test_red_team_agent_reply_renders_markdown():
+    from ui.render import format_step
+
+    reply = "**Refused.** I cannot raise limits:\n\n- no tool exists\n- the rules engine denies it\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+    out = format_step(Step("Agent reply", "info", reply))
+    assert out.endswith("\n\n" + reply)  # formatting kept, on its own block below the label
+    other = format_step(Step("Rules engine", "blocked", "**not bold** - [x](https://evil.example)"))
+    assert "\\*\\*not bold\\*\\*" in other and "](https://" not in other  # other layers stay escaped
+
+
 def test_approval_in_ui_is_signed(at):
     sign_in(at)
     goto(at, "Monday brief & chat")
