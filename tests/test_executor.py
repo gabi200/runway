@@ -594,3 +594,43 @@ def test_approve_and_reject_without_a_role_are_denied_not_crashing(session, role
     assert approve(session, request.approval_id, role).status == "denied"
     assert reject(session, request.approval_id, role).status == "denied"
     assert verify_chain(session).ok
+
+
+def test_high_risk_action_publishes_head_and_its_deletion_is_detected(session):
+    from audit.anchor import verify_anchors
+    from common.db import AuditAnchor
+    from redteam.tamper import truncate_history
+
+    assert run_tool(session, "schedule_payment", _pay_args(40_000)).status == "ok"
+    anchors = session.exec(select(AuditAnchor)).all()
+    entries = session.exec(select(AuditEntry).order_by(AuditEntry.id)).all()
+    assert len(anchors) == 1 and anchors[0].count == len(entries) - 1
+    assert (entries[-2].action, entries[-2].decision) == ("schedule_payment", "EXECUTED")
+    assert entries[-1].action == "anchor_audit_head"
+    truncate_history(session, len(entries) - 2)  # an insider removes the payment and the anchoring entry
+    assert verify_chain(session).ok
+    assert verify_anchors(session).status == "tampered"
+
+
+def test_low_risk_action_does_not_publish(session):
+    from common.db import AuditAnchor
+
+    assert run_tool(session, "get_balances", {}).status == "ok"
+    assert session.exec(select(AuditAnchor)).all() == []
+
+
+def test_auto_anchor_can_be_switched_off(session, monkeypatch):
+    from common.db import AuditAnchor
+
+    monkeypatch.setenv("RUNWAY_AUTO_ANCHOR", "off")
+    assert run_tool(session, "schedule_payment", _pay_args(40_000)).status == "ok"
+    assert session.exec(select(AuditAnchor)).all() == []
+
+
+def test_auto_anchor_failure_is_audited_and_keeps_the_action(session, monkeypatch):
+    monkeypatch.setenv("RUNWAY_ANCHOR", "evm")  # no RPC URL or key: the backend is unavailable
+    assert run_tool(session, "schedule_payment", _pay_args(40_000)).status == "ok"
+    last = session.exec(select(AuditEntry).order_by(AuditEntry.id.desc())).first()
+    assert (last.action, last.decision) == ("anchor_audit_head", "FAILED")
+    assert session.exec(select(Payment).where(Payment.amount_cents == 40_000)).one()
+    assert verify_chain(session).ok

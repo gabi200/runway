@@ -19,6 +19,7 @@ from agent import mandate
 from agent.financing import account_currency, compare_financing  # noqa: F401  (compare_financing re-exported per CONTRACTS section 6)
 from agent.outbox import next_id
 from agent.tools import HANDLERS, TOOL_SPECS, ToolError, ToolResult, _need_defaults, idempotency_key, jsonable  # noqa: F401
+from audit import anchor
 from audit import log as audit
 from bank.client import BankClient, BankError, bank_token
 from common.db import (Account, ApprovalRequest, Document, Payee, Payment, Setting, get_setting, get_today,
@@ -70,7 +71,15 @@ def _execute(session: Session, tool: str, args: dict, actor: str, automatic: boo
         audit.append(session, actor, tool, args, "FAILED", f"{type(e).__name__}: {e}")
         return ToolResult(status="error", tool=tool, reason=f"{type(e).__name__}: {e}")
     audit.append(session, actor, tool, args, "EXECUTED", "")
+    if tool in _auto_anchor_tools():
+        anchor.auto_anchor(session, tool)
     return ToolResult(status="ok", tool=tool, data=data)
+
+
+def _auto_anchor_tools() -> set[str]:
+    """Actions that move money or lift a control: their audit entries are published as soon as they run."""
+    tiers = policy.load_rules()["tiers"]
+    return {"schedule_payment", *tiers["T3"], *tiers["T4"], *HUMAN_HANDLERS}
 
 
 def run_tool(session: Session, tool_name: str, args: dict, actor: str = "agent") -> ToolResult:

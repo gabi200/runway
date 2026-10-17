@@ -45,6 +45,7 @@ def test_notary_unknown_ref(tmp_path, ref):
 
 
 def test_get_backend_from_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNWAY_NOTARY_PATH")
     monkeypatch.setenv("RUNWAY_DB", str(tmp_path / "x.db"))
     backend = get_backend()
     assert backend.name == "notary" and backend.path == tmp_path / "x.notary.jsonl"
@@ -66,6 +67,7 @@ from redteam.tamper import edit_entry, rewrite_history, truncate_history
 
 @pytest.fixture
 def session(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNWAY_NOTARY_PATH")  # these tests read the notary file next to the database
     monkeypatch.setenv("RUNWAY_DB", str(tmp_path / "anchor.db"))
     reset_engines()
     with session_scope() as s:

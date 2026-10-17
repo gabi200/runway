@@ -20,10 +20,11 @@ def no_live_llm(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_live_anchor(monkeypatch):
+def no_live_anchor(tmp_path, monkeypatch):
     """A .env pointing at a real chain must never make a test publish or read an anchor."""
     for name in ("RUNWAY_ANCHOR", "RUNWAY_NOTARY_PATH", "RUNWAY_EVM_RPC_URL", "RUNWAY_EVM_PRIVATE_KEY"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("RUNWAY_NOTARY_PATH", str(tmp_path / "notary.jsonl"))  # automatic publishing stays out of var/
 
 
 @pytest.fixture(autouse=True)

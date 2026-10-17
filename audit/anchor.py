@@ -205,6 +205,20 @@ def anchor_head(session: Session, actor: str, backend=None) -> AuditAnchor:
     return receipt
 
 
+def auto_anchor(session: Session, after: str, backend=None) -> AuditAnchor | None:
+    """Publish the head right after a high-risk action, so deleting that action's entries is caught.
+
+    The action has already run, so a failure here is audited, never raised. RUNWAY_AUTO_ANCHOR=off disables it.
+    """
+    if (os.getenv("RUNWAY_AUTO_ANCHOR") or "on").strip().lower() == "off":
+        return None
+    try:
+        return anchor_head(session, "system", backend)
+    except AnchorError as exc:
+        audit.append(session, "system", "anchor_audit_head", {"after": after}, "FAILED", str(exc))
+        return None
+
+
 def verify_anchors(session: Session, backend=None) -> AnchorReport:
     """Recompute the chain, then compare it with every head published outside the database."""
     chain = audit.verify_chain(session)
