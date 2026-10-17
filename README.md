@@ -115,7 +115,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 666 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 668 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A10 and the red-team console
 .venv/bin/python scripts/run_tasks.py --mode offline   # judge task pack; --mode deepseek for a live run
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/

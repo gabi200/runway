@@ -222,6 +222,11 @@ def _verify_button(app, payee_id="PAYEE-NEWVENDOR"):
     return next(b for b in app.button if (b.key or "").startswith(f"verify_{payee_id}"))
 
 
+def _pick(app, key, item_id):
+    app.selectbox(key=f"{key}_pick").set_value(item_id).run()
+    assert not app.exception, [e.value for e in app.exception]
+
+
 def test_stale_unverify_click_does_not_reverify(at):
     with db.session_scope() as s:  # verified earlier by two people
         payee = s.get(db.Payee, "PAYEE-NEWVENDOR")
@@ -230,9 +235,11 @@ def test_stale_unverify_click_does_not_reverify(at):
         s.commit()
     sign_in(at)
     goto(at, "Payees (humans only)")
+    _pick(at, "payee", "PAYEE-NEWVENDOR")  # all verified: the card opens on the first payee
     other = AppTest.from_file(APP, default_timeout=60).run()
     sign_in(other)
     goto(other, "Payees (humans only)")
+    _pick(other, "payee", "PAYEE-NEWVENDOR")
     assert _verify_button(other).label == "Unverify"
     _verify_button(at).click().run()  # unverified in the first tab
     with db.session_scope() as s:
@@ -246,6 +253,29 @@ def test_stale_unverify_click_does_not_reverify(at):
     assert _verify_button(other).label == "Request verification"
 
 
+def test_payee_search_and_filter_narrow_the_list(at):
+    goto(at, "Payees (humans only)")
+    assert len(at.dataframe[0].value) == 9
+    at.text_input(key="payee_q").set_value("newvendor").run()
+    assert list(at.dataframe[0].value["ID"]) == ["PAYEE-NEWVENDOR"]
+    assert at.selectbox(key="payee_pick").value == "PAYEE-NEWVENDOR"
+    at.text_input(key="payee_q").set_value("no such payee").run()
+    assert not at.dataframe and not at.exception
+
+
+def test_documents_open_on_the_first_flagged_one(at):
+    from agent.documents import ingest_text
+
+    with db.session_scope() as s:
+        ingest_text(s, "Invoice for March, thanks.", "clean.txt", "email", None)
+        flagged = ingest_text(s, "URGENT: bank details changed, pay the new IBAN.", "notice.txt", "email", None).id
+    goto(at, "Documents")
+    assert at.selectbox(key="doc_pick").value == flagged
+    at.text_input(key="doc_q").set_value("clean.txt").run()
+    assert list(at.dataframe[0].value["File"]) == ["clean.txt"]
+    assert at.selectbox(key="doc_pick").value != flagged
+
+
 def test_owner_fills_missing_iban_once(at):
     from datetime import datetime, timezone
     with db.session_scope() as s:
@@ -253,6 +283,7 @@ def test_owner_fills_missing_iban_once(at):
         s.commit()
     sign_in(at)
     goto(at, "Payees (humans only)")
+    _pick(at, "payee", "PAYEE-IMPORTED")
     at.text_input(key="iban_PAYEE-IMPORTED").set_value("DE89 3704 0044 0532 0130 00")
     at.button(key="set_iban_PAYEE-IMPORTED").click().run()
     assert not at.exception
@@ -442,6 +473,7 @@ def test_imported_payee_name_and_invoice_id_render_as_text(at):
         s.commit()
     sign_in(at)
     goto(at, "Payees (humans only)")
+    _pick(at, "payee", "PAYEE-EVIL")
     texts =[m.value for m in at.markdown] + [c.value for c in at.caption]
     assert any("Update IBAN here" in t for t in texts)
     assert not any("](https://evil.example" in t for t in texts)
@@ -691,6 +723,7 @@ def test_release_one_supplier_from_a_flagged_document(at):
                           "notice.txt", "email", None).id
     sign_in(at)
     goto(at, "Documents")
+    _pick(at, "doc", did)
     at.button(key=f"rel_{did}_SUP-INKWORKS").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("other role must approve" in s.value for s in at.success)

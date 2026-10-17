@@ -211,6 +211,34 @@ def page_heading(title: str, subtitle: str) -> None:
                 unsafe_allow_html=True)
 
 
+def list_filter(key: str, groups: dict[str, int], placeholder: str) -> tuple[str, str]:
+    """Search box and status filter (with counts) above a long list; returns (query, group)."""
+    q, f = st.columns([2, 3], vertical_alignment="center")
+    query = q.text_input("Search", key=f"{key}_q", placeholder=placeholder, label_visibility="collapsed")
+    group = f.segmented_control("Show", list(groups), key=f"{key}_f", default="All",
+                                format_func=lambda g: f"{g} ({groups[g]})", label_visibility="collapsed")
+    return query.strip().lower(), group or "All"
+
+
+def pick_table(key: str, frame: pd.DataFrame, ids: list[str]) -> None:
+    """A scrollable table; clicking a row selects it in the `{key}_pick` selectbox."""
+    def picked() -> None:
+        rows = st.session_state[f"{key}_table"].selection.rows
+        if rows:
+            st.session_state[f"{key}_pick"] = ids[rows[0]]
+    st.dataframe(frame, width="stretch", hide_index=True, key=f"{key}_table",
+                 on_select=picked, selection_mode="single-row")
+
+
+def pick(key: str, label: str, ids: list[str], default: str | None, fmt) -> str | None:
+    """The selected row of a filtered list, kept while it stays in the list."""
+    if not ids:
+        return None
+    if st.session_state.get(f"{key}_pick") not in ids:
+        st.session_state[f"{key}_pick"] = default if default in ids else ids[0]
+    return st.selectbox(label, ids, key=f"{key}_pick", format_func=fmt)
+
+
 def navigate(page: str) -> None:
     st.session_state.page = page
 
@@ -936,39 +964,63 @@ def page_documents() -> None:
         st.caption("No sample documents found. Use 'Reset demo data'.")
     st.subheader("Stored documents")
     with session_scope() as s:
-        docs = list(s.exec(select(Document).order_by(Document.id)))
         names = {c.id: c.name for c in s.exec(select(Counterparty))}
-        view = [(d.id, d.filename, d.kind, d.sender, d.flagged, d.cleared, d.flag_reason, d.content_text,
-                 json.loads(d.invoice_ids), json.loads(d.counterparty_ids), json.loads(d.released_counterparty_ids))
-                for d in docs]
-    if not view:
+        docs = {d.id: dict(d.model_dump(), invoice_ids=json.loads(d.invoice_ids),
+                           counterparty_ids=json.loads(d.counterparty_ids),
+                           released=json.loads(d.released_counterparty_ids))
+                for d in s.exec(select(Document).order_by(Document.id.desc()))}  # newest first
+    if not docs:
         st.caption("No documents yet.")
-    for did, fn, k, snd, flagged, cleared, reason, text, inv_ids, cp_ids, released in view:
-        status = ":blue-badge[Cleared by human]" if (flagged and cleared) else (
-            ":red-badge[Flagged]" if flagged else ":green-badge[Clean]")
-        with st.expander(f"{status} {safe_text(f'{did} - {fn}')}"):
-            if flagged:
-                st.warning(f"Reasons: {safe_text(reason)}")
-            st.caption(safe_text(f"Kind: {k}  |  Sender: {snd or 'unknown'}"))
-            if inv_ids or cp_ids:
-                st.caption(safe_text(f"Linked to: invoices {', '.join(inv_ids) or 'none'}, "
-                                     f"counterparties {', '.join(cp_ids) or 'none'}"))
-                invoice_links(inv_ids, f"doc_{did}", remind=False)
-            st.text(text[:3000])
-            if flagged and not cleared:
-                if auth.signed_in():
-                    st.caption("Lifting a block needs two people: you ask here, the other role approves it "
-                               "in the approval queue.")
-                    if st.button("Clear flag (I reviewed this document)", key=f"clr_{did}"):
-                        human_request("clear_document_flag", {"document_id": did})
-                    for cp in [c for c in cp_ids if c not in released]:
-                        if st.button(safe_text(f"Release payments to {names.get(cp, cp)} only"), key=f"rel_{did}_{cp}"):
-                            human_request("release_supplier", {"document_id": did, "counterparty_id": cp})
-                    if released:
-                        st.caption(safe_text("Released from this block: "
-                                             + ", ".join(names.get(c, c) for c in released)))
-                else:
-                    st.caption("Sign in as owner or accountant to ask for a flag to be cleared.")
+        return
+
+    def status(d) -> str:
+        return ("Cleared" if d["cleared"] else "Needs review") if d["flagged"] else "Clean"
+    counts = {g: sum(status(d) == g for d in docs.values()) for g in ("Needs review", "Cleared", "Clean")}
+    query, group = list_filter("doc", {"All": len(docs), **counts}, "Search ID, file, sender or text")
+    rows = [d for d in docs.values() if group in ("All", status(d)) and query in
+            f"{d['id']} {d['filename']} {d['sender'] or ''} {d['kind']} {d['content_text']}".lower()]
+    ids = [d["id"] for d in rows]
+    table, card = st.columns([3, 2], gap="large")
+    with table:
+        if not rows:
+            st.caption("No documents match.")
+        else:
+            pick_table("doc", pd.DataFrame([{
+                "ID": d["id"], "Status": status(d), "File": d["filename"], "Sender": d["sender"] or "unknown",
+                "Received": d["received_at"].strftime("%Y-%m-%d %H:%M"), "Invoices": ", ".join(d["invoice_ids"]),
+                "Kind": d["kind"]} for d in rows]), ids)
+    with card, st.container(border=True, key="doc-card"):
+        did = pick("doc", "Document", ids, next((d["id"] for d in rows if status(d) == "Needs review"), None),
+                   lambda i: f"{i} · {docs[i]['filename']}")
+        if did is None:
+            st.caption("Nothing selected.")
+            return
+        d = docs[did]
+        st.markdown({"Needs review": ":red-badge[Flagged]", "Cleared": ":blue-badge[Cleared by human]",
+                     "Clean": ":green-badge[Clean]"}[status(d)])
+        if d["flagged"]:
+            st.warning(f"Reasons: {safe_text(d['flag_reason'])}")
+        st.caption(safe_text(f"Kind: {d['kind']}  |  Sender: {d['sender'] or 'unknown'}"))
+        if d["invoice_ids"] or d["counterparty_ids"]:
+            st.caption(safe_text(f"Linked to: invoices {', '.join(d['invoice_ids']) or 'none'}, "
+                                 f"counterparties {', '.join(d['counterparty_ids']) or 'none'}"))
+            invoice_links(d["invoice_ids"], f"doc_{did}", remind=False)
+        with st.container(height=240):
+            st.text(d["content_text"][:3000])
+        if d["flagged"] and not d["cleared"]:
+            if auth.signed_in():
+                st.caption("Lifting a block needs two people: you ask here, the other role approves it "
+                           "in the approval queue.")
+                if st.button("Clear flag (I reviewed this document)", key=f"clr_{did}"):
+                    human_request("clear_document_flag", {"document_id": did})
+                for cp in [c for c in d["counterparty_ids"] if c not in d["released"]]:
+                    if st.button(safe_text(f"Release payments to {names.get(cp, cp)} only"), key=f"rel_{did}_{cp}"):
+                        human_request("release_supplier", {"document_id": did, "counterparty_id": cp})
+                if d["released"]:
+                    st.caption(safe_text("Released from this block: "
+                                         + ", ".join(names.get(c, c) for c in d["released"])))
+            else:
+                st.caption("Sign in as owner or accountant to ask for a flag to be cleared.")
 
 
 # --------------------------------------------------------------------------- #
@@ -976,33 +1028,63 @@ def page_documents() -> None:
 # --------------------------------------------------------------------------- #
 def page_payees() -> None:
     page_heading("Know who you’re paying.", "Bank details and payee verification remain under human control.")
-    st.info("A **payee** is someone we pay; it must be **verified** before any payment. The agent has "
-            "**no tool** to add or change payees or IBANs, and the bank rejects its token on this endpoint. "
-            "Only a human with the human bank token can do it here.")
+    st.caption("A **payee** is someone we pay; it must be **verified** before any payment. The agent has "
+               "**no tool** to add or change payees or IBANs, and the bank rejects its token on this endpoint. "
+               "Only a human with the human bank token can do it here.")
     try:
         with human_bank() as bank:
-            payees = bank.list_payees()
+            payees = {p["id"]: p for p in bank.list_payees()}
     except BankError as exc:
         st.error(f"Bank error: {exc.detail}")
         return
-    st.dataframe(pd.DataFrame(payees), width="stretch", hide_index=True,
-                 column_order=["name", "verified", "iban", "id", "created_by"],
-                 column_config={"name": "Name", "verified": "Verified", "iban": "IBAN", "id": "ID",
-                                "created_by": "Created by"})
-    if st.session_state.role != "owner":
-        st.caption("Sign in as the owner to add or verify payees.")
-        return
-    for payee in payees:
-        details, action = st.columns([4, 1])
-        details.write(safe_text(f"{payee['name']} ({payee['id']})"))
+    with session_scope() as s:
+        cps = {c.id: c.name for c in s.exec(select(Counterparty))}
+
+    def status(p) -> str:
+        return "Missing IBAN" if not p["iban"].strip() else ("Verified" if p["verified"] else "Unverified")
+    counts = {g: sum(status(p) == g for p in payees.values()) for g in ("Unverified", "Missing IBAN", "Verified")}
+    query, group = list_filter("payee", {"All": len(payees), **counts}, "Search name, ID or IBAN")
+    rows = sorted((p for p in payees.values() if group in ("All", status(p)) and query in
+                   f"{p['name']} {p['id']} {p['iban']} {p['iban'].replace(' ', '')}".lower()),
+                  key=lambda p: p["name"].casefold())
+    ids = [p["id"] for p in rows]
+    owner = st.session_state.role == "owner"
+    table, card = st.columns([3, 2], gap="large")
+    with table:
+        if not rows:
+            st.caption("No payees match.")
+        else:
+            pick_table("payee", pd.DataFrame([{
+                "Name": p["name"], "Status": status(p), "IBAN": p["iban"] or "-", "ID": p["id"],
+                "Created by": p["created_by"]} for p in rows]), ids)
+        if owner:
+            with st.expander("Add a payee", icon=":material/person_add:"):
+                add_payee_form(cps)
+    with card, st.container(border=True, key="payee-card"):
+        pid = pick("payee", "Payee", ids, next((p["id"] for p in rows if status(p) != "Verified"), None),
+                   lambda i: payees[i]["name"])
+        if pid is None:
+            st.caption("Nothing selected.")
+            return
+        payee = payees[pid]
+        st.markdown(f"**{safe_text(payee['name'])}** "
+                    + {"Verified": ":green-badge[Verified]", "Unverified": ":orange-badge[Unverified]",
+                       "Missing IBAN": ":red-badge[Missing IBAN]"}[status(payee)])
+        st.caption(safe_text(f"{pid}  |  Counterparty: {cps.get(payee['counterparty_id'], 'none')}  |  "
+                             f"Created by: {payee['created_by']}"))
+        if payee["iban"].strip():
+            st.markdown(f"IBAN {code_span(payee['iban'])}")
+        if not owner:
+            st.caption("Sign in as the owner to add or verify payees.")
+            return
         if not payee["iban"].strip():  # imported payees arrive without bank details
-            new_iban = details.text_input("IBAN (can be set once)", key=f"iban_{payee['id']}")
-            if details.button("Set IBAN", key=f"set_iban_{payee['id']}") and new_iban:
+            new_iban = st.text_input("IBAN (can be set once)", key=f"iban_{pid}")
+            if st.button("Set IBAN", key=f"set_iban_{pid}") and new_iban:
                 try:
                     with human_bank() as bank:
-                        bank.set_payee_iban(payee["id"], new_iban)
+                        bank.set_payee_iban(pid, new_iban)
                     with session_scope() as s:
-                        log_human(s, "set_payee_iban", {"payee_id": payee["id"]},
+                        log_human(s, "set_payee_iban", {"payee_id": pid},
                                   "HUMAN_ACTION", "IBAN filled in via the bank's human token; payee unverified")
                     st.rerun()
                 except BankError as exc:
@@ -1010,30 +1092,32 @@ def page_payees() -> None:
         # The key carries the state this button sets, so a click on a stale button (state changed
         # in another tab) finds no matching button on the rerun and does nothing.
         target = not payee["verified"]
-        if action.button("Request verification" if target else "Unverify", key=f"verify_{payee['id']}_{int(target)}"):
+        if st.button("Request verification" if target else "Unverify", key=f"verify_{pid}_{int(target)}"):
             if target:  # lifts the unverified-payee block: two people
-                human_request("verify_payee", {"payee_id": payee["id"]})
+                human_request("verify_payee", {"payee_id": pid})
             else:  # stricter: one person is enough
                 try:
                     with human_bank() as bank:
-                        bank.verify_payee(payee["id"], False)
+                        bank.verify_payee(pid, False)
                     with session_scope() as s:
-                        log_human(s, "unverify_payee", {"payee_id": payee["id"]},
+                        log_human(s, "unverify_payee", {"payee_id": pid},
                                   "HUMAN_ACTION", "Payee unverified via the bank's human token")
                     st.rerun()
                 except BankError as exc:
                     st.error(f"Bank refused: {exc.detail}")
-    st.subheader("Add a payee")
-    with session_scope() as s:
-        cps = [(None, "(none)")] + [(c.id, c.name) for c in s.exec(select(Counterparty))]
+        st.caption("A missing IBAN can be filled in once. To use a different IBAN, create a new payee: "
+                   "existing bank details cannot be edited.")
+
+
+def add_payee_form(cps: dict[str, str]) -> None:
     with st.form("add_payee"):
         name = st.text_input("Name")
         iban = st.text_input("IBAN")
-        cp = st.selectbox("Counterparty", cps, format_func=lambda c: c[1])
+        cp = st.selectbox("Counterparty", [None, *cps], format_func=lambda c: cps.get(c, "(none)"))
         if st.form_submit_button("Add payee") and name and iban and auth.require_login("add a payee"):
             try:
                 with human_bank() as bank:  # always unverified: verifying needs a second person
-                    row = bank.create_payee(name, iban, cp[0], False)
+                    row = bank.create_payee(name, iban, cp, False)
                 with session_scope() as s:
                     log_human(s, "add_payee", {"payee_id": row["id"], "name": name, "verified": False},
                               "EXECUTED", "Created by a human via the bank's human token")
@@ -1041,8 +1125,6 @@ def page_payees() -> None:
                            "are confirmed by phone or in person.")
             except BankError as exc:
                 st.error(f"Bank refused: {exc.detail}")
-    st.caption("A missing IBAN can be filled in once. To use a different IBAN, create a new payee: "
-               "existing bank details cannot be edited.")
 
 
 # --------------------------------------------------------------------------- #
