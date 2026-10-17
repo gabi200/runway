@@ -51,7 +51,7 @@ from ui import auth  # noqa: E402
 from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
 from ui.render import (  # noqa: E402
     OUTCOMES, REQUEST_STATUSES, action_title, code_span, describe_approval, describe_entry, format_step, plain_args,
-    reply_markdown, safe_text,
+    plain_reason, reply_markdown, safe_text,
 )
 
 SECTIONS = ["Monday brief & chat", "Forecast", "Approval queue", "Documents",
@@ -224,23 +224,27 @@ def list_filter(key: str, groups: dict[str, int], placeholder: str) -> tuple[str
     return query.strip().lower(), group or "All"
 
 
-def pick_table(key: str, frame: pd.DataFrame, ids: list[str]) -> None:
-    """A scrollable table; clicking a row selects it in the `{key}_pick` selectbox."""
-    def picked() -> None:
-        rows = st.session_state[f"{key}_table"].selection.rows
-        if rows:
-            st.session_state[f"{key}_pick"] = ids[rows[0]]
-    st.dataframe(frame, width="stretch", hide_index=True, key=f"{key}_table",
-                 on_select=picked, selection_mode="single-row")
+def pick_table(key: str, frame: pd.DataFrame, ids: list[str], default: str | None = None) -> str | None:
+    """A scrollable table that is its own picker: click any cell of a row to show it in the detail card.
 
-
-def pick(key: str, label: str, ids: list[str], default: str | None, fmt) -> str | None:
-    """The selected row of a filtered list, kept while it stays in the list."""
+    Returns the id to show: the clicked row while it stays in the list, else `default`, else the
+    first row. That row is selected in the table, so the table always says what the card shows.
+    """
     if not ids:
         return None
-    if st.session_state.pop(f"{key}_next", False) or st.session_state.get(f"{key}_pick") not in ids:
-        st.session_state[f"{key}_pick"] = default if default in ids else ids[0]
-    return st.selectbox(label, ids, key=f"{key}_pick", format_func=fmt)
+    cur = st.session_state.get(f"{key}_pick")
+    if st.session_state.pop(f"{key}_next", False) or cur not in ids:
+        cur = st.session_state[f"{key}_pick"] = default if default in ids else ids[0]
+
+    def picked() -> None:
+        sel = st.session_state[f"{key}_table"].selection
+        rows = [cell[0] for cell in sel.cells] or list(sel.rows)  # cells reset each run: a cell is the new click
+        if rows:
+            st.session_state[f"{key}_pick"] = ids[rows[0]]
+    st.session_state[f"{key}_table"] = {"selection": {"rows": [ids.index(cur)], "columns": [], "cells": []}}
+    st.dataframe(frame, width="stretch", hide_index=True, key=f"{key}_table", on_select=picked,
+                 selection_mode=["single-row", "single-cell"])
+    return cur
 
 
 def when(value) -> str:
@@ -899,16 +903,15 @@ def page_approvals() -> None:
             if not rows:
                 st.caption("No requests match.")
             else:
-                pick_table("apr", pd.DataFrame([{
+                st.caption("Click a row to open it below.")
+                # oldest waiting request first, like a queue
+                rid = pick_table("apr", pd.DataFrame([{
                     "ID": r["id"], "Action": action_title(r["tool"]), "Status": REQUEST_STATUSES.get(r["status"], r["status"]),
                     "Detail": r["summary"][0] if r["summary"] else "", "Needs": " and ".join(r["required"]),
                     "Approved by": signed_by(r) or "-", "Requested": when(r["created"]), "Decided": when(r["decided"]),
-                } for r in rows]), ids)
-        with card, st.container(border=True, key="apr-card"):
-            # oldest waiting request first, like a queue
-            rid = pick("apr", "Request", ids, next((r["id"] for r in reversed(rows) if r["status"] == "pending"), None),
-                       lambda i: f"{i} · {action_title(reqs[i]['tool'])}")
-            if rid is not None:
+                } for r in rows]), ids, next((r["id"] for r in reversed(rows) if r["status"] == "pending"), None))
+        if rows:
+            with card, st.container(border=True, key="apr-card"):
                 approval_card(reqs[rid], role, can_act, pack)
     with st.expander("How approvals are protected", icon=":material/verified_user:"):
         st.markdown("**Two people, two sessions.** Requests requiring both roles need separate owner and accountant "
@@ -1036,20 +1039,21 @@ def page_documents() -> None:
     ids = [d["id"] for d in rows]
     table, card = st.columns([3, 2], gap="large")
     with table:
+        did = None
         if not rows:
             st.caption("No documents match.")
         else:
-            pick_table("doc", pd.DataFrame([{
+            did = pick_table("doc", pd.DataFrame([{
                 "ID": d["id"], "Status": status(d), "File": d["filename"], "Sender": d["sender"] or "unknown",
                 "Received": d["received_at"].strftime("%Y-%m-%d %H:%M"), "Invoices": ", ".join(d["invoice_ids"]),
-                "Kind": d["kind"]} for d in rows]), ids)
+                "Kind": d["kind"]} for d in rows]), ids, next((d["id"] for d in rows if status(d) == "Needs review"), None))
+            st.caption("Click a row to open it.")
     with card, st.container(border=True, key="doc-card"):
-        did = pick("doc", "Document", ids, next((d["id"] for d in rows if status(d) == "Needs review"), None),
-                   lambda i: f"{i} · {docs[i]['filename']}")
         if did is None:
             st.caption("Nothing selected.")
             return
         d = docs[did]
+        st.markdown(f"**{safe_text(did + ' · ' + d['filename'])}**")
         st.markdown({"Needs review": ":red-badge[Flagged]", "Cleared": ":blue-badge[Cleared by human]",
                      "Clean": ":green-badge[Clean]"}[status(d)])
         if d["flagged"]:
@@ -1105,18 +1109,19 @@ def page_payees() -> None:
     owner = st.session_state.role == "owner"
     table, card = st.columns([3, 2], gap="large")
     with table:
+        pid = None
         if not rows:
             st.caption("No payees match.")
         else:
-            pick_table("payee", pd.DataFrame([{
+            pid = pick_table("payee", pd.DataFrame([{
                 "Name": p["name"], "Status": status(p), "IBAN": p["iban"] or "-", "ID": p["id"],
-                "Created by": p["created_by"]} for p in rows]), ids)
+                "Created by": p["created_by"]} for p in rows]), ids,
+                next((p["id"] for p in rows if status(p) != "Verified"), None))
+            st.caption("Click a row to open it.")
         if owner:
             with st.expander("Add a payee", icon=":material/person_add:"):
                 add_payee_form(cps)
     with card, st.container(border=True, key="payee-card"):
-        pid = pick("payee", "Payee", ids, next((p["id"] for p in rows if status(p) != "Verified"), None),
-                   lambda i: payees[i]["name"])
         if pid is None:
             st.caption("Nothing selected.")
             return
@@ -1247,14 +1252,15 @@ def page_inbox() -> None:
         ids = [m["id"] for m in rows]
         table, card = st.container(), st.container()  # wide table: the card goes below it
         with table:
+            mid = None
             if rows:
-                pick_table("mail", pd.DataFrame([{"Sent": when(m["sent"]), "Type": kind(m), "Subject": m["subject"],
-                                                  "To": m["to"], "Invoice": m["invoice"] or ""} for m in rows]), ids)
+                st.caption("Click a row to read it below.")
+                mid = pick_table("mail", pd.DataFrame([{"Sent": when(m["sent"]), "Type": kind(m), "Subject": m["subject"],
+                                                        "To": m["to"], "Invoice": m["invoice"] or ""} for m in rows]), ids)
             else:
                 st.caption("No emails match.")
-        with card, st.container(border=True, key="mail-card"):
-            mid = pick("mail", "Email", ids, None, lambda i: mails[i]["subject"])
-            if mid is not None:
+        if mid is not None:
+            with card, st.container(border=True, key="mail-card"):
                 m = mails[mid]
                 st.markdown(f"**{safe_text(m['subject'])}**")
                 st.caption(safe_text(f"{kind(m)}  |  to {m['to']}  |  invoice {m['invoice'] or '-'}  |  {when(m['sent'])}"))
@@ -1310,21 +1316,21 @@ def page_audit() -> None:
     ids = [e["id"] for e in rows]
     table, card = st.container(), st.container()  # wide table: the card goes below it
     with table:
-        st.caption(f"{len(rows)} of {len(entries)} entries, newest first. Select a row for the full record.")
+        st.caption(f"{len(rows)} of {len(entries)} entries, newest first. Click a row for the full record below.")
+        eid = None
         if rows:
-            pick_table("audit", pd.DataFrame([{
+            eid = pick_table("audit", pd.DataFrame([{
                 "#": e["id"], "When": when(e["timestamp"]), "Who": e["actor"], "What happened": e["what"],
                 "Result": OUTCOMES.get(e["decision"], e["decision"].replace("_", " ").capitalize()),
-                "Why": e["reason"]} for e in rows]), ids)
-    with card, st.container(border=True, key="audit-card"):
-        eid = pick("audit", "Entry", ids, None, lambda i: f"#{i} · {entries[i]['what']}"[:80])
-        if eid is not None:
+                "Why": plain_reason(e["reason"])} for e in rows]), ids)
+    if eid is not None:
+        with card, st.container(border=True, key="audit-card"):
             e = entries[eid]
             st.markdown(f"**{safe_text(e['what'])}**")
             st.markdown(badge(e["decision"], OUTCOMES.get(e["decision"])), unsafe_allow_html=True)
             st.caption(safe_text(f"#{eid}  |  {e['actor']}  |  {when(e['timestamp'])}"))
             if e["reason"]:
-                st.write(safe_text(e["reason"]))
+                st.write(safe_text(plain_reason(e["reason"])))
             for line in plain_args(e["args"], pack, everything=True):
                 st.caption(safe_text(line))
             st.caption(f"Entry hash {code_span(e['hash'][:16])}, follows {code_span(e['prev_hash'][:16])}")

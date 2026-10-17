@@ -198,6 +198,15 @@ def plain_args(args: dict, pack=None, everything: bool = False) -> list[str]:
             if (everything or k not in _NOISE) and v not in (None, "", [], {})]
 
 
+_OLD_APPROVALS = re.compile(r"approvals so far: \[(.*)\]")
+
+
+def plain_reason(reason: str) -> str:
+    """Display wording for a stored reason; entries written before the plain wording keep their text in the log."""
+    m = _OLD_APPROVALS.fullmatch(reason or "")
+    return f"Approved by {' and '.join(re.findall(r'\(.(\w+).,', m.group(1)))}" if m else reason
+
+
 def describe_entry(action: str, args: dict, pack=None) -> str:
     """One line for an audit entry: what happened, to what."""
     if action in ("approve", "reject", "expire_approval") and args.get("approval_id"):

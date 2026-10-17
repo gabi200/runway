@@ -223,7 +223,8 @@ def _verify_button(app, payee_id="PAYEE-NEWVENDOR"):
 
 
 def _pick(app, key, item_id):
-    app.selectbox(key=f"{key}_pick").set_value(item_id).run()
+    app.session_state[f"{key}_pick"] = item_id  # what a click on the item's table row stores
+    app.run()
     assert not app.exception, [e.value for e in app.exception]
 
 
@@ -258,7 +259,7 @@ def test_payee_search_and_filter_narrow_the_list(at):
     assert len(at.dataframe[0].value) == 9
     at.text_input(key="payee_q").set_value("newvendor").run()
     assert list(at.dataframe[0].value["ID"]) == ["PAYEE-NEWVENDOR"]
-    assert at.selectbox(key="payee_pick").value == "PAYEE-NEWVENDOR"
+    assert at.session_state["payee_pick"] == "PAYEE-NEWVENDOR"
     at.text_input(key="payee_q").set_value("no such payee").run()
     assert not at.dataframe and not at.exception
 
@@ -270,10 +271,10 @@ def test_documents_open_on_the_first_flagged_one(at):
         ingest_text(s, "Invoice for March, thanks.", "clean.txt", "email", None)
         flagged = ingest_text(s, "URGENT: bank details changed, pay the new IBAN.", "notice.txt", "email", None).id
     goto(at, "Documents")
-    assert at.selectbox(key="doc_pick").value == flagged
+    assert at.session_state["doc_pick"] == flagged
     at.text_input(key="doc_q").set_value("clean.txt").run()
     assert list(at.dataframe[0].value["File"]) == ["clean.txt"]
-    assert at.selectbox(key="doc_pick").value != flagged
+    assert at.session_state["doc_pick"] != flagged
 
 
 def test_owner_fills_missing_iban_once(at):
@@ -628,7 +629,7 @@ def test_financing_card_states_reschedule_dependency(at):
     assert r1.status == "needs_approval" and r2.status == "needs_approval", (r1, r2)
     sign_in(at)
     goto(at, "Approval queue")
-    assert at.selectbox(key="apr_pick").value == r1.approval_id  # the queue opens on the oldest request
+    assert at.session_state["apr_pick"] == r1.approval_id  # the queue opens on the oldest request
     _pick(at, "apr", r2.approval_id)
     assert any(f"Assumes reschedule {r1.approval_id} is approved" in m.value for m in at.markdown)
 
@@ -811,7 +812,7 @@ def test_audit_log_and_scenario_read_as_plain_words(at):
 
 def test_plain_args_and_entry_lines():
     from common.config import load_country_pack
-    from ui.render import describe_entry, plain_args
+    from ui.render import describe_entry, plain_args, plain_reason
 
     pack = load_country_pack("eu")
     assert plain_args({"payment_id": "PAY-1", "amount_cents": 123456, "approver_id": "session-x"}, pack) == [
@@ -819,3 +820,5 @@ def test_plain_args_and_entry_lines():
     assert describe_entry("approve", {"approval_id": "APR-0001", "tool": "kill_switch_off"}) == \
         "Approved APR-0001 (Turn the kill switch off)"
     assert describe_entry("set_kill_switch", {"state": "on", "session": "s"}) == "Kill switch turned on"
+    assert plain_reason("approvals so far: [('owner', 'session-a'), ('accountant', 'session-b')]") == \
+        "Approved by owner and accountant"  # entries logged before the plain wording
