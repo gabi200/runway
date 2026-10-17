@@ -136,6 +136,8 @@ Optional extras if time remains (not counted above): in step 1, set "Display cur
 
 ## 3. Presentation outline (10 minutes or less)
 
+The deck is [`Runway_FinTechathon_2026_v3.pptx`](Runway_FinTechathon_2026_v3.pptx) in this folder (11 slides). The table below is the outline and timing it follows.
+
 Audience: bankers and academics. Lead with limits, explanations and audit, not with UI polish. Scoring weights: task completion 40 percent, security and compliance 30 percent, innovation and interaction 30 percent.
 
 | # | Slide | Time | Content |

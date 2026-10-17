@@ -169,6 +169,7 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 | [docs/deployment.md](docs/deployment.md) | Setup, services, environment variables, switching LLM provider and country pack, resetting data, recording the demo |
 | [docs/testing.md](docs/testing.md) | Test inventory and what each suite proves |
 | [docs/glossary.md](docs/glossary.md) | Finance terms and Runway terms |
+| [docs/Runway_FinTechathon_2026_v3.pptx](docs/Runway_FinTechathon_2026_v3.pptx) | Presentation deck (11 slides, 10 minutes or less) |
 | [docs/demo-script.md](docs/demo-script.md) | 5-minute video script and 10-minute presentation outline |
 | [docs/SPEC.md](docs/SPEC.md), [docs/CONTRACTS.md](docs/CONTRACTS.md) | Product spec and module contracts |
 | [docs/execution_logs/](docs/execution_logs/) | Output of `scripts/run_demo.py` (45 audit entries on seed 42; `FIN-0001.pdf` with the signed mandate and `mandate_keys.json` with the public keys to check it against), and of `scripts/run_tasks.py` (`task_report_<mode>.md`, `task_traces_<mode>.jsonl`) |
@@ -178,7 +179,7 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 | # | Required item | Where | Status |
 |---|---|---|---|
 | 1 | Technical documentation: system architecture, core algorithm description, security design | System architecture: [docs/architecture.md](docs/architecture.md). Core algorithms: [docs/algorithms.md](docs/algorithms.md). Security design: [docs/security-self-assessment.md](docs/security-self-assessment.md) sections 1 to 4 (threat model, permission tiers, 29 defense layers) and the design rules in [docs/architecture.md](docs/architecture.md) section 6 | Written |
-| 2 | Presentation deck, 10 minutes or less | Outline and timing in [docs/demo-script.md](docs/demo-script.md) section 3 | Outline only; slides still to be built |
+| 2 | Presentation deck, 10 minutes or less | [docs/Runway_FinTechathon_2026_v3.pptx](docs/Runway_FinTechathon_2026_v3.pptx) (11 slides); speaker timing in [docs/demo-script.md](docs/demo-script.md) section 3 | Done |
 | 3 | Demo video, 5 minutes or less (optional) | Script in [docs/demo-script.md](docs/demo-script.md) section 2 | Script written; video still to be recorded |
 | 4 | Source code on GitHub with README, deployment instructions and test cases | <https://github.com/gabi200/runway>, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` (703 tests, [docs/testing.md](docs/testing.md)) | Done |
 | 5 | Security self-assessment: permission tiers and known risks | [docs/security-self-assessment.md](docs/security-self-assessment.md) section 3 (permission tiers T0 to T4 and how each is implemented) and section 7 (25 known risks); attacks A1 to A10 in section 5 | Written |
