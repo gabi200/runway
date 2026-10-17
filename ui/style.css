@@ -111,7 +111,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .context-balance > span { color: var(--muted); font-size: .74rem; }
 .context-balance strong { display: block; font-size: 1.85rem; letter-spacing: -.04em; font-weight: 600; margin: .3rem 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .context-balance small { color: var(--muted); font-size: .66rem; }
-.cash-warning { background: var(--amber-bg); color: var(--amber); padding: 1rem; border-radius: .4rem; font-size: .78rem; }
+.cash-warning { background: var(--amber-bg); color: var(--amber); padding: 1rem; border-radius: .4rem; font-size: .78rem; margin-bottom: 1rem; }
 .cash-warning p { margin: .3rem 0 0; font-size: .72rem; line-height: 1.8; }
 .context-section { padding-top: 1.5rem; margin-top: 1rem; border-top: 1px solid var(--border); }
 .context-section h3 { padding: 0; margin: 0; font-size: .83rem; letter-spacing: 0; }

@@ -628,6 +628,8 @@ def test_financing_card_states_reschedule_dependency(at):
     assert r1.status == "needs_approval" and r2.status == "needs_approval", (r1, r2)
     sign_in(at)
     goto(at, "Approval queue")
+    assert at.selectbox(key="apr_pick").value == r1.approval_id  # the queue opens on the oldest request
+    _pick(at, "apr", r2.approval_id)
     assert any(f"Assumes reschedule {r1.approval_id} is approved" in m.value for m in at.markdown)
 
 
@@ -771,3 +773,49 @@ def test_chat_send_button_icon_contrasts_with_its_fill():
     css = (Path(__file__).resolve().parent.parent / "ui" / "style.css").read_text(encoding="utf-8")
     rule = next(line for line in css.splitlines() if line.startswith('[data-testid="stChatInputSubmitButton"] {'))
     assert "background: var(--accent)" in rule and "color: var(--accent)" not in rule
+
+
+def test_a_repeat_approval_is_not_logged_again_and_the_button_goes(at):
+    from sqlmodel import select
+    from agent.executor import approve, run_tool
+    with db.session_scope() as s:
+        res = run_tool(s, "prepare_financing_application",
+                       {"product_id": "invoice_financing", "amount_cents": 2_000_000,
+                        "needed_by": "2026-11-23", "days_needed": 30}, actor="agent")
+        assert approve(s, res.approval_id, "owner", "owner@a").status == "needs_approval"
+        assert approve(s, res.approval_id, "owner", "owner@a").status == "needs_approval"  # a second click
+        entries = s.exec(select(db.AuditEntry).where(db.AuditEntry.decision == "APPROVED")).all()
+        assert len(entries) == 1 and entries[0].reason == "Approved by owner; still needed: accountant"
+    sign_in(at)
+    goto(at, "Approval queue")
+    _pick(at, "apr", res.approval_id)
+    assert not [b for b in at.button if b.key == f"ap_{res.approval_id}"]
+    assert any("You approved this" in i.value for i in at.info)
+    assert any("Accountant: waiting" in m.value for m in at.markdown)
+
+
+def test_audit_log_and_scenario_read_as_plain_words(at):
+    sign_in(at)
+    goto(at, "Monday brief & chat")
+    next(b for b in at.button if b.label == "Run Monday brief").click().run()
+    goto(at, "Audit log")
+    log = at.dataframe[0].value
+    assert {"When", "Who", "What happened", "Result", "Why"} <= set(log.columns) and "args" not in log.columns
+    assert any(w.startswith("Send a payment reminder") for w in log["What happened"])
+    assert not any(str(w).lstrip().startswith("{") for w in log["What happened"])
+    goto(at, "Forecast")
+    next(b for b in at.button if b.label == "Add move").click().run()
+    assert not at.json
+    assert any(m.value.startswith("Move the ") for m in at.markdown)
+
+
+def test_plain_args_and_entry_lines():
+    from common.config import load_country_pack
+    from ui.render import describe_entry, plain_args
+
+    pack = load_country_pack("eu")
+    assert plain_args({"payment_id": "PAY-1", "amount_cents": 123456, "approver_id": "session-x"}, pack) == [
+        "payment: PAY-1", "amount: €1,234.56"]
+    assert describe_entry("approve", {"approval_id": "APR-0001", "tool": "kill_switch_off"}) == \
+        "Approved APR-0001 (Turn the kill switch off)"
+    assert describe_entry("set_kill_switch", {"state": "on", "session": "s"}) == "Kill switch turned on"

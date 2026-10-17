@@ -218,10 +218,13 @@ def approve(session: Session, approval_id: str, role: str, approver_id: str | No
         audit.append(session, role, "approve", {"approval_id": req.id, "approver_id": identity}, "DENY", reason)
         return ToolResult(status="denied", tool=req.tool_name, approval_id=req.id, reason=reason)
     approved_roles = [entry["role"] for entry in given]
-    signed = {"public_key": signature["public_key"], "signature": signature["signature"]} if signature else {}
-    audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity,
-                                            **signed},
-                 "APPROVED", f"approvals so far: {[(e['role'], e['approver_id']) for e in given]}")
+    if signature:  # a repeat click by a role that already approved adds nothing, so it is not logged again
+        missing = [r for r in required if r not in approved_roles]
+        audit.append(session, role, "approve", {"approval_id": req.id, "tool": req.tool_name, "approver_id": identity,
+                                                "public_key": signature["public_key"],
+                                                "signature": signature["signature"]},
+                     "APPROVED", f"Approved by {' and '.join(approved_roles)}"
+                     + (f"; still needed: {' and '.join(missing)}" if missing else ""))
     if req.tool_name in HUMAN_HANDLERS:  # two-person rule, not agent policy
         both = set(required) <= set(approved_roles)
         decision = policy.Decision("ALLOW" if both else "NEEDS_APPROVAL", "Two-person rule", "H", tuple(required))

@@ -145,6 +145,71 @@ def describe_approval(session, tool: str, args: dict, pack) -> list[str]:
     return lines
 
 
+ACTION_TITLES = {
+    "reschedule_payment": "Move a supplier payment", "prepare_financing_application": "Prepare a financing application",
+    "schedule_payment": "Schedule a payment", "send_payment_reminder": "Send a payment reminder",
+    "kill_switch_off": "Turn the kill switch off", "advance_clock": "Advance the simulated clock",
+    "clear_document_flag": "Clear a document flag", "release_supplier": "Release a supplier from a flagged document",
+    "verify_payee": "Verify a payee", "withdraw_request": "Withdraw a request", "approve": "Approval",
+    "flag_document": "Document flagged", "get_forecast": "Read the cash forecast",
+    "get_financing_need": "Work out the financing need", "compare_financing": "Compare financing options",
+    "reject": "Rejection", "expire_approval": "Request expired", "set_kill_switch": "Kill switch turned on",
+    "policy_loaded": "Rules file loaded", "chat_refusal": "Chat request refused",
+    "llm_fallback": "Live model failed, offline planner used", "reset_demo": "Demo data reset",
+    "load_sample_data": "Sample data loaded", "import_files": "Data imported", "set_payee_iban": "IBAN filled in",
+    "unverify_payee": "Payee unverified", "add_payee": "Payee added", "anchor_audit_head": "Audit head published",
+    "redteam_run": "Red-team test", "sign_in_failed": "Failed sign-in", "simulate_advance": "Simulated clock advanced",
+}
+# What each audit decision means, in words an owner reads without the glossary
+OUTCOMES = {"EXECUTED": "Done", "HUMAN_ACTION": "Done by a person", "APPROVED": "Approved", "ALLOW": "Rules allowed it",
+            "NEEDS_APPROVAL": "Sent for approval", "DENY": "Blocked", "REJECTED": "Rejected", "FAILED": "Failed",
+            "INFO": "Note", "IDEMPOTENT_REPLAY": "Repeat ignored"}
+REQUEST_STATUSES = {"pending": "Waiting", "executing": "Running", "executed": "Done", "rejected": "Rejected",
+                    "failed": "Failed", "expired": "Expired", "withdrawn": "Withdrawn"}
+_NOISE = {"approver_id", "public_key", "signature", "session", "sha256", "previous", "previous_head",
+          "previous_count", "previous_chain_ok", "archive", "message"}  # in the detail card, not the summary
+
+
+def action_title(action: str) -> str:
+    return ACTION_TITLES.get(action, action.replace("_", " ").capitalize())
+
+
+def _label(key: str) -> str:
+    return key.removesuffix("_cents").removesuffix("_id").replace("_", " ")
+
+
+def _value(key: str, v, pack=None) -> str:
+    """Nested lists and dicts as words (a scenario reads 'Move payment: payment PAY-0001, ...')."""
+    if isinstance(v, dict):
+        rest = ", ".join(f"{_label(k)} {_value(k, x, pack)}" for k, x in v.items() if k != "type")
+        return f"{action_title(str(v['type']))}: {rest}" if "type" in v else rest
+    if isinstance(v, list):
+        return "; ".join(_value(key, x, pack) for x in v)
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if key.endswith("_cents") and isinstance(v, int) and pack:
+        return pack.display(v)
+    return action_title(v) if key == "tool" and isinstance(v, str) else str(v)
+
+
+def plain_args(args: dict, pack=None, everything: bool = False) -> list[str]:
+    """Arguments as 'label: value' lines; money in the display currency, ids and dates as they are."""
+    return [f"{_label(k)}: {_value(k, v, pack)}"[:200] for k, v in args.items()
+            if (everything or k not in _NOISE) and v not in (None, "", [], {})]
+
+
+def describe_entry(action: str, args: dict, pack=None) -> str:
+    """One line for an audit entry: what happened, to what."""
+    if action in ("approve", "reject", "expire_approval") and args.get("approval_id"):
+        verb = {"approve": "Approved", "reject": "Rejected", "expire_approval": "Expired"}[action]
+        tool = f" ({action_title(args['tool'])})" if args.get("tool") else ""
+        return f"{verb} {args['approval_id']}{tool}"
+    if action == "set_kill_switch":
+        return f"Kill switch turned {args.get('state', 'on')}"
+    details = [line for line in plain_args(args, pack) if not line.startswith("tool:")][:3]
+    return action_title(action) + (f" ({'; '.join(details)})" if details else "")
+
+
 OUTCOME_BADGES = {"blocked": ":green-badge[blocked]", "detected": ":green-badge[detected]",
                   "needs approval": ":orange-badge[needs approval]", "flagged": ":orange-badge[flagged]",
                   "allowed": ":red-badge[allowed]", "fooled": ":red-badge[fooled]",

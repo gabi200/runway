@@ -729,16 +729,16 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 
 ```json
 {
-  "id": "APR-0001",
   "required_roles_json": "[\"owner\"]",
+  "id": "APR-0001",
   "status": "pending",
   "result_json": null,
   "decided_at": null,
   "approvals_json": "[]",
-  "tool_name": "reschedule_payment",
   "args_json": "{\"new_date\":\"2026-12-14\",\"payment_id\":\"PAY-0001\"}",
+  "tool_name": "reschedule_payment",
   "reason": "Rescheduling requires owner approval",
-  "created_at": "2026-10-19T21:17:32.154385Z"
+  "created_at": "2026-10-19T12:23:21.068931Z"
 }
 ```
 
@@ -758,8 +758,8 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "automatic": false,
     "created_at": "2026-10-15T09:00:00Z",
     "transaction_id": null,
-    "payee_id": "PAYEE-INKWORKS",
     "id": "PAY-0001",
+    "payee_id": "PAYEE-INKWORKS",
     "currency": "EUR",
     "status": "scheduled",
     "document_id": null,
@@ -776,14 +776,14 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 {
   "result_json": null,
   "status": "pending",
-  "id": "APR-0002",
   "decided_at": null,
+  "id": "APR-0002",
   "required_roles_json": "[\"owner\", \"accountant\"]",
-  "tool_name": "prepare_financing_application",
-  "reason": "Financing application requires approval",
+  "created_at": "2026-10-19T12:23:21.134206Z",
   "args_json": "{\"amount_cents\":1800000,\"days_needed\":36,\"needed_by\":\"2026-11-25\",\"product_id\":\"supply_chain_finance\"}",
   "approvals_json": "[]",
-  "created_at": "2026-10-19T21:17:32.211984Z"
+  "reason": "Financing application requires approval",
+  "tool_name": "prepare_financing_application"
 }
 ```
 
@@ -818,7 +818,7 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "id": "FIN-0001",
     "currency": "EUR",
     "pdf_path": "<demo-workdir>/var/applications/FIN-0001.pdf",
-    "created_at": "2026-10-16 21:17:32.537625+00:00",
+    "created_at": "2026-10-17 12:23:21.569756+00:00",
     "needed_by": "2026-11-25",
     "product_id": "supply_chain_finance",
     "amount_cents": 1800000,
@@ -846,14 +846,14 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
         {
           "role": "owner",
           "approver_id": "owner@demo",
-          "public_key": "LYrY8ZBP9bbgGQduimYhSQ51BjHDRsz9H0w+aPZ9FyM=",
-          "signature": "U9lGpZF1JdDDQpydvzNP2NsC+tM8BvRshFKp5TL5p+cBZKsjbts1C2HQOqvihCQ3553dHHKKfsFQNIrRre6OAw=="
+          "public_key": "A7HE3USfOD3bB72A9zHgJmgv4Ehby6BW+x+SWmTvrjI=",
+          "signature": "EXZBv66yGgKYryBGgpI3QM5HmCQxF6um0qPWSlkAfUnWH4khgEXKxaw9g6ty+jwEoeNVhbFWcag4XeXzJwY+DQ=="
         },
         {
           "role": "accountant",
           "approver_id": "accountant@demo",
-          "public_key": "+yB98gEhVGwZwMoRQ5UdEf71V4ycxsvr+FfTwlccb4E=",
-          "signature": "tdJdZFv+ON3V/s8tZpZwDQmk9gnvm7mR1W6r1d7xKWSAGPkZTn7qKXQa3AdeAcJcpNESnRMJi/UFXY54pDyTDQ=="
+          "public_key": "gHf4cG8U8uOQJekLpAwVnyB9jPVA9dhQXUl/7eS6Yhg=",
+          "signature": "Nd81DNioPITQz+LDvq1V1Bugk2TclwzZRoTQsf9SsG8F7+WaSnlCJoaKMtzVzo4sHbjzoRuDPQHQ10zomytQAg=="
         }
       ]
     }
@@ -870,19 +870,19 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "to": "ap@bergmann-toys.example",
     "body": "Dear Bergmann Toys,\n\nInvoice LUM-2026-0091 for \u20ac7,400.00, due on 2026-10-04, is 15 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
     "kind": "reminder",
-    "sent_at": "2026-10-19T21:17:32.137718Z",
-    "subject": "Payment overdue: invoice LUM-2026-0091",
+    "sent_at": "2026-10-19T12:23:21.046983Z",
+    "invoice_id": "AR-1091",
     "id": "MAIL-0001",
-    "invoice_id": "AR-1091"
+    "subject": "Payment overdue: invoice LUM-2026-0091"
   },
   {
     "to": "billing@lindqvist-candles.example",
     "body": "Dear Lindqvist Candles,\n\nInvoice LUM-2026-0092 for \u20ac5,200.00, due on 2026-10-11, is 8 days overdue. Please arrange payment within 5 working days or tell us the expected payment date.\n\nRegards,\nLumen Packaging",
     "kind": "reminder",
-    "sent_at": "2026-10-19T21:17:32.147852Z",
-    "subject": "Payment overdue: invoice LUM-2026-0092",
+    "sent_at": "2026-10-19T12:23:21.060111Z",
+    "invoice_id": "AR-1092",
     "id": "MAIL-0002",
-    "invoice_id": "AR-1092"
+    "subject": "Payment overdue: invoice LUM-2026-0092"
   }
 ]
 ```
@@ -920,7 +920,7 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
 {
   "sender": null,
   "id": "DOC-0001",
-  "received_at": "2026-10-16T21:17:32.551174Z",
+  "received_at": "2026-10-17T12:23:21.590550Z",
   "flag_reason": "bank-detail change requested; contains an IBAN alongside a bank-detail change; asks to skip approval; contains instructions aimed at an AI assistant (ignore previous instructions); urgency combined with a payment request",
   "invoice_ids": "[]",
   "released_counterparty_ids": "[]",
@@ -1098,10 +1098,10 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "execute_date": "2026-10-19",
     "invoice_id": null,
     "automatic": false,
-    "created_at": "2026-10-16T21:17:32.628494Z",
+    "created_at": "2026-10-17T12:23:21.665388Z",
     "transaction_id": null,
-    "payee_id": "PAYEE-INKWORKS",
     "id": "PAY-0002",
+    "payee_id": "PAYEE-INKWORKS",
     "currency": "EUR",
     "status": "scheduled",
     "document_id": null,
@@ -1127,10 +1127,10 @@ Seed: 42. Bank calls go through the mock bank API (FastAPI routes and bearer-tok
     "execute_date": "2026-10-19",
     "invoice_id": null,
     "automatic": false,
-    "created_at": "2026-10-16T21:17:32.628494Z",
+    "created_at": "2026-10-17T12:23:21.665388Z",
     "transaction_id": null,
-    "payee_id": "PAYEE-INKWORKS",
     "id": "PAY-0002",
+    "payee_id": "PAYEE-INKWORKS",
     "currency": "EUR",
     "status": "scheduled",
     "document_id": null,

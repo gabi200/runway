@@ -161,6 +161,8 @@ UI approval queue: owner clicks Approve  ->  executor.approve(session, id, "owne
    - role not in required_roles           -> audit DENY, nothing recorded
    - approver_id already used for another role on this request -> audit DENY "Same approver cannot fill two roles"
    - role + approver_id recorded in approvals_json (compare-and-set on the pending row) -> audit APPROVED
+     ("Approved by owner; still needed: accountant"); a repeat click by a role that already approved adds
+     nothing and writes no second APPROVED entry, but still re-checks, so a request held by the kill switch can run
    - policy.evaluate(..., approvals=given) is run AGAIN with current database state
         DENY, kill switch on -> request stays "pending", audit DENY "re-check at approval"
         DENY (other)    -> request status "rejected", audit DENY "re-check at approval"

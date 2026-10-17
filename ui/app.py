@@ -12,6 +12,7 @@ from html import escape as esc
 import io
 import json
 import os
+import re
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -48,7 +49,10 @@ import redteam.console as redteam  # noqa: E402
 from policy import engine as policy_engine  # noqa: E402
 from ui import auth  # noqa: E402
 from ui.helpers import SAMPLE_DIR, badge, company_name, money, pack_for  # noqa: E402
-from ui.render import code_span, describe_approval, format_step, reply_markdown, safe_text  # noqa: E402
+from ui.render import (  # noqa: E402
+    OUTCOMES, REQUEST_STATUSES, action_title, code_span, describe_approval, describe_entry, format_step, plain_args,
+    reply_markdown, safe_text,
+)
 
 SECTIONS = ["Monday brief & chat", "Forecast", "Approval queue", "Documents",
             "Payees (humans only)", "Mock bank", "Test inbox", "Audit log", "Red team", "Onboarding"]
@@ -234,9 +238,14 @@ def pick(key: str, label: str, ids: list[str], default: str | None, fmt) -> str 
     """The selected row of a filtered list, kept while it stays in the list."""
     if not ids:
         return None
-    if st.session_state.get(f"{key}_pick") not in ids:
+    if st.session_state.pop(f"{key}_next", False) or st.session_state.get(f"{key}_pick") not in ids:
         st.session_state[f"{key}_pick"] = default if default in ids else ids[0]
     return st.selectbox(label, ids, key=f"{key}_pick", format_func=fmt)
+
+
+def when(value) -> str:
+    """A stored timestamp as '26 Oct 2026, 21:56' (UTC); blank when missing."""
+    return pd.Timestamp(value).strftime("%d %b %Y, %H:%M") if value else ""
 
 
 def navigate(page: str) -> None:
@@ -394,7 +403,7 @@ def page_onboarding() -> None:
                 st.success("Imported. The forecast now uses the uploaded data.")
                 for w in summary["warnings"]:
                     st.warning(w)
-                st.json(summary, expanded=False)
+                st.caption(" · ".join(plain_args({k: v for k, v in summary.items() if k != "warnings"})))
     elif tb is not None or bs is not None:
         st.caption("Upload both the trial balance and the bank statement to enable the import.")
     st.subheader("Current database")
@@ -525,15 +534,18 @@ def render_steps(steps: list[dict]) -> None:
     if not steps:
         st.caption("No tools were called.")
         return
+    pack = pack_for(st.session_state.pack)
     for i, step in enumerate(steps, 1):
         st.markdown(
-            f"{i}. {code_span(step['tool'])} {badge(step['status'])}"
-            + (f" approval **{safe_text(step['approval_id'])}**" if step.get("approval_id") else ""),
+            # a name the model made up stays literal code: only plain snake_case becomes a title
+            f"{i}. " + (f"**{action_title(step['tool'])}**" if re.fullmatch(r"[a-z_]{1,60}", step["tool"])
+                        else code_span(step["tool"])) + f" {badge(step['status'])}"
+            + (f" approval **{esc(step['approval_id'])}**" if step.get("approval_id") else ""),
             unsafe_allow_html=True)
+        details = plain_args(step.get("args") or {}, pack)
+        st.caption(safe_text(" · ".join(details + [f"tool {step['tool']}"])))
         if step.get("reason"):
             st.caption(f"Reason: {safe_text(step['reason'])}")
-        with st.expander("arguments", expanded=False):
-            st.json(step.get("args") or {})
 
 
 def render_turn(turn, key: str) -> None:
@@ -550,9 +562,9 @@ def render_turn(turn, key: str) -> None:
     with session_scope() as s:
         refs = find_invoice_refs(s, named)
     invoice_links(refs, key)
-    with st.expander(f"Policy & source details ({len(turn.steps)} steps)", expanded=False):
-        st.caption("Every tool call is checked by the rules engine first: ALLOW runs, NEEDS_APPROVAL "
-                   "waits for a human, DENY is blocked.")
+    with st.expander(f"What the agent did ({len(turn.steps)} steps)", expanded=False):
+        st.caption("The rules check every step first: allowed steps run, risky ones wait for a person's "
+                   "approval, forbidden ones are blocked.")
         render_steps(turn.steps)
 
 
@@ -770,7 +782,8 @@ def scenario_panel(fc, pack) -> None:
     with session_scope() as s:
         customers = [(c.id, c.name) for c in s.exec(select(Counterparty).where(Counterparty.kind == "customer"))]
         ledger_cur = (s.get(Account, "ACC-MAIN").currency if s.get(Account, "ACC-MAIN") else "")
-        pays = [(p.id, f"{p.id} - {p.payee_id} - {pack.display(p.amount_cents)} on {p.execute_date}",
+        payees = {p.id: p.name for p in s.exec(select(Payee))}
+        pays = [(p.id, f"{payees.get(p.payee_id, p.payee_id)} · {pack.display(p.amount_cents)} on {p.execute_date} ({p.id})",
                  # default move: the invoice due date (the latest the rules allow), else two weeks later
                  inv.due_date if (inv := s.get(Invoice, p.invoice_id) if p.invoice_id else None)
                  else p.execute_date + timedelta(days=14))
@@ -800,8 +813,18 @@ def scenario_panel(fc, pack) -> None:
     scen = st.session_state.scenario
     if not scen:
         return
-    st.write("Scenario changes:")
-    st.json(scen, expanded=False)
+    st.markdown("**Your what-if changes**")
+    names, labels = dict(customers), {p[0]: p[1].rsplit(" on ", 1)[0].replace(" · ", " payment (") + ")" for p in pays}
+    for i, ch in enumerate(scen):
+        text, remove = st.columns([5, 1], vertical_alignment="center")
+        text.markdown(safe_text({
+            "delay_customer": lambda: f"{names.get(ch['counterparty_id'], ch['counterparty_id'])} pays {ch['days']} days later",
+            "inflow": lambda: f"Extra money in: {money(pack, ch['amount_cents'])} in week {ch['week']} ({ch['label']})",
+            "move_payment": lambda: f"Move the {labels.get(ch['payment_id'], ch['payment_id'])} to {ch['new_date']}",
+        }.get(ch["type"], lambda: ch["type"])()))
+        if remove.button("Remove", key=f"sc_rm_{i}"):
+            scen.pop(i)
+            st.rerun()
     if st.button("Clear scenario"):
         st.session_state.scenario = []
         st.rerun()
@@ -842,79 +865,110 @@ def page_approvals() -> None:
                + "Risky agent actions wait here. Large amounts need two roles "
                "(four-eyes principle: two different people must agree; one browser session cannot fill both roles).")
     with session_scope() as s:
-        pending = executor.pending_approvals(s)
-        history = list(s.exec(select(ApprovalRequest).where(ApprovalRequest.status != "pending")
-                              .order_by(ApprovalRequest.created_at.desc())))
-        pending_view = [(r.id, r.tool_name, json.loads(r.args_json), json.loads(r.required_roles_json),
-                         [g['role'] if isinstance(g, dict) else g for g in json.loads(r.approvals_json)], r.reason,
-                         describe_approval(s, r.tool_name, json.loads(r.args_json), pack),
-                         approval_invoices(s, json.loads(r.args_json))) for r in pending]
-    with st.container(key="approval-layout"):
-        queue, guidance = st.columns([3, 1], gap="large")
-        with queue:
-            st.subheader(f"Needs your review ({len(pending_view)})")
-            if not pending_view:
-                st.info("Nothing waiting for approval. Run the Monday brief or ask the copilot to prepare a proposal.")
-            for rid, tool, args, required, given, reason, summary, inv_ids in pending_view:
-                with st.container(border=True, key=f"approval_{rid}"):
-                    st.markdown(f'<div class="approval-meta">{badge("NEEDS_APPROVAL")}<span>{esc(rid)}</span></div>', unsafe_allow_html=True)
-                    titles = {"reschedule_payment": "Move a supplier payment", "prepare_financing_application": "Prepare a financing application",
-                              "schedule_payment": "Schedule a payment", "send_payment_reminder": "Send a payment reminder",
-                              "kill_switch_off": "Turn the kill switch off", "advance_clock": "Advance the simulated clock"}
-                    st.subheader(titles.get(tool, tool.replace("_", " ").capitalize()))
-                    for line in summary:
-                        st.markdown(safe_text(line))
-                    invoice_links(inv_ids, f"apr_{rid}", remind=False)
-                    st.markdown("**Why this is proposed**")
-                    st.write(safe_text(reason))
-                    st.markdown(f'<div class="approval-roles"><span>Required: {esc(", ".join(required))}</span>'
-                                f'<span>Recorded: {esc(", ".join(given) or "Awaiting review")}</span></div>', unsafe_allow_html=True)
-                    with st.expander("Policy & source arguments"):
-                        st.caption(tool)
-                        st.json(args, expanded=True)
-                    a, b = st.columns(2)
-                    if a.button("Approve", key=f"ap_{rid}", disabled=not can_act, type="primary", width="stretch"):
-                        with session_scope() as s:
-                            res = executor.approve(s, rid, role, approver_id=auth.approver_id())
-                        if res.status == "ok":
-                            st.rerun()
-                        elif res.status == "needs_approval":
-                            st.success("Your approval is recorded and signed with your role's key. Waiting for "
-                                       "the other role (it must be signed in from a different browser session).")
-                        elif res.reason.endswith("; the request stays pending"):  # e.g. kill switch on
-                            st.warning(f"Your approval is recorded, but the action did not run: "
-                                       f"{res.reason.removesuffix('; the request stays pending')}. "
-                                       "The request stays in the queue until it can run.")
-                        elif res.reason == "Same approver cannot fill two roles":
-                            st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
-                                     "of a four-eyes request.")
-                        else:
-                            st.error(f"Not approved: {res.reason}.")
-                    if b.button("Reject", key=f"rj_{rid}", disabled=not can_act, width="stretch"):
-                        with session_scope() as s:
-                            executor.reject(s, rid, role, "rejected in UI")
-                        st.rerun()
-        with guidance, st.container(key="approval-guide"):
-            st.subheader("Built-in boundaries")
-            st.markdown("**Two people, two sessions**")
-            st.caption("Requests requiring both roles need separate owner and accountant sign-ins. Switching roles in one session cannot supply both approvals.")
-            st.markdown("**Policy before execution**")
-            st.caption("The rules engine checks the request again when it is approved.")
-            st.markdown("**Signed approvals**")
-            st.caption("Each approval is signed with the approver role's Ed25519 key. A financing PDF carries "
-                       "the signed mandate, so the bank can check that two people, not the agent, approved it.")
-            st.markdown("**A record of every decision**")
-            st.caption("Approvals, refusals and actions remain in the audit trail.")
+        pending = {r.id for r in executor.pending_approvals(s)}  # also expires stale requests
+        reqs = {}
+        for r in s.exec(select(ApprovalRequest).order_by(ApprovalRequest.created_at.desc())):
+            args = json.loads(r.args_json)
+            given = [g if isinstance(g, dict) else {"role": g} for g in json.loads(r.approvals_json)]
+            reqs[r.id] = dict(
+                id=r.id, tool=r.tool_name, args=args, required=json.loads(r.required_roles_json), given=given,
+                status=r.status, reason=r.reason, created=r.created_at, decided=r.decided_at,
+                result=json.loads(r.result_json) if r.result_json else {},
+                # live lookups describe what would happen; once decided, the arguments say what was asked
+                summary=describe_approval(s, r.tool_name, args, pack) if r.id in pending else plain_args(args, pack),
+                invoices=approval_invoices(s, args))
 
-    st.subheader("History")
-    if history:
-        st.dataframe(pd.DataFrame([{
-            "ID": r.id, "Tool": r.tool_name, "Status": r.status, "Required": r.required_roles_json,
-            "Approved by": ", ".join(e if isinstance(e, str) else e["role"] + (" (signed)" if "signature" in e else "")
-                                    for e in json.loads(r.approvals_json)), "Reason": r.reason, "Decided": r.decided_at,
-            "Args": r.args_json} for r in history]), width="stretch", hide_index=True)
+    def group(r) -> str:
+        return {"pending": "Waiting", "executing": "Waiting", "executed": "Done"}.get(r["status"], "Not run")
+
+    def signed_by(r) -> str:
+        return ", ".join(g["role"] + (" (signed)" if "signature" in g else "") for g in r["given"])
+
+    if done := st.session_state.pop("apr_done", None):
+        st.success(done)
+    if not reqs:
+        st.info("Nothing waiting for approval. Run the Monday brief or ask the copilot to prepare a proposal.")
     else:
-        st.caption("No decided requests yet.")
+        counts = {g: sum(group(r) == g for r in reqs.values()) for g in ("Waiting", "Done", "Not run")}
+        query, show = list_filter("apr", {"All": len(reqs), **counts}, "Search ID, action or detail")
+        rows = [r for r in reqs.values() if show in ("All", group(r)) and query in
+                f"{r['id']} {action_title(r['tool'])} {r['tool']} {' '.join(r['summary'])} {r['reason']}".lower()]
+        ids = [r["id"] for r in rows]
+        table, card = st.container(), st.container()  # wide table: the card goes below it
+        with table:
+            if not rows:
+                st.caption("No requests match.")
+            else:
+                pick_table("apr", pd.DataFrame([{
+                    "ID": r["id"], "Action": action_title(r["tool"]), "Status": REQUEST_STATUSES.get(r["status"], r["status"]),
+                    "Detail": r["summary"][0] if r["summary"] else "", "Needs": " and ".join(r["required"]),
+                    "Approved by": signed_by(r) or "-", "Requested": when(r["created"]), "Decided": when(r["decided"]),
+                } for r in rows]), ids)
+        with card, st.container(border=True, key="apr-card"):
+            # oldest waiting request first, like a queue
+            rid = pick("apr", "Request", ids, next((r["id"] for r in reversed(rows) if r["status"] == "pending"), None),
+                       lambda i: f"{i} · {action_title(reqs[i]['tool'])}")
+            if rid is not None:
+                approval_card(reqs[rid], role, can_act, pack)
+    with st.expander("How approvals are protected", icon=":material/verified_user:"):
+        st.markdown("**Two people, two sessions.** Requests requiring both roles need separate owner and accountant "
+                    "sign-ins. Switching roles in one session cannot supply both approvals.")
+        st.markdown("**Policy before execution.** The rules engine checks the request again when it is approved.")
+        st.markdown("**Signed approvals.** Each approval is signed with the approver role's Ed25519 key. A financing "
+                    "PDF carries the signed mandate, so the bank can check that two people, not the agent, approved it.")
+        st.markdown("**A record of every decision.** Approvals, refusals and actions remain in the audit trail.")
+
+
+def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
+    rid = r["id"]
+    waiting = r["status"] == "pending"
+    st.markdown(f'<div class="approval-meta">{badge(r["status"], REQUEST_STATUSES.get(r["status"]))}'
+                f'<span>{esc(rid)}</span></div>', unsafe_allow_html=True)
+    st.subheader(action_title(r["tool"]))
+    for line in r["summary"]:
+        st.markdown(safe_text(line))
+    invoice_links(r["invoices"], f"apr_{rid}", remind=False)
+    st.markdown("**Why this is proposed**")
+    st.write(safe_text(r["reason"]))
+    approved = {g["role"]: g for g in r["given"]}
+    st.markdown("**Who must approve**")
+    for need in r["required"]:
+        g = approved.get(need)
+        st.markdown(f":material/check_circle: {need.capitalize()} approved" + (" (signed)" if g and "signature" in g else "")
+                    if g else f":material/radio_button_unchecked: {need.capitalize()}: waiting")
+    if not waiting:
+        outcome = r["result"].get("denied") or r["result"].get("error")
+        st.caption(f"{REQUEST_STATUSES.get(r['status'], r['status'])} {when(r['decided'])}"
+                   + (f": {safe_text(outcome)}" if outcome else ""))
+        return
+    missing = [n for n in r["required"] if n not in approved]
+    if role in approved and missing:  # a second click would add nothing
+        st.info(f"You approved this. Waiting for the {' and '.join(missing)}, signed in from a different browser session.")
+    a, b = st.columns(2)
+    if not (role in approved and missing) and a.button("Approve", key=f"ap_{rid}", disabled=not can_act,
+                                                       type="primary", width="stretch"):
+        with session_scope() as s:
+            res = executor.approve(s, rid, role, approver_id=auth.approver_id())
+        if res.status == "ok":
+            st.session_state.update(apr_next=True, apr_done=f"{rid} approved and carried out.")
+            st.rerun()
+        elif res.status == "needs_approval":
+            st.success("Your approval is recorded and signed with your role's key. Waiting for "
+                       "the other role (it must be signed in from a different browser session).")
+        elif res.reason.endswith("; the request stays pending"):  # e.g. kill switch on
+            st.warning(f"Your approval is recorded, but the action did not run: "
+                       f"{res.reason.removesuffix('; the request stays pending')}. "
+                       "The request stays in the queue until it can run.")
+        elif res.reason == "Same approver cannot fill two roles":
+            st.error(f"Not approved: {res.reason}. The same person cannot give both approvals "
+                     "of a four-eyes request.")
+        else:
+            st.error(f"Not approved: {res.reason}.")
+    if b.button("Reject", key=f"rj_{rid}", disabled=not can_act, width="stretch"):
+        with session_scope() as s:
+            executor.reject(s, rid, role, "rejected in UI")
+        st.session_state.update(apr_next=True, apr_done=f"{rid} rejected.")
+        st.rerun()
 
 
 # --------------------------------------------------------------------------- #
@@ -1142,20 +1196,21 @@ def page_bank() -> None:
         return
     for a in accounts:
         st.metric(f"{a['name']} ({a['id']})", money(pack, a["balance_cents"]), border=True)
-    for status in ("scheduled", "executed", "cancelled"):
-        rows = [p for p in payments if p["status"] == status]
-        st.subheader(f"{status.capitalize()} payments ({len(rows)})")
-        if rows:
-            df = pd.DataFrame(rows)
-            df["amount"] = [money(pack, v) for v in df["amount_cents"]]
-            # Key columns first with readable names; raw fields stay below the fold of the table
-            st.dataframe(df, width="stretch", hide_index=True,
-                         column_order=["id", "payee_id", "amount", "execute_date", "invoice_id",
-                                       "automatic", "created_by", "idempotency_key"],
-                         column_config={"id": "Payment", "payee_id": "Payee", "amount": "Amount",
-                                        "execute_date": "Executes on", "invoice_id": "Invoice",
-                                        "automatic": "Auto (T2)", "created_by": "Created by",
-                                        "idempotency_key": "Idempotency key"})
+    with session_scope() as s:
+        payees = {p.id: p.name for p in s.exec(select(Payee))}
+    st.subheader("Payments")
+    counts = {g: sum(p["status"] == g.lower() for p in payments) for g in ("Scheduled", "Executed", "Cancelled")}
+    query, show = list_filter("pay", {"All": len(payments), **counts}, "Search payee, payment or invoice")
+    rows = [p for p in payments if show in ("All", p["status"].capitalize()) and query in
+            f"{p['id']} {payees.get(p['payee_id'], '')} {p['payee_id']} {p['invoice_id'] or ''}".lower()]
+    if rows:
+        st.dataframe(pd.DataFrame([{
+            "Payment": p["id"], "Payee": payees.get(p["payee_id"], p["payee_id"]), "Amount": money(pack, p["amount_cents"]),
+            "Status": p["status"].capitalize(), "Date": p["execute_date"], "Invoice": p["invoice_id"] or "",
+            "Paid automatically": "yes" if p["automatic"] else "", "Created by": p["created_by"]} for p in rows]),
+            width="stretch", hide_index=True)
+    else:
+        st.caption("No payments match.")
     st.subheader("Advance the simulated clock")
     st.caption("Moves 'today' forward and executes scheduled payments that fall due. Needs owner and "
                "accountant: moving the clock restarts daily limits and expires pending requests.")
@@ -1179,12 +1234,34 @@ def page_inbox() -> None:
     st.subheader(f"Emails ({len(mview)})")
     if not mview:
         st.caption("No emails yet. Run the Monday brief to create reminders.")
-    for mid, kind, to, subj, body, inv, sent in mview:
-        with st.expander(safe_text(f"[{kind}] {subj}  ->  {to}")):
-            st.caption(safe_text(f"{mid} | invoice: {inv or '-'} | {sent}"))
-            st.text(body)
-            if inv:
-                invoice_links([inv], f"mail_{mid}", remind=False)
+    else:
+        kinds = {"reminder": "Payment reminder", "fraud_alert": "Fraud alert"}
+        mails = {m[0]: dict(zip(("id", "kind", "to", "subject", "body", "invoice", "sent"), m)) for m in mview}
+        kind = lambda m: kinds.get(m["kind"], m["kind"].replace("_", " ").capitalize())  # noqa: E731
+        counts = {}
+        for m in mails.values():
+            counts[kind(m)] = counts.get(kind(m), 0) + 1
+        query, show = list_filter("mail", {"All": len(mails), **counts}, "Search subject, recipient or text")
+        rows = [m for m in mails.values() if show in ("All", kind(m)) and query in
+                f"{m['subject']} {m['to']} {m['invoice'] or ''} {m['body']}".lower()]
+        ids = [m["id"] for m in rows]
+        table, card = st.container(), st.container()  # wide table: the card goes below it
+        with table:
+            if rows:
+                pick_table("mail", pd.DataFrame([{"Sent": when(m["sent"]), "Type": kind(m), "Subject": m["subject"],
+                                                  "To": m["to"], "Invoice": m["invoice"] or ""} for m in rows]), ids)
+            else:
+                st.caption("No emails match.")
+        with card, st.container(border=True, key="mail-card"):
+            mid = pick("mail", "Email", ids, None, lambda i: mails[i]["subject"])
+            if mid is not None:
+                m = mails[mid]
+                st.markdown(f"**{safe_text(m['subject'])}**")
+                st.caption(safe_text(f"{kind(m)}  |  to {m['to']}  |  invoice {m['invoice'] or '-'}  |  {when(m['sent'])}"))
+                with st.container(height=260):
+                    st.text(m["body"])
+                if m["invoice"]:
+                    invoice_links([m["invoice"]], f"mail_{mid}", remind=False)
     st.subheader(f"Financing applications ({len(aview)})")
     st.caption("Prepared, never submitted. A human reviews and signs the PDF.")
     if not aview:
@@ -1214,41 +1291,71 @@ def page_audit() -> None:
             st.success(f"Chain intact - {rep.checked} entries verified.")
         else:
             st.error(f"TAMPERING DETECTED - first bad entry id: {rep.first_bad_id} ({rep.message})")
-    st.subheader("Published heads")
-    st.caption("Someone who can write the database file could rebuild the whole chain. Publishing the head "
-               f"outside it (backend: **{safe_text(os.getenv('RUNWAY_ANCHOR') or 'notary')}**) makes such a "
-               "rewrite visible: the published hash cannot be changed afterwards.")
-    publish_col, verify_col = st.columns(2)
-    if publish_col.button("Publish head now", key="anchor_btn") and auth.require_login("publish the audit head"):
-        try:
-            with st.spinner("Publishing and waiting until it is on record..."), session_scope() as s:
-                receipt = anchor.anchor_head(s, st.session_state.role)
-            st.success(f"Published entries 1 to {receipt.count} as {receipt.ref}.")
-        except anchor.AnchorError as exc:
-            st.error(f"Could not publish: {safe_text(str(exc))}")
-    if verify_col.button("Verify against published heads", key="anchor_verify"):
+    pack = pack_for(st.session_state.pack)
+    with session_scope() as s:
+        entries = {e.id: dict(e.model_dump(), args=json.loads(e.args_json)) for e in reversed(audit.list_entries(s))}
+
+    def group(e) -> str:
+        d = e["decision"]
+        return ("Blocked" if d in ("DENY", "REJECTED", "FAILED") else "Waiting" if d == "NEEDS_APPROVAL"
+                else "Rule checks" if d == "ALLOW" else "Note" if d == "INFO" else "Done")
+    st.subheader("What happened")
+    counts = {g: sum(group(e) == g for e in entries.values())
+              for g in ("Done", "Waiting", "Blocked", "Rule checks", "Note")}
+    query, show = list_filter("audit", {"All": len(entries), **counts}, "Search who, what or why")
+    for e in entries.values():
+        e["what"] = describe_entry(e["action"], e["args"], pack)
+    rows = [e for e in entries.values() if show in ("All", group(e)) and query in
+            f"{e['actor']} {e['what']} {e['action']} {e['reason']} {e['args_json']}".lower()]
+    ids = [e["id"] for e in rows]
+    table, card = st.container(), st.container()  # wide table: the card goes below it
+    with table:
+        st.caption(f"{len(rows)} of {len(entries)} entries, newest first. Select a row for the full record.")
+        if rows:
+            pick_table("audit", pd.DataFrame([{
+                "#": e["id"], "When": when(e["timestamp"]), "Who": e["actor"], "What happened": e["what"],
+                "Result": OUTCOMES.get(e["decision"], e["decision"].replace("_", " ").capitalize()),
+                "Why": e["reason"]} for e in rows]), ids)
+    with card, st.container(border=True, key="audit-card"):
+        eid = pick("audit", "Entry", ids, None, lambda i: f"#{i} · {entries[i]['what']}"[:80])
+        if eid is not None:
+            e = entries[eid]
+            st.markdown(f"**{safe_text(e['what'])}**")
+            st.markdown(badge(e["decision"], OUTCOMES.get(e["decision"])), unsafe_allow_html=True)
+            st.caption(safe_text(f"#{eid}  |  {e['actor']}  |  {when(e['timestamp'])}"))
+            if e["reason"]:
+                st.write(safe_text(e["reason"]))
+            for line in plain_args(e["args"], pack, everything=True):
+                st.caption(safe_text(line))
+            st.caption(f"Entry hash {code_span(e['hash'][:16])}, follows {code_span(e['prev_hash'][:16])}")
+            with st.expander("Raw record (for auditors)"):
+                st.code(e["args_json"], language="json", wrap_lines=True)
+
+    with st.expander("Tamper evidence: published heads", icon=":material/verified:"):
+        st.caption("Someone who can write the database file could rebuild the whole chain. Publishing the head "
+                   f"outside it (backend: **{safe_text(os.getenv('RUNWAY_ANCHOR') or 'notary')}**) makes such a "
+                   "rewrite visible: the published hash cannot be changed afterwards.")
+        publish_col, verify_col = st.columns(2)
+        if publish_col.button("Publish head now", key="anchor_btn") and auth.require_login("publish the audit head"):
+            try:
+                with st.spinner("Publishing and waiting until it is on record..."), session_scope() as s:
+                    receipt = anchor.anchor_head(s, st.session_state.role)
+                st.success(f"Published entries 1 to {receipt.count} as {receipt.ref}.")
+            except anchor.AnchorError as exc:
+                st.error(f"Could not publish: {safe_text(str(exc))}")
+        if verify_col.button("Verify against published heads", key="anchor_verify"):
+            with session_scope() as s:
+                report = anchor.verify_anchors(s)
+            show = {"verified": st.success, "tampered": st.error, "unanchored": st.info}.get(report.status, st.warning)
+            show(safe_text(report.message))
         with session_scope() as s:
-            report = anchor.verify_anchors(s)
-        show = {"verified": st.success, "tampered": st.error, "unanchored": st.info}.get(report.status, st.warning)
-        show(safe_text(report.message))
-    with session_scope() as s:
-        receipts = [{"id": r.id, "entries": f"1 to {r.count}", "backend": r.backend, "reference": r.ref,
-                     "head": r.head[:12], "published": r.created_at[:19]}
-                    for r in s.exec(select(AuditAnchor).order_by(AuditAnchor.id.desc()))]
-    if receipts:
-        st.dataframe(pd.DataFrame(receipts), width="stretch", hide_index=True)
-    else:
-        st.caption("Nothing published yet.")
-    with session_scope() as s:
-        entries = audit.list_entries(s)
-        rows = [{"id": e.id, "time": e.timestamp, "actor": e.actor, "action": e.action,
-                 "decision": e.decision, "reason": e.reason, "hash": e.hash[:12], "args": e.args_json}
-                for e in entries]
-    st.write(f"{len(rows)} entries (newest first)")
-    df = pd.DataFrame(rows[::-1])
-    if not df.empty:
-        df["time"] = pd.to_datetime(df["time"], utc=True, format="mixed").dt.strftime("%Y-%m-%d %H:%M:%S")
-    st.dataframe(df, width="stretch", hide_index=True)
+            receipts = [{"Published": when(r.created_at), "Entries": f"1 to {r.count}", "Where": r.backend,
+                         "Reference": r.ref, "Head": r.head[:12]}
+                        for r in s.exec(select(AuditAnchor).order_by(AuditAnchor.id.desc()))]
+        if receipts:
+            st.dataframe(pd.DataFrame(receipts), width="stretch", hide_index=True)
+        else:
+            st.caption("Nothing published yet.")
 
 
 # --------------------------------------------------------------------------- #

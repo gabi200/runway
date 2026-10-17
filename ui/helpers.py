@@ -13,8 +13,8 @@ SAMPLE_DIR = Path(os.environ.get("RUNWAY_SAMPLE_DIR", REPO_ROOT / "data" / "samp
 ROLES = ("owner", "accountant")
 
 BADGE_LEVELS = {
-    "ALLOW": "ok", "ok": "ok", "EXECUTED": "ok", "APPROVED": "ok", "executed": "ok", "approved": "ok",
-    "NEEDS_APPROVAL": "attention", "needs_approval": "attention", "pending": "attention",
+    "ALLOW": "ok", "ok": "ok", "EXECUTED": "ok", "APPROVED": "ok", "executed": "ok", "approved": "ok", "HUMAN_ACTION": "ok",
+    "NEEDS_APPROVAL": "attention", "needs_approval": "attention", "pending": "attention", "executing": "attention",
     "DENY": "danger", "denied": "danger", "error": "danger", "rejected": "danger",
     "REJECTED": "danger", "FAILED": "danger", "failed": "danger",
 }
@@ -32,10 +32,10 @@ def money(pack: CountryPack, ledger_cents: int | None) -> str:
     return pack.display(int(ledger_cents))
 
 
-def badge(text: str) -> str:
+def badge(text: str, label: str | None = None) -> str:
     """Status pill as inline HTML (render with unsafe_allow_html; styled by ui/style.css)."""
     level = BADGE_LEVELS.get(text, "")
-    return f'<span class="pill {level}">{html.escape(str(text).replace("_", " "))}</span>'
+    return f'<span class="pill {level}">{html.escape(label or str(text).replace("_", " "))}</span>'
 
 
 def company_name(account_name: str | None) -> str:
