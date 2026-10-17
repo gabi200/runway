@@ -11,10 +11,13 @@ flowchart TD
     UI["Streamlit UI (ui/app.py)<br/>PIN sign-in (ui/auth.py), owner and accountant roles"]
     AG["Agent (agent/orchestrator.py)<br/>LLM or OfflinePlanner"]
     PS["Pseudonymizer (llm/pseudonym.py)"]
-    LLM["LLM adapter (llm/adapter.py)<br/>DeepSeek, OpenAI-compatible"]
+    LLM["LLM adapter (llm/adapter.py)<br/>DeepSeek, Gemini, Ollama (OpenAI-compatible);<br/>offline planner as fallback"]
     EX["Tool executor (agent/executor.py)<br/>run_tool / approve / reject"]
     POL["Rules engine (policy/engine.py + rules.yaml)<br/>plain Python, no AI"]
     AUD["Audit log (audit/log.py)<br/>hash chain + anchors"]
+    ANC["Head publishing (audit/anchor.py)<br/>notary file or EVM chain"]
+    MAN["Signed approvals (agent/mandate.py)<br/>Ed25519, per role"]
+    RT["Red-team console (redteam/)<br/>attacks through the real code paths"]
     TL["Tool handlers (agent/tools.py)"]
     FC["Forecast engine + financing_need (forecast/engine.py)"]
     FIN["Financing comparison (agent/financing.py, data/financing.yaml)"]
@@ -39,6 +42,10 @@ flowchart TD
     TL --> BC --> BANK
     POL --> DB
     AUD --> DB
+    AUD -->|publish head| ANC
+    EX -->|sign approvals| MAN
+    UI -->|try to break it| RT
+    RT --> EX
     BANK --> DB
     FC --> DB
     OUT --> DB
@@ -82,15 +89,20 @@ All components share one SQLite file (`var/runway.db` by default, set by `RUNWAY
 | `forecast/engine.py` | `build_forecast`, `explain_figure`, `financing_need`. Pure Python. Every line carries `source_refs`. The balance is walked line by line (same-day payments before receipts), and a week is a shortfall when its running balance goes below zero at any point. `financing_need` computes the amount, the needed-by date and the duration of a financing request from that running balance. |
 | `agent/financing.py` + `data/financing.yaml` | `compare_financing`, `product_cost`. True cost in integer cents; every option carries its cash arrival date; excluded options carry a reason and their arrival date. |
 | `policy/engine.py` + `policy/rules.yaml` | `evaluate(session, tool, args, actor, approvals)` returns a `Decision`. Tiers, limits (including `max_payment_cents`), argument validation, kill switch, invoice overpayment, reschedule and financing-application rules. `rules.yaml` is read once per process (`load_rules` is cached; `reload_rules()` re-reads it). |
-| `audit/log.py` | `append`, `verify_chain`, `list_entries`. SHA-256 hash chain, head/count anchors in `setting`, SQLite triggers that reject UPDATE and DELETE. |
-| `agent/executor.py` | `run_tool`, `approve(session, id, role, approver_id)`, `reject`, `pending_approvals` (expires stale requests), `request_human_action` (two-person requests to verify a payee, clear a document flag or release a supplier), `clear_document_flag`. The only path from the agent to side effects. |
+| `audit/log.py` | `append`, `verify_chain`, `list_entries`. SHA-256 hash chain, head/count anchors in `setting`, SQLite triggers that reject UPDATE and DELETE. After each append it hands the entry to `audit.anchor.publish_entry`. |
+| `audit/anchor.py` | Publishes the head outside the database (`NotaryBackend`: an append-only JSON-lines file; `EvmBackend`: calldata of a zero-value transaction on any EVM JSON-RPC chain) and stores a receipt (`auditanchor`). `publish_entry` publishes after every entry and `auto_anchor` after high-risk actions, as chosen by `RUNWAY_AUTO_ANCHOR`; `verify_anchors` checks the log against every published head. CLI: `python -m audit.anchor publish|verify`. |
+| `audit/archive.py` | `archive_before_wipe` copies the database to `var/archive/` before a reset or import; `check_link` proves the new log's first entry names the archived head and length. |
+| `agent/executor.py` | `run_tool`, `approve(session, id, role, approver_id)`, `reject`, `pending_approvals` (expires stale requests), `request_human_action` (two-person requests to verify a payee, clear a document flag, release a supplier, turn the kill switch off or advance the clock), `clear_document_flag`. Publishes the audit head after high-risk actions in `high-risk` mode. The only path from the agent to side effects. |
 | `agent/charts.py` | `build_chart`: chart data for the T1 tool `make_chart` (forecast balance or cash flow, receivables by customer or age, payables, monthly transactions, financing costs), computed from the ledger. The model only picks the dataset; the UI draws the chart. |
 | `agent/invoices.py` | `find_invoice_refs` (invoice ids and numbers named in a text, checked against the ledger), `invoice_details`, `invoice_pdf` (a copy rendered from the ledger row). Used by the UI's invoice dialog and buttons. |
-| `agent/tools.py` | `TOOL_SPECS` (OpenAI function schemas, 17 tools, T0 to T3 only) and `HANDLERS`. Bank writes only via `BankClient` with the executor token. |
+| `agent/tools.py` | `TOOL_SPECS` (OpenAI function schemas, 18 tools, T0 to T3 only) and `HANDLERS`. Bank writes only via `BankClient` with the executor token. |
 | `agent/outbox.py`, `agent/pdf.py` | Test inbox (`OutboxEmail` row plus `var/outbox/MAIL-xxxx.eml`) and the financing application PDF (`var/applications/FIN-xxxx.pdf`). |
 | `agent/documents.py` | `ingest_text`, `ingest_file(path, kind, sender, allowed_root)`, `ingest_document` (bytes or text only), `scan_document`, `link_document`, `sanitize_meta`, `wrap_untrusted`. Deterministic injection and business-email-compromise (BEC) scan over sender, filename and body. |
-| `agent/orchestrator.py`, `agent/prompts.py` | `Agent.chat`, `Agent.monday_brief`, the tool loop, system prompt, deterministic jailbreak filter `is_bypass_attempt`. |
-| `llm/adapter.py` | `LLMAdapter` (OpenAI SDK, any compatible provider) and `get_adapter()` (falls back to the offline planner). |
+| `agent/orchestrator.py`, `agent/prompts.py` | `Agent.chat`, `Agent.monday_brief`, the tool loop, system prompt, deterministic jailbreak filter `is_bypass_attempt`. When the provider fails, the offline planner finishes the turn (`llm_fallback`). |
+| `agent/mandate.py` | Ed25519 signing of each human approval with the approving role's key (`var/keys/<role>.pem`); `verify_mandate` lets a bank check the signed mandate carried by the financing PDF. |
+| `agent/review_team.py` | Advisory review of a pending request by the offline rules reviewer and optional model reviewers (DeepSeek, Gemini, Ollama). Verdicts never reach the executor. |
+| `redteam/console.py`, `redteam/tamper.py` | The "Try to break it" page: poisoned documents, chat injections, forbidden actions and insider audit rewrites, run through the real code paths (audit rewrites on a copy of the database). |
+| `llm/adapter.py` | `LLMAdapter` (OpenAI SDK, any compatible provider: DeepSeek, Gemini on Vertex AI, local Ollama) and `get_adapter()` (falls back to the offline planner). |
 | `llm/offline.py` | `OfflinePlanner`: deterministic keyword-routed stand-in for the LLM, same `chat(messages, tools)` interface. |
 | `llm/pseudonym.py` | `Pseudonymizer`: reversible masking of counterparty and payee names, person names learned from text (`learn`) or passed in from earlier turns (`people`), e-mails and IBANs (any case and group separator when the mod-97 check passes, plus the strict upper-case pattern); case-sensitive masking of structured ids, each with its own placeholder; `has_unknown_placeholder`. |
 | `bank/app.py`, `bank/service.py`, `bank/client.py` | Mock bank: bearer-token auth with enforced scopes, payee and payment endpoints, idempotency, own amount, overpayment and due-date checks, simulated clock. |
@@ -111,10 +123,11 @@ All amounts are integer cents (EUR in storage; the CN pack only converts for dis
 | `transaction` | `id` (TX-000123), `booking_date`, `amount_cents` (signed), `category`, `invoice_id` | Booked bank history. Source rows for forecast traceability. |
 | `payment` | `id` (PAY-0001), `idempotency_key` (unique), `payee_id`, `execute_date`, `status` (scheduled/executed/cancelled), `automatic`, `created_sim_date`, `transaction_id` | Payments in the mock bank. `automatic` and `created_sim_date` feed the daily and weekly caps. `transaction_id` is set when `advance` books the payment; the forecast uses it to exclude such transactions from recurring estimates. |
 | `document` | `id` (DOC-0001), `content_text`, `flagged`, `flag_reason`, `cleared`, `invoice_ids`, `counterparty_ids`, `released_counterparty_ids` | Incoming invoices and e-mails. Text is untrusted. `invoice_ids` (open AP invoices named in the text) and `counterparty_ids` (counterparties named in the text, sender or e-mail domain) are JSON lists set at ingestion. `released_counterparty_ids` lists the suppliers that owner and accountant released from this document's block. |
-| `approvalrequest` | `id` (APR-0001), `tool_name`, `args_json`, `required_roles_json`, `approvals_json`, `status`, `created_at` | A tool call parked for humans, or a two-person human action (`verify_payee`, `clear_document_flag`, `release_supplier`). `approvals_json` holds `{role, approver_id}` entries with their signatures (older rows with plain role strings are read and upgraded). `status` is `pending`, `executing`, `executed`, `failed`, `rejected` or `expired`. |
+| `approvalrequest` | `id` (APR-0001), `tool_name`, `args_json`, `required_roles_json`, `approvals_json`, `status`, `created_at` | A tool call parked for humans, or a two-person human action (`verify_payee`, `clear_document_flag`, `release_supplier`, `kill_switch_off`, `advance_clock`). `approvals_json` holds `{role, approver_id}` entries with their signatures (older rows with plain role strings are read and upgraded). `status` is `pending`, `executing`, `executed`, `failed`, `rejected` or `expired`. |
 | `outboxemail` | `id` (MAIL-0001), `to`, `kind` (reminder/fraud_alert/notification), `invoice_id`, `sent_at` | Test inbox. |
 | `financingapplication` | `id` (FIN-0001), `product_id`, `pdf_path`, `status` | Prepared, never submitted. |
 | `auditentry` | `id`, `timestamp`, `actor`, `action`, `args_json`, `args_hash`, `decision`, `reason`, `prev_hash`, `hash` | Hash-chained log. |
+| `auditanchor` | `count`, `head`, `backend` (notary/evm), `ref` (`notary:<n>` or a transaction hash), `created_at` | Receipt of a head published outside the database. Verification trusts the published payload, not the receipt's `head`. |
 | `setting` | `key`, `value` | `today` (simulated clock), `kill_switch`, `country`, `audit_head`, `audit_count`, `owner_email`, and `bank.request.<PAY-id>` (canonical body of each payment request, used by idempotency). |
 
 Canonical IDs used by the demo and tests: account `ACC-MAIN`; customers `CUST-BRIGHTFIELD` (net 75) and `CUST-SMALL-1..6` (net 30); suppliers `SUP-CARTONIA`, `SUP-INKWORKS`, `SUP-VOLTA-ENERGY`, `SUP-SWIFTLOG`; verified payees `PAYEE-CARTONIA`, `-INKWORKS`, `-VOLTA`, `-SWIFTLOG`, `-LANDLORD`, `-TAX`, `-LENDER`, `-PAYROLL`; one unverified `PAYEE-NEWVENDOR`.
@@ -238,7 +251,7 @@ Two-person rule for human actions: verifying a payee, clearing a document flag a
 
 ## 8. UI
 
-`ui/app.py` is the human side. It never grants the agent extra powers: agent chat goes through `Agent`, human actions go through `agent.executor.approve/reject`, `audit.log.append` (with the acting role and the browser session id) and the bank client with the human token. The section list is defined in `SECTIONS`: Onboarding, Monday brief and chat, Forecast, Approval queue, Documents, Payees (humans only), Mock bank, Test inbox, Audit log. Details of the pages are in `docs/demo-script.md`.
+`ui/app.py` is the human side. It never grants the agent extra powers: agent chat goes through `Agent`, human actions go through `agent.executor.approve/reject`, `audit.log.append` (with the acting role and the browser session id) and the bank client with the human token. The section list is defined in `SECTIONS` (sidebar labels in `PAGE_LABELS`): Finance copilot (Monday brief and chat), Cash forecast, Approvals, Documents, Payees, Bank simulator, Test inbox, Audit log (with Verify chain and the published heads), Try to break it (red-team console), Import data (onboarding). Details of the pages are in `docs/demo-script.md`.
 
 Sign-in: the header has a role selector and a PIN field. PINs come from `RUNWAY_OWNER_PIN` and `RUNWAY_ACCOUNTANT_PIN` (defaults 1111 and 2222); five wrong PINs lock that browser session for 5 minutes, and 20 wrong PINs for one role across all sessions within 15 minutes lock that role everywhere (counters stored in the database). Switching role needs the other role's PIN. Until a role is signed in, the Approve and Reject buttons are disabled, and these actions refuse to run: chat and the Monday brief, kill-switch toggle, data reset, CSV import, payee creation, requests to clear a flag or release a supplier, clock advance. Only the owner role can add payees or request their verification; the accountant approves that request. The PIN field is emptied after every sign-in attempt, the kill-switch toggle is read from the database on every run, and a demo reset writes `reset_demo` as the first entry of the new audit log.
 

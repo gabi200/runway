@@ -67,6 +67,7 @@ Finance terms first, then terms specific to Runway. Examples use the demo compan
 | Hash chain | Each audit entry stores the hash of the previous one; changing any entry breaks every later hash. |
 | Anchor | The stored head hash and entry count (`audit_head`, `audit_count` in `setting`). They detect deletion of the newest entries. |
 | `verify_chain()` | Recomputes the whole chain and the anchors and reports the first bad entry. Shown in the UI audit page. |
+| Published head | The head hash and entry count written outside the database (`runway-audit:v1:<count>:<head>`), to the notary file or an EVM chain, with a receipt in `auditanchor`. Published automatically (after every entry with the notary file, after high-risk actions on a chain) or with **Publish head now**. `verify_anchors()` compares the log with every published head, so a rewrite of the whole chain is caught. |
 | Simulated clock | The `today` setting (default 2026-10-19). The demo moves it with `POST /simulate/advance`. |
 | Country pack | A YAML file in `config/` with currency, VAT rate, VAT day and a display FX factor. `eu` (EUR) and `cn` (CNY). Display only: the ledger and the bank stay in EUR and `CountryPack.display` formats amounts for people. |
 | CSV import | `data/importer.py`: builds the database from a company's trial balance, bank statement and open items, optionally with paid-invoice history. Imported payees are unverified, so a scheduled-payments file is rejected. |

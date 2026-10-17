@@ -4,6 +4,8 @@ An AI finance officer for small suppliers. Runway forecasts cash 13 weeks ahead,
 
 Entry for the 2026 Shenzhen International FinTech Competition, International Track (hosted with WeBank), Topic E: SME Finance Copilot. All data is fictional and generated.
 
+Source code: <https://github.com/gabi200/runway>
+
 ## The demo story
 
 Lumen Packaging (20 employees, cardboard packaging) sells 65 percent of its output to Brightfield Appliances, which pays 75 days after invoice. The 13-week forecast walks the bank balance day by day (on the same day, payments are counted before receipts) and finds two stretches below zero. After the paperboard bill (60,000 on 18 November), payroll and VAT on 25 November and the 12,000 Inkworks payment on 26 November take the balance to -29,303.32 EUR; it stays below zero until Brightfield's 90,000 arrives on 3 December (weeks 6 and 7). Payroll and VAT of 25 December take it to -9,494.98 EUR until Brightfield's 95,000 arrives on 31 December (weeks 10 and 11). The week-end closings are -18,303.32 (week 6) and -9,494.98 (week 10); weeks 7 and 11 close positive but dip below zero inside the week.
@@ -25,7 +27,7 @@ Full click-by-click script: [docs/demo-script.md](docs/demo-script.md).
 Requires Python 3.11 or newer.
 
 ```bash
-git clone <this repo> && cd runway
+git clone https://github.com/gabi200/runway.git && cd runway
 uv sync                                  # or: python -m venv .venv && .venv/bin/pip install -e . pytest
 .venv/bin/python -m data.generate        # creates var/runway.db and data/sample/ (seed 42)
 .venv/bin/streamlit run ui/app.py        # the UI, http://localhost:8501
@@ -129,7 +131,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 690 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 702 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A10 and the red-team console
 .venv/bin/python scripts/run_tasks.py --mode offline   # judge task pack; --mode deepseek for a live run
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/
@@ -175,12 +177,12 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 
 | # | Required item | Where | Status |
 |---|---|---|---|
-| 1 | Technical documentation: architecture, core algorithms, security design | [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md), [docs/security-self-assessment.md](docs/security-self-assessment.md) | Written |
+| 1 | Technical documentation: system architecture, core algorithm description, security design | System architecture: [docs/architecture.md](docs/architecture.md). Core algorithms: [docs/algorithms.md](docs/algorithms.md). Security design: [docs/security-self-assessment.md](docs/security-self-assessment.md) sections 1 to 4 (threat model, permission tiers, 29 defense layers) and the design rules in [docs/architecture.md](docs/architecture.md) section 6 | Written |
 | 2 | Presentation deck, 10 minutes or less | Outline and timing in [docs/demo-script.md](docs/demo-script.md) section 3 | Outline only; slides still to be built |
 | 3 | Demo video, 5 minutes or less (optional) | Script in [docs/demo-script.md](docs/demo-script.md) section 2 | Script written; video still to be recorded |
-| 4 | Source code on GitHub with README, deployment instructions and test cases | This repository, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` | Ready; push to GitHub pending |
-| 5 | Security self-assessment: permission tiers and known risks | [docs/security-self-assessment.md](docs/security-self-assessment.md) sections 3 and 7 | Written |
-| 6 | Execution evidence: simulated-bank logs plus the demo video | [docs/execution_logs/](docs/execution_logs/) (`demo_run.md`, `audit_log.jsonl`, `bank_payments.json`, `outbox.json`, `FIN-0001.pdf`); video as item 3 | Logs generated; video pending |
+| 4 | Source code on GitHub with README, deployment instructions and test cases | <https://github.com/gabi200/runway>, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` (702 tests, [docs/testing.md](docs/testing.md)) | Done |
+| 5 | Security self-assessment: permission tiers and known risks | [docs/security-self-assessment.md](docs/security-self-assessment.md) section 3 (permission tiers T0 to T4 and how each is implemented) and section 7 (25 known risks); attacks A1 to A10 in section 5 | Written |
+| 6 | Execution evidence: simulated-account/sandbox operation logs plus the demo video | [docs/execution_logs/](docs/execution_logs/): sandbox run `demo_run.md`, `audit_log.jsonl`, `bank_payments.json`, `outbox.json`, `FIN-0001.pdf` with `mandate_keys.json`; judge task pack `task_report_offline.md`, `task_report_deepseek.md` with traces; audit head on a local Anvil chain `anchor_run.md`, `anchor_receipt.json`; video as item 3 | Logs generated; video pending |
 
 Deadline: 20 October 2026, 23:59 Beijing time (19:00 Bucharest, 16:00 UTC).
 

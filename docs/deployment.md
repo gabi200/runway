@@ -6,6 +6,12 @@ Requirements: Python 3.11 or newer (the lock file and `.python-version` use 3.12
 
 ## 1. Local setup
 
+Get the code from GitHub: <https://github.com/gabi200/runway>.
+
+```bash
+git clone https://github.com/gabi200/runway.git
+```
+
 With `uv` (recommended; uses `uv.lock`):
 
 ```bash
@@ -128,6 +134,7 @@ Complete list, found by searching the code for `os.environ` and `os.getenv`:
 | `RUNWAY_LLM_THINKING` | unset | `llm/adapter.py:chat` | Set to `on` to stop sending `thinking: disabled` to DeepSeek. Leave it unset: the adapter does not echo `reasoning_content` between tool turns. |
 | `RUNWAY_SAMPLE_DIR` | `data/sample` | `ui/helpers.py` | Where the UI writes and reads sample CSVs and demo documents. The demo documents are ingested with this folder's `docs/` subfolder as the allowed root. |
 | `RUNWAY_ANCHOR` | `notary` | `audit/anchor.py:get_backend` | Where the audit head is published: `notary` (an append-only JSON-lines file) or `evm` (any EVM JSON-RPC chain). |
+| `RUNWAY_AUTO_ANCHOR` | `every` for `notary`, `high-risk` for `evm` | `audit/anchor.py:auto_mode` | When the head is published automatically: after `every` audit entry, only after `high-risk` actions (money moves, lifted controls, reset, sample load, import), or `off` (manual only). |
 | `RUNWAY_NOTARY_PATH` | `<db>.notary.jsonl` | `audit/anchor.py:get_backend` | Notary file. Default: the database path with the suffix `.notary.jsonl` (`var/runway.notary.jsonl`). |
 | `RUNWAY_EVM_RPC_URL` | unset | `audit/anchor.py:get_backend` | JSON-RPC URL of the chain, for `RUNWAY_ANCHOR=evm`. Error messages never include it, since provider URLs often carry an API key. |
 | `RUNWAY_EVM_PRIVATE_KEY` | unset | `audit/anchor.py:get_backend` | Funded key that signs the anchor transactions, for `RUNWAY_ANCHOR=evm`. A hot key: use a throwaway key with only gas money. |
@@ -136,7 +143,7 @@ Never commit keys. `.gitignore` already excludes `.env` and `var/`.
 
 ### Audit anchoring
 
-`audit/anchor.py` publishes `runway-audit:v1:<count>:<head hash>` outside the database, stores a receipt row (`auditanchor` table) and audits the act as `anchor_audit_head`. Use **Publish head now** and **Verify against published heads** on the Audit log page, or the CLI (actor `system`):
+`audit/anchor.py` publishes `runway-audit:v1:<count>:<head hash>` outside the database, stores a receipt row (`auditanchor` table) and audits the act as `anchor_audit_head`. It does this automatically (`RUNWAY_AUTO_ANCHOR`): with the notary file after every audit entry (a receipt only, no extra audit entry), on a chain after every high-risk action and after a reset, sample load or import. A failed automatic publish is audited and does not undo the action. To publish or check by hand, use **Publish head now** and **Verify against published heads** on the Audit log page, or the CLI (actor `system`):
 
 ```bash
 .venv/bin/python -m audit.anchor publish   # prints the receipt as JSON
@@ -158,7 +165,7 @@ For anything beyond a demo, set both bank tokens to long random values and repla
 
 The list also covers `config/llm.yaml`, whose `api_key_env` names one more variable (`DEEPSEEK_API_KEY` by default).
 
-## 4. Offline, DeepSeek and Gemini modes
+## 4. Offline, DeepSeek, Gemini and Ollama modes
 
 Use **Model mode** in the sidebar to switch providers for the current browser session, including the red-team chat injection test. Each switch starts a fresh conversation and clears the displayed brief and red-team result; it does not undo stored actions or approvals. Keys are loaded from `.env` at process startup, so restart Runway after editing them. An explicitly selected provider without its key shows a setup warning and disables model actions.
 
@@ -224,7 +231,7 @@ Reset and import both drop every table, including the audit log; the old databas
 
 The simulated date returns to 2026-10-19 on reset. If you advance the clock (Bank simulator page, "Advance", then the other role approves it), reset before the next take.
 
-Reset also drops the anchor receipts, so "Verify against published heads" reads "unanchored" until the next publish. The notary file is not deleted; new publishes append to it. Documents ingested and actions attempted on the "Try to break it" page are real (a flagged document blocks payments to the suppliers it names), so reset before a recorded take.
+Reset also drops the anchor receipts; the first entry of the new log is published at once (after every entry with the notary file, right after the reset on a chain), so "Verify against published heads" never reads "unanchored" for long. With `RUNWAY_AUTO_ANCHOR=off` it reads "unanchored" until the next manual publish. The notary file is not deleted; new publishes append to it. Documents ingested and actions attempted on the "Try to break it" page are real (a flagged document blocks payments to the suppliers it names), so reset before a recorded take.
 
 ## 8. Recording the demo video (5 minutes or less)
 

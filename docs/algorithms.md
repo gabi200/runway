@@ -276,6 +276,20 @@ Each row stores `prev_hash` and `hash`.
 - `verify_chain` walks all entries in id order and checks: id equals position, `prev_hash` equals the previous hash, `args_hash` matches `args_json`, recomputed `hash` matches. Then it compares the last hash and the count with `audit_head` and `audit_count` in `setting`, which detects truncation of the tail. Result: `ChainReport(ok, checked, first_bad_id, message)`.
 - Cost: `append` verifies the whole chain each time, so it is O(n) per write. Fine for the demo, not for a large production log.
 
+### Publishing the head outside the database (`audit/anchor.py`)
+
+The stored head and count live in the same file as the log, so someone who can write the file can rebuild the chain and both anchors. Publishing the head elsewhere closes that gap.
+
+- Payload: `runway-audit:v1:<count>:<head>`, where `head` is the hash of entry `count`. `NotaryBackend` appends it as a JSON line to `<db>.notary.jsonl` and returns `notary:<n>`; `EvmBackend` sends it as the calldata of a zero-value transaction from the anchor account to itself, waits until it is mined and successful, and returns the transaction hash. A receipt row (`auditanchor`: count, head, backend, ref) is stored.
+- When (`RUNWAY_AUTO_ANCHOR`, default by backend):
+  - `every` (default for the notary file): `audit.log.append` calls `publish_entry` after it commits, so the head is published after every entry. These publishes store a receipt but write no audit entry, otherwise every entry would be followed by an unpublished one and the log would double.
+  - `high-risk` (default for a chain, where each publish costs a transaction): `executor._execute` calls `auto_anchor` after an executed `schedule_payment`, any T3 or T4 tool, or a two-person human action; the UI calls it after a reset, sample load or import. The publish is audited as `anchor_audit_head`.
+  - `off`: only **Publish head now** or `python -m audit.anchor publish`, both audited.
+  A failed automatic publish never undoes the action that triggered it; it is audited as `anchor_audit_head` / `FAILED`.
+- Verification (`verify_anchors`): run `verify_chain` first (a broken chain is `tampered`). For each receipt, fetch the payload from its backend (never trusting the receipt's own `head`), then: if `count` is larger than the log, entries were deleted (`tampered`); if entry `count`'s hash differs from the published head, history was rewritten (`tampered`); otherwise entries 1 to `count` are as published. A receipt whose backend cannot be read is `unavailable`; no receipts at all is `unanchored`. The report says which entries are not yet published.
+- Example: a forgery that edits entry 2 and recomputes every later hash and the stored head passes `verify_chain`, but entry `count` of any later head now hashes differently, so it is `tampered`. Deleting the two newest entries and fixing the stored head and count leaves the log shorter than the newest published `count`, so it is `tampered` too.
+- Cost: with `every`, each append also re-verifies the chain and appends one notary line (about 35 ms instead of 14 ms per entry on a 300-entry log).
+
 What it does and does not defend against: see `docs/security-self-assessment.md`.
 
 ## 6. Pseudonymization (`llm/pseudonym.py`)
