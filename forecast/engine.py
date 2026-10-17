@@ -187,6 +187,7 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
     pack = load_country_pack(get_setting(session, "country", None))
     delays: dict[str, int] = defaultdict(int)
     moves: dict[str, date] = {}
+    invoice_moves: dict[str, date] = {}
     inflows: list[dict] = []
     n_weeks = (end - start).days // 7 + 1
     for ch in scenario:  # invalid changes raise ValueError instead of silently leaving the baseline
@@ -200,7 +201,9 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
             p = session.get(Payment, ch["payment_id"])
             new = date.fromisoformat(str(ch["new_date"]))
             if p is None:
-                raise ValueError(f"unknown payment {ch['payment_id']!r}")
+                hint = "; for an unpaid supplier invoice use move_invoice with invoice_id" if session.get(
+                    Invoice, ch["payment_id"]) else ""
+                raise ValueError(f"unknown payment {ch['payment_id']!r}{hint}")
             # the rules of bank/service.py reschedule_payment
             if p.status != "scheduled":
                 raise ValueError(f"payment {p.id} is {p.status}; only scheduled payments can be moved")
@@ -211,6 +214,11 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
                 raise ValueError(f"payment {p.id} must stay within its invoice due date"
                                  + (f" {inv.due_date}" if inv else ""))
             moves[p.id] = new
+        elif t == "move_invoice":  # what if the unpaid rest of a supplier invoice were paid on another day
+            inv = session.get(Invoice, ch["invoice_id"])
+            if inv is None or inv.direction != "AP" or inv.status != "open":
+                raise ValueError(f"{ch['invoice_id']!r} is not an open supplier invoice")
+            invoice_moves[inv.id] = max(date.fromisoformat(str(ch["new_date"])), start)
         elif t == "inflow":
             if not 1 <= int(ch["week"]) <= n_weeks:
                 raise ValueError(f"inflow week must be 1..{n_weeks}")
@@ -287,9 +295,10 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
                 label=f"Payable {inv.number}",
                 kind="payment",
                 amount_cents=-remaining,
-                expected_date=max(inv.due_date, start),
+                expected_date=invoice_moves.get(inv.id, max(inv.due_date, start)),
                 source_refs=[inv.id] + [p.id for p in payments],
-                note=f"due {inv.due_date}" + (" (critical)" if inv.critical else ""),
+                note=f"due {inv.due_date}" + (" (critical)" if inv.critical else "")
+                     + (f"; scenario: paid {invoice_moves[inv.id]}" if inv.id in invoice_moves else ""),
             )
         )
 

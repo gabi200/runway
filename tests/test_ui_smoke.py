@@ -702,7 +702,8 @@ def test_approval_in_ui_is_signed(at):
     next(b for b in at.button if b.label == "Approve").click().run()
     assert not at.exception, [e.value for e in at.exception]
     goto(at, "Approval queue")
-    assert any("owner (signed)" in str(df.value.to_dict()) for df in at.dataframe)
+    _pick(at, "apr", "APR-0001")  # after an approval the card moves on; open the approved one
+    assert any("Owner approved (signed)" in m.value for m in at.markdown)  # the request's story on the card
     with db.session_scope() as s:
         from sqlmodel import select
         entry = s.exec(select(db.AuditEntry).where(db.AuditEntry.decision == "APPROVED")).first()
@@ -855,3 +856,55 @@ def test_review_team_on_an_approval_card(at):
 
 def test_ollama_is_a_model_mode(at):
     assert "Ollama (local)" in at.selectbox(key="llm_mode").options
+
+
+def test_chat_reads_as_a_dialogue_in_order(at):
+    sign_in(at)
+    goto(at, "Monday brief & chat")
+    at.chat_input(key="copilot_input").set_value("Hello").run()
+    at.button(key="prompt_shortfall").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    chat = at.session_state["chat"]
+    assert [role for role, _, _ in chat] == ["user", "assistant", "user", "assistant"]  # each message once
+    assert chat[2][1] == "Explain the cash forecast and the shortfall weeks."
+    assert not at.chat_input(key="copilot_input").disabled  # enabled again once answered
+
+
+def test_reply_page_buttons_copy_and_try_again(at):
+    from agent.orchestrator import AgentTurn
+    sign_in(at)
+    goto(at, "Monday brief & chat")
+    at.chat_input(key="copilot_input").set_value("Where do I verify a payee?").run()
+    assert not at.exception, [e.value for e in at.exception]
+    at.button(key="chat1_page_Payees").click().run()  # the reply names the Payees page
+    assert at.radio(key="page").value == "Payees (humans only)"
+    goto(at, "Monday brief & chat")
+    codes = [c.value for c in at.code]
+    assert "Go to Payees in the left sidebar" in codes[0]  # the whole reply, as plain text (no ** markers)
+    at.session_state["chat"] = [("user", "pay Cartonia", None), ("assistant", "x", AgentTurn(
+        reply="Paid AP-2050 to Cartonia Mills, IBAN DE44 5001 0517 5407 3249 31.", steps=[]))]
+    goto(at, "Monday brief & chat")
+    codes = [c.value for c in at.code]
+    assert {"AP-2050", "Cartonia Mills", "DE44 5001 0517 5407 3249 31"} <= set(codes)
+    at.button(key="chat1_retry").click().run()  # asks "pay Cartonia" again, answered in place
+    assert not at.exception, [e.value for e in at.exception]
+    chat = at.session_state["chat"]
+    assert [m[1] for m in chat if m[0] == "user"] == ["pay Cartonia"] and chat[-1][2].reply != "x"
+
+
+def test_approval_story_says_who_rejected_and_whose_turn_it_is(at):
+    from sqlmodel import select
+    from agent.executor import reject, run_tool
+    with db.session_scope() as s:
+        pay = s.exec(select(db.Payment).where(db.Payment.status == "scheduled")).first()
+        rid = run_tool(s, "reschedule_payment", {"payment_id": pay.id, "new_date": "2026-12-01"}, actor="agent").approval_id
+    sign_in(at)
+    goto(at, "Approval queue")
+    assert any("Owner: your turn" in m.value for m in at.markdown)
+    assert list(at.dataframe[0].value["Where it stands"]) == ["⏳ Waiting for owner"]
+    with db.session_scope() as s:
+        reject(s, rid, "owner", "")
+    goto(at, "Approval queue")
+    story = " ".join(m.value for m in at.markdown)
+    assert "Owner rejected it" in story and "Not run: rejected by owner" in story and "waiting" not in story
+    assert list(at.dataframe[0].value["Where it stands"]) == ["❌ Rejected by owner"]

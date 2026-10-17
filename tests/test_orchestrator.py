@@ -554,7 +554,7 @@ def test_history_keeps_full_tool_data_only_for_recent_turns(session_factory):
         agent.chat("again")
     sent = adapter.seen[-1]
     assert len([m for m in sent if m["role"] == "tool"]) == 2  # the last two turns keep their results
-    assert sum("[Tool calls made in that turn" in (m.get("content") or "") for m in sent) == 4
+    assert sum("[Tool calls made in that turn" in (m.get("content") or "") for m in sent[1:]) == 4  # not the system prompt
 
 
 def test_steps_note_keeps_the_approval_id():

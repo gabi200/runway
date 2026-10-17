@@ -30,6 +30,7 @@ from sqlmodel import select  # noqa: E402
 from agent import documents as docs_mod  # noqa: E402
 from agent import executor  # noqa: E402
 from agent import review_team  # noqa: E402
+from agent.prompts import APP_PAGES  # noqa: E402
 from agent.invoices import find_invoice_refs, invoice_details, invoice_pdf  # noqa: E402
 from agent.orchestrator import Agent  # noqa: E402
 from audit import anchor  # noqa: E402
@@ -45,6 +46,7 @@ from common.db import (  # noqa: E402
 from data.generate import generate  # noqa: E402
 from forecast.engine import build_forecast, explain_figure  # noqa: E402
 from llm.adapter import get_adapter  # noqa: E402
+from llm.pseudonym import find_ibans  # noqa: E402
 from data.importer import ImportErrorReport, import_files  # noqa: E402
 import redteam.console as redteam  # noqa: E402
 from policy import engine as policy_engine  # noqa: E402
@@ -560,25 +562,74 @@ def agent_chart(spec: dict, pack):
 # --------------------------------------------------------------------------- #
 # 2. Monday brief + chat
 # --------------------------------------------------------------------------- #
+STEP_LABELS = {"ok": "done", "needs_approval": "waiting for approval", "denied": "blocked", "error": "failed"}
+STEP_WHY = {"needs_approval": "Waiting because", "denied": "Blocked because", "error": "Failed because"}
+PAGE_OF = {PAGE_LABELS.get(s, s): s for s in SECTIONS}  # sidebar label -> page
+_PAGE_ALIASES = {"Approvals": r"|approval queue|\bAPR-\d{4}\b", "Test inbox": r"|\binbox\b",
+                 "Audit log": r"|audit trail"}
+
+
+def page_links(text: str, key: str) -> None:
+    """A button per app page the reply names, so 'go to Payees' is one click (only real pages match)."""
+    found = [page for page, _, _ in APP_PAGES if page in PAGE_OF and page != "Finance copilot"
+             and re.search(rf"\b{re.escape(page)}\b" + _PAGE_ALIASES.get(page, ""), text or "", re.I)]
+    if found:
+        with st.container(horizontal=True, key=f"page-links-{key}"):
+            for page in found:
+                st.button(f"Open {page}", key=f"{key}_page_{page}", icon=":material/arrow_forward:",
+                          on_click=navigate, args=(PAGE_OF[page],))
+
+
 def render_steps(steps: list[dict]) -> None:
     if not steps:
         st.caption("No tools were called.")
         return
     pack = pack_for(st.session_state.pack)
     for i, step in enumerate(steps, 1):
+        status = step["status"]
         st.markdown(
             # a name the model made up stays literal code: only plain snake_case becomes a title
             f"{i}. " + (f"**{action_title(step['tool'])}**" if re.fullmatch(r"[a-z_]{1,60}", step["tool"])
-                        else code_span(step["tool"])) + f" {badge(step['status'])}"
-            + (f" approval **{esc(step['approval_id'])}**" if step.get("approval_id") else ""),
+                        else code_span(step["tool"])) + f" {badge(status, STEP_LABELS.get(status))}"
+            + (f" request **{esc(step['approval_id'])}**" if step.get("approval_id") else ""),
             unsafe_allow_html=True)
+        if step.get("reason") and status != "ok":
+            st.markdown(f"{STEP_WHY.get(status, 'Note')}: {safe_text(step['reason'])}")
         details = plain_args(step.get("args") or {}, pack)
-        st.caption(safe_text(" · ".join(details + [f"tool {step['tool']}"])))
-        if step.get("reason"):
-            st.caption(f"Reason: {safe_text(step['reason'])}")
+        st.caption(safe_text(" · ".join(details + [f"(tool {step['tool']})"])))
 
 
-def render_turn(turn, key: str) -> None:
+_COPY_ID = re.compile(r"\b(?:[A-Z]{2,5}-\d{4}-\d{4}|(?:AP|AR|PAY|APR|DOC|FIN|MAIL)-\d{3,5}"
+                      r"|(?:PAYEE|SUP|CUST)-[A-Z0-9]+(?:-[A-Z0-9]+)*)\b")
+
+
+def reply_actions(text: str, key: str, retry: bool) -> None:
+    """Under a reply: Copy (the whole text and each id, IBAN and name in it) and, on the latest one, Try again."""
+    with session_scope() as s:
+        names = {c.name for c in s.exec(select(Counterparty))} | {p.name for p in s.exec(select(Payee))}
+    items = list(dict.fromkeys(_COPY_ID.findall(text) + find_ibans(text) + sorted(n for n in names if n and n in text)))
+    with st.container(horizontal=True, key=f"reply-actions-{key}"):
+        with st.popover("Copy", icon=":material/content_copy:"):
+            st.caption("Click the copy icon at the top right of a box.")
+            st.code(re.sub(r"(?m)^> ?", "", re.sub(r"\*\*|__|`", "", text)), language=None, wrap_lines=True)  # plain text
+            if items:
+                st.caption("Ids, IBANs and names in this reply")
+                for item in items[:20]:
+                    st.code(item, language=None)
+        if retry:
+            st.button("Try again", key=f"{key}_retry", icon=":material/refresh:", on_click=retry_last,
+                      disabled=not auth.signed_in(), help="Ask the same question again")
+
+
+def retry_last() -> None:
+    chat = st.session_state.chat
+    if len(chat) >= 2 and chat[-2][0] == "user":
+        st.session_state.chat = chat[:-2]
+        get_agent().forget_last_turn()
+        st.session_state.pending_msg = chat[-2][1]  # answered again on this rerun, in place
+
+
+def render_turn(turn, key: str, retry: bool = False) -> None:
     if turn.refused:
         st.warning("The agent refused this request (logged in the audit trail).")
     st.markdown(reply_markdown(turn.reply))
@@ -592,10 +643,18 @@ def render_turn(turn, key: str) -> None:
     with session_scope() as s:
         refs = find_invoice_refs(s, named)
     invoice_links(refs, key)
+    page_links(turn.reply, key)
     with st.expander(f"What the agent did ({len(turn.steps)} steps)", expanded=False):
         st.caption("The rules check every step first: allowed steps run, risky ones wait for a person's "
                    "approval, forbidden ones are blocked.")
         render_steps(turn.steps)
+    reply_actions(turn.reply, key, retry)
+
+
+def user_bubble(text: str, n) -> None:
+    """The person's message, on the right like in a chat app (the key is the CSS hook)."""
+    with st.container(key=f"user-msg-{n}"), st.chat_message("user", avatar=":material/person:"):
+        st.markdown(safe_text(text))
 
 
 def page_chat() -> None:
@@ -616,6 +675,9 @@ def page_chat() -> None:
         balance = db.account_balance_cents(s, as_of=db.get_today(s))
         pending = len(executor.pending_approvals(s))
     msg = None
+    # A sent message is answered on the next run, inside the transcript (your message, then "Thinking..."
+    # under it), with the input disabled meanwhile so a second click cannot send it twice.
+    pending = st.session_state.pop("pending_msg", None)
     with st.container(key="copilot-layout"):
         conversation, context = st.columns([3, 1], gap="large")
         with conversation, st.container(key="conversation"):
@@ -624,7 +686,7 @@ def page_chat() -> None:
             if st.session_state.brief is not None:
                 with st.chat_message("assistant", avatar=":material/account_balance:"):
                     render_turn(st.session_state.brief, "brief")
-            elif not st.session_state.chat:
+            elif not st.session_state.chat:  # stays while the first answer is on its way, like a greeting
                 with st.container(key="copilot-welcome"):
                     st.markdown('<div class="assistant-label"><span class="assistant-mark">r.</span> Runway '
                                 '<span>Finance copilot</span></div>', unsafe_allow_html=True)
@@ -643,20 +705,30 @@ def page_chat() -> None:
                                 '<p>Runway reviews cash, follows up on overdue invoices and prepares proposals. '
                                 'Actions above its limits wait for human approval.</p></div>', unsafe_allow_html=True)
             for n, (role, content, turn) in enumerate(st.session_state.chat):
-                with st.chat_message(role, avatar=":material/account_balance:" if role == "assistant" else ":material/person:"):
-                    if turn is None:
-                        st.markdown(safe_text(content))
-                    else:
-                        render_turn(turn, f"chat{n}")
+                if turn is None:
+                    user_bubble(content, n)
+                else:
+                    with st.chat_message("assistant", avatar=":material/account_balance:"):
+                        render_turn(turn, f"chat{n}", retry=n == len(st.session_state.chat) - 1 and not pending)
+            thinking = st.container()  # the turn being answered goes here, above the input
             with st.container(key="prompt-actions"):
                 a, b = st.columns(2)
-                if a.button("Explain the shortfall", key="prompt_shortfall", width="stretch"):
+                if a.button("Explain the shortfall", key="prompt_shortfall", width="stretch", disabled=bool(pending)):
                     msg = "Explain the cash forecast and the shortfall weeks."
-                if b.button("Compare financing", key="prompt_financing", width="stretch"):
+                if b.button("Compare financing", key="prompt_financing", width="stretch", disabled=bool(pending)):
                     msg = "Compare financing options for the forecast cash shortfall."
-            typed = st.chat_input("Ask about cash, invoices or your next move...", key="copilot_input")
+            typed = st.chat_input("Ask about cash, invoices or your next move...", key="copilot_input",
+                                  disabled=bool(pending))
             msg = typed or msg or st.session_state.pop("queued_msg", None)
             st.caption("Forecasts are estimates. Review proposals before approving.")
+            if pending:
+                with thinking:
+                    user_bubble(pending, "pending")
+                    with st.chat_message("assistant", avatar=":material/account_balance:"):
+                        with st.spinner("Thinking..."):
+                            turn = get_agent().chat(pending, actor=st.session_state.role)
+                st.session_state.chat += [("user", pending, None), ("assistant", turn.reply, turn)]
+                st.rerun()
         with context, st.container(key="cash-context"):
             st.markdown('<div class="context-heading" role="heading" aria-level="2">Cash at a glance <span>13 weeks</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="context-balance"><span>Current bank balance</span>'
@@ -675,13 +747,8 @@ def page_chat() -> None:
             st.metric("Awaiting approval", pending)
             st.button("Review proposed actions", on_click=navigate, args=("Approval queue",), width="stretch")
             st.caption("The agent proposes. Rules and humans decide.")
-    if msg and not auth.require_login("chat with the agent"):
-        msg = None
-    if msg:
-        st.session_state.chat.append(("user", msg, None))
-        with st.spinner("Thinking..."):
-            turn = get_agent().chat(msg, actor=st.session_state.role)
-        st.session_state.chat.append(("assistant", turn.reply, turn))
+    if msg and auth.require_login("chat with the agent"):
+        st.session_state.pending_msg = msg
         st.rerun()
 
 
@@ -911,9 +978,6 @@ def page_approvals() -> None:
     def group(r) -> str:
         return {"pending": "Waiting", "executing": "Waiting", "executed": "Done"}.get(r["status"], "Not run")
 
-    def signed_by(r) -> str:
-        return ", ".join(g["role"] + (" (signed)" if "signature" in g else "") for g in r["given"])
-
     if done := st.session_state.pop("apr_done", None):
         st.success(done)
     if not reqs:
@@ -932,9 +996,8 @@ def page_approvals() -> None:
                 st.caption("Click a row to open it below.")
                 # oldest waiting request first, like a queue
                 rid = pick_table("apr", pd.DataFrame([{
-                    "ID": r["id"], "Action": action_title(r["tool"]), "Status": REQUEST_STATUSES.get(r["status"], r["status"]),
-                    "Detail": r["summary"][0] if r["summary"] else "", "Needs": " and ".join(r["required"]),
-                    "Approved by": signed_by(r) or "-", "Requested": when(r["created"]), "Decided": when(r["decided"]),
+                    "ID": r["id"], "What": action_title(r["tool"]), "Where it stands": story(r, role)[0],
+                    "Detail": r["summary"][0] if r["summary"] else "", "Requested": when(r["created"]),
                 } for r in rows]), ids, next((r["id"] for r in reversed(rows) if r["status"] == "pending"), None))
         if rows:
             with card, st.container(border=True, key="apr-card"):
@@ -972,6 +1035,51 @@ def team_section(r: dict, can_act: bool) -> list[dict]:
     return [v for v in r["votes"] if v["verdict"] == "reject"]
 
 
+def story(r: dict, role: str | None = None) -> tuple[str, list[tuple[str, str, str]]]:
+    """Where a request stands, in one line, and its steps as (icon, text, state) from preparation to result."""
+    approved = {g["role"]: g for g in r["given"]}
+    res, status = r["result"], r["status"]
+    by = res.get("rejected_by")
+    steps = [("📝", f"Agent prepared it · {when(r['created'])}", "done")]
+    for need in r["required"]:
+        who = need.capitalize()
+        if need in approved:
+            steps.append(("✅", f"{who} approved" + (" (signed)" if "signature" in approved[need] else ""), "done"))
+        elif status == "pending":
+            steps.append(("👉", f"{who}: your turn", "now") if need == role else ("⏳", f"{who}: waiting", "now"))
+        elif by == need:
+            steps.append(("❌", f"{who} rejected it · {when(r['decided'])}", "no"))
+        else:
+            steps.append(("➖", f"{who}: no longer needed", "skip"))
+    missing = [n for n in r["required"] if n not in approved]
+    outcome = {
+        "pending": ("🏁", "Runs as soon as everyone above approves", "next"),
+        "executing": ("⚙️", "Running now", "now"),
+        "executed": ("🎉", f"Done · {when(r['decided'])}", "done"),
+        "failed": ("⚠️", f"Approved, but it failed: {res.get('reason') or 'see the audit log'}", "no"),
+        "expired": ("⌛", "Expired: nobody decided within 7 days", "no"),
+        "withdrawn": ("↩️", f"Withdrawn by the agent: {res.get('reason', '')}", "skip"),
+        "rejected": (("🚫", f"Not run: rejected by {by}", "no") if by else
+                     ("🛑", f"Blocked by the rules when it was approved: {res.get('denied', '')}", "no")),
+    }.get(status, ("•", REQUEST_STATUSES.get(status, status), "skip"))
+    headline = {
+        "pending": "⏳ Waiting for " + " and ".join(missing) if missing else "⏳ Approved, waiting to run",
+        "executing": "⚙️ Running",
+        "executed": "✅ Done" + (f" · approved by {' + '.join(approved)}" if approved else ""),
+        "failed": "⚠️ Approved, but failed",
+        "expired": "⌛ Expired, nobody decided",
+        "withdrawn": "↩️ Withdrawn by the agent",
+        "rejected": f"❌ Rejected by {by}" if by else "🛑 Blocked by the rules",
+    }.get(status, status)
+    return headline, steps + [outcome]
+
+
+def story_html(r: dict, role: str | None) -> str:
+    _, steps = story(r, role)
+    return '<ol class="story">' + "".join(f'<li class="{state}"><span>{icon}</span>{esc(text)}</li>'
+                                          for icon, text, state in steps) + "</ol>"
+
+
 def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
     rid = r["id"]
     waiting = r["status"] == "pending"
@@ -981,23 +1089,19 @@ def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
     for line in r["summary"]:
         st.markdown(safe_text(line))
     invoice_links(r["invoices"], f"apr_{rid}", remind=False)
-    st.markdown("**Why it needs approval**")
-    st.write(safe_text(r["reason"]))
-    approved = {g["role"]: g for g in r["given"]}
-    st.markdown("**Who must approve**")
-    for need in r["required"]:
-        g = approved.get(need)
-        st.markdown(f":material/check_circle: {need.capitalize()} approved" + (" (signed)" if g and "signature" in g else "")
-                    if g else f":material/radio_button_unchecked: {need.capitalize()}: waiting")
+    st.caption(f"Why it needs a person: {safe_text(r['reason'])}")
+    st.markdown(story_html(r, role), unsafe_allow_html=True)
     if not waiting:
-        outcome = r["result"].get("denied") or r["result"].get("error")
-        st.caption(f"{REQUEST_STATUSES.get(r['status'], r['status'])} {when(r['decided'])}"
-                   + (f": {safe_text(outcome)}" if outcome else ""))
         return
     objected = team_section(r, can_act)
+    approved = {g["role"] for g in r["given"]}
     missing = [n for n in r["required"] if n not in approved]
     if role in approved and missing:  # a second click would add nothing
-        st.info(f"You approved this. Waiting for the {' and '.join(missing)}, signed in from a different browser session.")
+        st.info(f"You approved this. Now the {' and '.join(missing)} must approve, signed in from another browser.")
+    elif role in missing:
+        st.success(f"👉 Your turn, {role}: approve or reject below.")
+    elif not can_act:
+        st.caption("Sign in as " + " or ".join(missing) + " to decide.")
     read = not objected or st.checkbox("I read the review team's objections and still want to approve",
                                        key=f"ack_{rid}", disabled=not can_act)
     a, b = st.columns(2)
@@ -1012,9 +1116,10 @@ def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
         if res.status == "ok":
             st.session_state.update(apr_next=True, apr_done=f"{rid} approved and carried out.")
             st.rerun()
-        elif res.status == "needs_approval":
-            st.success("Your approval is recorded and signed with your role's key. Waiting for "
-                       "the other role (it must be signed in from a different browser session).")
+        elif res.status == "needs_approval":  # shown at the top after the card redraws with the new step
+            st.session_state.apr_done = ("Your approval is recorded and signed with your role's key. Waiting for "
+                                         "the other role (it must be signed in from a different browser session).")
+            st.rerun()
         elif res.reason.endswith("; the request stays pending"):  # e.g. kill switch on
             st.warning(f"Your approval is recorded, but the action did not run: "
                        f"{res.reason.removesuffix('; the request stays pending')}. "

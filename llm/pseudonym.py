@@ -70,10 +70,15 @@ def _entity(m: re.Match[str]) -> str:
     return f"{m.group(1)}_{m.group(2)}"
 
 
+def find_ibans(text: str) -> list[str]:
+    """IBANs in `text` (any case or spacing) that pass the mod-97 check, as written."""
+    # ponytail: a random code that happens to pass the checksum (about 1 in 97 IBAN-shaped strings) counts too
+    return [m.group(0) for m in _IBAN_LOOSE_RE.finditer(text) if _iban_ok(_norm_iban(m.group(0)))]
+
+
 def contains_iban(text: str) -> bool:
     """True when `text` holds an IBAN in any case or spacing that passes the mod-97 check."""
-    # ponytail: a random code that happens to pass the checksum (about 1 in 97 IBAN-shaped strings) counts too
-    return any(_iban_ok(_norm_iban(m.group(0))) for m in _IBAN_LOOSE_RE.finditer(text))
+    return bool(find_ibans(text))
 
 
 class Pseudonymizer:

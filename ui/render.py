@@ -169,7 +169,7 @@ OUTCOMES = {"EXECUTED": "Done", "HUMAN_ACTION": "Done by a person", "APPROVED": 
 REQUEST_STATUSES = {"pending": "Waiting", "executing": "Running", "executed": "Done", "rejected": "Rejected",
                     "failed": "Failed", "expired": "Expired", "withdrawn": "Withdrawn"}
 _NOISE = {"approver_id", "public_key", "signature", "session", "sha256", "previous", "previous_head",
-          "previous_count", "previous_chain_ok", "archive", "message"}  # in the detail card, not the summary
+          "previous_count", "previous_chain_ok", "archive", "message", "idempotency_key"}  # detail card only
 
 
 def action_title(action: str) -> str:

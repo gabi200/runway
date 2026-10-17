@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from agent.documents import scan_document
-from agent.prompts import REFUSAL_TEXT, is_bypass_attempt
+from agent.prompts import APP_PAGES, REFUSAL_TEXT, is_bypass_attempt
 from common.config import load_country_pack
 
 _DOC_BLOCK = re.compile(r'<<<UNTRUSTED_DOCUMENT id=(\S+) flagged=(yes|no) reasons=("(?:[^"\\]|\\.)*")[^\n]*\n'
@@ -22,6 +22,7 @@ _NEGATED = re.compile(r"\b(don'?t|do not|never|without|not)\b[^.?!]{0,40}"
                       r"\b(send|remind|chase|move|resched|postpone|delay|apply|prepare|change|act)")
 _QUESTION = re.compile(r"^\s*(should|shall|do|does|would|is|are|what|which|how|when|why|who)\b[^?]*\?")
 _PLAN = re.compile(r"\b(plan|brief|monday|go ahead|do it)\b")
+_WHERE = re.compile(r"\bwhere\b|\bhow (?:do|can|should) (?:i|we)\b|\bwhich (?:page|tab|screen)\b|\bgo to\b")
 _ALL = re.compile(r"\b(all|both|every|each)\b|\b(customers|invoices|reminders)\b")
 _ASKED_WHICH = "Which one should I remind"
 _AR_ID = re.compile(r"\bar-\d+\b")
@@ -72,8 +73,17 @@ class OfflinePlanner:
         if not wants and _ASKED_WHICH in prev and _AR_ID.search(low):
             wants = {"overdue", "reminders"}  # the user answered the question with an invoice id
         if not wants:
-            return self._say(HELP)
+            return self._say(self._guide(low) or HELP)
         return self._plan(wants, done, low, named=[a.upper() for a in _AR_ID.findall(low)])
+
+    @staticmethod
+    def _guide(low: str) -> str | None:
+        """'Where do I verify a payee?': the page (from APP_PAGES) whose words the question uses most."""
+        if not _WHERE.search(low):
+            return None
+        hits = [(sum(w in low for w in words), page, what) for page, what, words in APP_PAGES]
+        n, page, what = max(hits, key=lambda h: h[0])
+        return f"Go to **{page}** in the left sidebar: {what}." if n else None
 
     # -- plumbing ----------------------------------------------------------
     @staticmethod

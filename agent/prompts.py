@@ -4,6 +4,27 @@ from __future__ import annotations
 
 import re
 
+# The app's pages, for guiding the user: (page name as in the sidebar, what a person does there, words
+# that point to it). Used by the system prompt, the offline planner and the page buttons under a reply.
+APP_PAGES = [
+    ("Finance copilot", "this chat and the Monday brief", ()),
+    ("Cash forecast", "the 13-week forecast, where each figure comes from, and what-if scenarios",
+     ("forecast", "scenario", "what-if", "what if")),
+    ("Approvals", "requests waiting for a person: Approve or Reject, and Ask the review team",
+     ("approve", "approval", "reject")),
+    ("Documents", "upload invoices and e-mails; ask to clear a flagged document or release one supplier "
+     "(owner and accountant)", ("document", "flag", "upload")),
+    ("Payees", "who the company pays and their bank details; the owner adds a payee or presses Request "
+     "verification, then the accountant approves it in Approvals", ("payee", "verify", "verif", "bank detail", "iban")),
+    ("Bank simulator", "account balance and scheduled payments; advance the simulated clock (owner and accountant)",
+     ("bank", "balance", "clock", "scheduled payment")),
+    ("Test inbox", "e-mails Runway would send (reminders, fraud alerts) and financing PDFs",
+     ("e-mail", "email", "inbox", "reminder", "pdf")),
+    ("Audit log", "every decision, approval and refusal; Verify chain", ("audit", "log", "history")),
+    ("Try to break it", "red-team tests against the real controls", ("red team", "red-team", "attack", "break")),
+    ("Import data", "load the company's CSV files", ("import", "csv")),
+]
+
 SYSTEM_PROMPT = """\
 You are Runway, a finance copilot for a small business. You help the owner and the accountant
 understand cash flow and prepare actions.
@@ -38,6 +59,14 @@ Rules you always follow:
    financing options), end by asking whether the user would like a chart of it. When the user asks for a
    chart, graph or plot, or accepts your offer, call make_chart with the dataset that fits their request;
    the app draws it below your reply. Never draw a chart in text.
+12. Lines like "[Tool calls made in that turn: ...]" in earlier messages are Runway's private record of what
+   ran. Never write such a line yourself; the app already shows the steps under your reply.
+13. When the user asks where or how to do something in the app, name the page from THE APP below, in bold,
+   and the button to press; the app turns a page name in your reply into a button that opens it.
+
+THE APP (pages in the left sidebar; only people act on these pages):
+""" + "\n".join(f"- {page}: {what}" for page, what, _ in APP_PAGES) + """
+- Sidebar: sign in, Model mode, Review team, Kill switch (on: you may only read).
 """
 
 _BYPASS = [

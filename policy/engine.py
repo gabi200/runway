@@ -57,10 +57,11 @@ _SCHEMAS: dict[str, tuple[str, dict[str, str]]] = {
 }
 
 
-_SCENARIO_SCHEMAS = {
-    "delay_customer": ("type counterparty_id days", dict(type=STRING, counterparty_id=STRING, days=POSITIVE_INTEGER)),
+_SCENARIO_SCHEMAS = {  # a label is optional everywhere: a model that names its change is not refused for it
+    "delay_customer": ("type counterparty_id days", dict(type=STRING, counterparty_id=STRING, days=POSITIVE_INTEGER, label=STRING)),
     "inflow": ("type amount_cents week label", dict(type=STRING, amount_cents=POSITIVE_INTEGER, week=POSITIVE_INTEGER, label=STRING)),
-    "move_payment": ("type payment_id new_date", dict(type=STRING, payment_id=STRING, new_date=DATE)),
+    "move_payment": ("type payment_id new_date", dict(type=STRING, payment_id=STRING, new_date=DATE, label=STRING)),
+    "move_invoice": ("type invoice_id new_date", dict(type=STRING, invoice_id=STRING, new_date=DATE, label=STRING)),
 }
 
 _ENUMS = {"status": {"open", "paid", "all"},
@@ -203,8 +204,10 @@ def evaluate(session: Session, tool_name: str, args: dict, actor: str = "agent",
         reason = "Tool allowed by policy"
         if tool_name == "schedule_payment":
             payee = session.get(Payee, args["payee_id"], populate_existing=True)
-            if payee is None or not payee.verified:
-                return Decision("DENY", "Payee is unknown or unverified", tier)
+            if payee is None:  # two reasons, so the model fixes a wrong id instead of sending the user to verify
+                return Decision("DENY", "Unknown payee id: use the payee_id listed with the supplier's invoice", tier)
+            if not payee.verified:
+                return Decision("DENY", "Payee is not verified yet: a person verifies it on the Payees page", tier)
             account = session.get(Account, "ACC-MAIN", populate_existing=True)
             currency = args.get("currency", account.currency if account else None)
             if account is None or currency != account.currency:

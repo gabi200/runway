@@ -82,7 +82,9 @@ def explain_figure(session, week: int, field: str = "closing_cents",
 - Scenario changes (dicts):
   `{"type":"delay_customer","counterparty_id":..,"days":30}`,
   `{"type":"inflow","amount_cents":..,"week":5,"label":"financing"}`,
-  `{"type":"move_payment","payment_id":..,"new_date":"YYYY-MM-DD"}`.
+  `{"type":"move_payment","payment_id":..,"new_date":"YYYY-MM-DD"}` (a scheduled payment),
+  `{"type":"move_invoice","invoice_id":..,"new_date":"YYYY-MM-DD"}` (the unpaid rest of an open supplier
+  invoice, paid on that day instead of its due date). Every change may carry an optional `"label"`.
 
 ## 3. Mock bank — `bank/app.py` (FastAPI), `bank/service.py`, `bank/client.py`
 Endpoints (all JSON; money as `amount_cents` + `currency`):

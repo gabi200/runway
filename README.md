@@ -59,6 +59,12 @@ Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, **Gemini** or *
 - **Gemini (Vertex AI)**: add `GEMINI_API_KEY=your-key` and `GOOGLE_CLOUD_PROJECT=your-project-id-or-number` to your existing `.env` and restart Runway, then choose **Gemini**. The key is a Google Cloud API key allowed to call the Vertex AI API in that project. `config/gemini.yaml` sets `google/gemini-3.8-flash` and Vertex AI's OpenAI-compatible endpoint; the key is sent in the `x-goog-api-key` header, because Vertex rejects it as a Bearer token. Gemini uses the same pseudonymisation, tool checks and approval gates. Both keys can coexist in `.env`; never commit that file.
 - **Ollama (local)**: install Ollama (https://ollama.com), run `ollama serve` and pull a model that supports tool calls, for example `ollama pull llama3.1`, then choose **Ollama (local)**. No key is needed and nothing leaves the machine. `config/ollama.yaml` sets the address (`http://localhost:11434/v1`, Ollama's OpenAI-compatible API) and the model; the same tools, pseudonymisation, rules and approvals apply. If Ollama is not running, the turn falls back to the offline planner and says so.
 
+### Chatting with the copilot
+
+The conversation reads like a chat app: your message on the right, "Thinking..." right under it, then the answer, with the input disabled meanwhile so nothing is sent twice. Under each answer: a button per invoice it names, **Open <page>** for every app page it names (the copilot knows the pages and says where to go, for example **Payees** to verify a payee), **Copy** (the whole answer as plain text, and each id, invoice number, IBAN and name in it) and, on the latest answer, **Try again**, which asks the same question afresh through the same rules. "What the agent did" lists each step in words: done, waiting for approval or blocked, and why.
+
+On **Approvals**, each request tells its story: who prepared it, who approved, whose turn it is, who rejected it, and what happened in the end; the table says where each one stands ("Waiting for accountant", "Rejected by owner", "Done").
+
 ### Review team: several agents check a decision
 
 Open **Review team** in the sidebar and tick the agents that should check approval requests: the offline rules reviewer (it re-runs the rules engine as if every required person had approved), DeepSeek, Gemini and any local Ollama model listed in `config/review_team.yaml` (add your own). On an approval card, **Ask the review team** asks every ticked agent at once; each answers approve, concerns or reject with one sentence, shown on the card and audited as `team_review`. The team advises and never approves: the executor and the two-person rule do not read its verdicts. If any agent rejects, Approve also needs the tick "I read the review team's objections", audited as `team_objection_overridden`. Remote reviewers see placeholders instead of names, like the chat; local ones see the real text. Changing the team needs sign-in and is audited (`set_review_team`).
@@ -120,7 +126,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 681 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 690 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A10 and the red-team console
 .venv/bin/python scripts/run_tasks.py --mode offline   # judge task pack; --mode deepseek for a live run
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/

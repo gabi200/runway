@@ -27,7 +27,8 @@ _DOC_ID_RE = re.compile(r"DOC-\d+")
 _CLAIM_RE = re.compile(r"\bI(?:['’]ve| have)?\s+(?:just\s+|already\s+|now\s+)?(flagged|sent|scheduled|rescheduled|moved|prepared)\b", re.I)
 _CLAIM_TOOLS = {"flagged": {"flag_document"}, "sent": {"send_payment_reminder"},
                 "scheduled": {"schedule_payment", "reschedule_payment"}, "rescheduled": {"reschedule_payment"},
-                "moved": {"reschedule_payment"}, "prepared": {"prepare_financing_application", "draft_email"}}
+                "moved": {"reschedule_payment"},  # a payment request waiting for approval is "prepared" too
+                "prepared": {"prepare_financing_application", "draft_email", "schedule_payment", "reschedule_payment"}}
 
 
 def unbacked_claims(reply: str, steps: list[dict]) -> list[str]:
@@ -68,6 +69,7 @@ def steps_note(steps: list[dict]) -> str:
 
 
 WITHHELD = "[withheld]"
+_NOTE_RE = re.compile(r"[ \t]*\[Tool calls made in (?:that|this) turn:[^\n]*\n*")
 
 
 def _shown(messages: list[dict]) -> set[str]:
@@ -164,6 +166,11 @@ class Agent:
                          "DENY", "Request to bypass rules/limits/payee controls; no such tool exists")
 
     # -- public API --------------------------------------------------------
+    def forget_last_turn(self) -> None:
+        """Drop the latest turn from the conversation memory, so Try again asks it afresh."""
+        if self._turns:
+            self._turns.pop()
+
     def chat(self, user_message: str, actor: str = "owner") -> AgentTurn:
         """Run one conversational turn."""
         with self.session_factory() as session:
@@ -216,7 +223,8 @@ class Agent:
             calls = resp.get("tool_calls") or []
             shown = _shown(messages)
             if not calls:
-                reply = pseudo.unmask(resp.get("content") or "", shown, WITHHELD)
+                # a model that copies the history's private note format must not show it to the user
+                reply = _NOTE_RE.sub("", pseudo.unmask(resp.get("content") or "", shown, WITHHELD)).strip()
                 break
             raw.append({  # the model's own output is already in placeholders
                 "role": "assistant", "content": resp.get("content"),

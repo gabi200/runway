@@ -22,7 +22,7 @@ from agent import outbox
 from agent.charts import DATASETS, build_chart
 from agent.financing import compare_financing, ledger_money
 from common.config import load_country_pack
-from common.db import (Account, ApprovalRequest, Document, Invoice, OutboxEmail, Transaction,
+from common.db import (Account, ApprovalRequest, Document, Invoice, OutboxEmail, Payee, Transaction,
                        account_balance_cents, get_today, utcnow)
 
 
@@ -51,9 +51,12 @@ _S = {"type": "string"}
 _I = {"type": "integer"}
 _D = {"type": "string", "description": "ISO date YYYY-MM-DD"}
 _SCENARIO = {"type": "array", "description": "Scenario changes.", "items": {"type": "object", "properties": {
-    "type": {"type": "string", "enum": ["delay_customer", "inflow", "move_payment"]},
+    "type": {"type": "string", "enum": ["delay_customer", "inflow", "move_payment", "move_invoice"],
+             "description": "delay_customer: a customer pays `days` later; inflow: extra money in a week; "
+                            "move_payment: a scheduled payment (PAY-...) on new_date; move_invoice: pay an "
+                            "unpaid supplier invoice (invoice_id from list_payables) on new_date"},
     "counterparty_id": _S, "days": _I, "amount_cents": _I, "week": _I, "label": _S,
-    "payment_id": _S, "new_date": _D}, "required": ["type"]}}
+    "payment_id": _S, "invoice_id": _S, "new_date": _D}, "required": ["type"]}}
 
 TOOL_SPECS: list[dict] = [
     _fn("get_balances", "Current balance of each bank account (integer cents).", {}),
@@ -186,12 +189,16 @@ def _invoices(session: Session, direction: str, args: dict) -> list[dict]:
     if args.get("counterparty_id"):
         q = q.where(Invoice.counterparty_id == args["counterparty_id"])
     today = get_today(session)
+    # a supplier's payee id is what schedule_payment needs; without it the model guessed the supplier id
+    payees = {p.counterparty_id: p for p in session.exec(select(Payee))} if direction == "AP" else {}
     out = []
     for i in session.exec(q.order_by(Invoice.due_date)):
         overdue = i.status == "open" and i.due_date < today
         if args.get("overdue_only") and not overdue:
             continue
-        out.append({**_row(i), "overdue": overdue, "days_overdue": (today - i.due_date).days if overdue else 0})
+        payee = payees.get(i.counterparty_id)
+        out.append({**_row(i), "overdue": overdue, "days_overdue": (today - i.due_date).days if overdue else 0,
+                    **({"payee_id": payee.id, "payee_verified": payee.verified} if payee else {})})
     return out
 
 
