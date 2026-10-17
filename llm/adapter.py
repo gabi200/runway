@@ -1,4 +1,4 @@
-"""OpenAI-compatible LLM adapter (DeepSeek by default; Qwen/OpenAI by editing config/llm.yaml)."""
+"""OpenAI-compatible LLM adapter (DeepSeek by default; Gemini via Vertex; local models via Ollama)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class LLMAdapter:
         self.base_url = os.environ.get("RUNWAY_LLM_BASE_URL") or self.config["base_url"]
         if self.config.get("project_env"):
             self.base_url = self.base_url.format(project=os.environ.get(self.config["project_env"], "").strip())
-        self.api_key = os.environ.get(self.config["api_key_env"], "")
+        self.api_key = os.environ.get(self.config.get("api_key_env", ""), "") or self.config.get("api_key", "")
         self._client = client
 
     @property
@@ -71,11 +71,11 @@ def get_adapter(mode: str | None = None) -> "LLMAdapter | Any":
     """Select a provider per session or from RUNWAY_LLM; unconfigured defaults run offline."""
     cfg = load_yaml("llm.yaml")
     selected = (mode or os.environ.get("RUNWAY_LLM") or cfg["provider"]).lower()
-    if selected == "gemini":
-        cfg = load_yaml("gemini.yaml")
+    if selected in ("gemini", "ollama"):
+        cfg = load_yaml(f"{selected}.yaml")
     elif selected not in {"offline", cfg["provider"]}:
         raise ValueError(f"Unknown LLM mode: {selected}")
-    required = [cfg["api_key_env"]] + ([cfg["project_env"]] if cfg.get("project_env") else [])
+    required = [cfg[k] for k in ("api_key_env", "project_env") if cfg.get(k)]  # Ollama needs neither
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if selected != "offline" and missing:
         if mode or os.environ.get("RUNWAY_LLM"):

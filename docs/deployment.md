@@ -122,7 +122,7 @@ Complete list, found by searching the code for `os.environ` and `os.getenv`:
 | `DEEPSEEK_API_KEY` | unset | `llm/adapter.py:get_adapter` | API key. The variable name comes from `api_key_env` in `config/llm.yaml`. If unset, the offline planner is used. |
 | `GEMINI_API_KEY` | unset | `llm/adapter.py:get_adapter` | Google Cloud API key for Gemini mode (`config/gemini.yaml`), sent in the `x-goog-api-key` header. |
 | `GOOGLE_CLOUD_PROJECT` | unset | `llm/adapter.py` | Project id or number filled into the Vertex AI URL in `config/gemini.yaml` (`project_env`). Gemini mode requires it. |
-| `RUNWAY_LLM` | unset | `llm/adapter.py:get_adapter` | Startup mode: `offline`, `deepseek`, or `gemini`. Sidebar selection overrides it per session. Explicit online modes require their key. |
+| `RUNWAY_LLM` | unset | `llm/adapter.py:get_adapter` | Startup mode: `offline`, `deepseek`, `gemini` or `ollama`. Sidebar selection overrides it per session. Explicit online modes require their key. |
 | `RUNWAY_LLM_MODEL` | `model` in `config/llm.yaml` | `llm/adapter.py` | Override the model id. |
 | `RUNWAY_LLM_BASE_URL` | `base_url` in `config/llm.yaml` | `llm/adapter.py` | Override the API base URL. |
 | `RUNWAY_LLM_THINKING` | unset | `llm/adapter.py:chat` | Set to `on` to stop sending `thinking: disabled` to DeepSeek. Leave it unset: the adapter does not echo `reasoning_content` between tool turns. |
@@ -176,6 +176,10 @@ cp .env.example .env                  # then set DEEPSEEK_API_KEY=sk-... in .env
 Tests never call the API.
 
 **Gemini (Vertex AI).** Add `GEMINI_API_KEY=your-key` and `GOOGLE_CLOUD_PROJECT=your-project-id-or-number` to the existing `.env` (keep `DEEPSEEK_API_KEY` too), restart Runway and select **Gemini**. The key is a Google Cloud API key that may call the Vertex AI API in that project. To start in Gemini mode, set `RUNWAY_LLM=gemini` in `.env` or the process environment. `config/gemini.yaml` uses `google/gemini-3.8-flash` via Vertex AI's OpenAI-compatible endpoint (`https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/`), using the installed OpenAI SDK. Vertex accepts API keys only in the `x-goog-api-key` header and rejects them as a Bearer token, so `api_key_header` makes the adapter send that header and drop `Authorization`. Provider tool-call metadata is retained across tool turns. Both online modes use the same pseudonymisation and policy checks. API integration tests use fake responses; a live key and successful chat are still needed to confirm account access and quotas.
+
+**Ollama (local).** Install Ollama, start it (`ollama serve`) and pull a model with tool calling, e.g. `ollama pull llama3.1` (about 5 GB; `qwen2.5` also works). Select **Ollama (local)**, or set `RUNWAY_LLM=ollama`. `config/ollama.yaml` holds the address `http://localhost:11434/v1`, the model, a 60 s timeout for slow CPUs and `local: true`; Ollama needs no key (the SDK gets the placeholder `ollama`). A stopped server fails at once and the turn falls back to the offline planner. To use another machine on your network, change `base_url`. Local models are smaller than the hosted ones: expect more replies that need the rules engine's corrections, never fewer checks.
+
+**Review team.** `config/review_team.yaml` lists the agents that can review approval requests (`provider`: `offline`, `deepseek`, `gemini` or `ollama`, plus `model` for Ollama). Add an entry per Ollama model you pulled. Which ones sit on the team is a company setting (`review_team` in the settings table), changed in the sidebar by a signed-in role and audited. Verdicts are stored per request (`team_review.<id>`) and audited as `team_review`.
 
 ## 5. Switching the LLM provider (one config change)
 

@@ -1,0 +1,22 @@
+# The review team: agents that read an approval request and give a verdict before a human decides.
+# They advise and never approve: a "reject" only means the human must tick "I read the objections".
+# Tick who sits on the team in the sidebar. Add any Ollama model you pulled (`ollama pull <model>`).
+reviewers:
+  - id: rules
+    name: Rules reviewer (offline)
+    provider: offline      # re-runs the rules engine as if every required person had approved
+  - id: deepseek
+    name: DeepSeek
+    provider: deepseek     # needs DEEPSEEK_API_KEY
+  - id: gemini
+    name: Gemini
+    provider: gemini       # needs GEMINI_API_KEY and GOOGLE_CLOUD_PROJECT
+  - id: llama
+    name: Llama 3.1 (local)
+    provider: ollama
+    model: llama3.1
+  - id: qwen
+    name: Qwen 2.5 (local)
+    provider: ollama
+    model: qwen2.5
+default_team: [rules]

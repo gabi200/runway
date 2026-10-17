@@ -50,13 +50,18 @@ Without `RUNWAY_BANK_URL` the bank runs in-process, which is enough for the demo
 - **Reminder buttons.** For an overdue customer invoice, **Remind: <number>** (or **Send reminder via copilot** in the details) asks the copilot to send the reminder. The request goes through the agent and the rules engine like any other: cooldown, daily limit and overdue checks still apply, and the result appears in the chat.
 - **Charts.** After a reply with a table or a series of figures, the copilot asks whether you want a chart. Say yes, or ask for a chart, graph or plot, and it calls the T1 tool `make_chart`. The figures are computed in Python from the ledger (`agent/charts.py`), not by the model, and the app draws the chart below the reply.
 
-### Offline, DeepSeek and Gemini modes
+### Offline, DeepSeek, Gemini and Ollama modes
 
-Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, or **Gemini**. The selection applies to chat, the Monday brief and chat injection tests in that browser session. Switching modes clears the conversation and displayed brief; saved actions and approvals remain in the database. `RUNWAY_LLM=offline|deepseek|gemini` sets the startup mode. With no explicit mode, DeepSeek is used if its key is set; otherwise the app starts offline. Selecting a provider without its key displays setup instructions.
+Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, **Gemini** or **Ollama (local)**. The selection applies to chat, the Monday brief and chat injection tests in that browser session. Switching modes clears the conversation and displayed brief; saved actions and approvals remain in the database. `RUNWAY_LLM=offline|deepseek|gemini|ollama` sets the startup mode. With no explicit mode, DeepSeek is used if its key is set; otherwise the app starts offline. Selecting a provider without its key displays setup instructions.
 
 - **Offline (default)**: with no API key, a deterministic planner (`llm/offline.py`) plays the language model and issues the real tool calls of the demo. No network needed. Force it with `RUNWAY_LLM=offline`.
 - **DeepSeek**: copy `.env.example` to `.env` and put the key after `DEEPSEEK_API_KEY=` (or export the variable; the environment wins over `.env`, which git ignores). Provider, base URL and model are in `config/llm.yaml`; any OpenAI-compatible provider works by editing that file. Names (known counterparties, people found in headers and signatures), e-mails and IBANs are replaced by placeholders before the API call; amounts, dates and invoice numbers are sent as they are.
 - **Gemini (Vertex AI)**: add `GEMINI_API_KEY=your-key` and `GOOGLE_CLOUD_PROJECT=your-project-id-or-number` to your existing `.env` and restart Runway, then choose **Gemini**. The key is a Google Cloud API key allowed to call the Vertex AI API in that project. `config/gemini.yaml` sets `google/gemini-3.8-flash` and Vertex AI's OpenAI-compatible endpoint; the key is sent in the `x-goog-api-key` header, because Vertex rejects it as a Bearer token. Gemini uses the same pseudonymisation, tool checks and approval gates. Both keys can coexist in `.env`; never commit that file.
+- **Ollama (local)**: install Ollama (https://ollama.com), run `ollama serve` and pull a model that supports tool calls, for example `ollama pull llama3.1`, then choose **Ollama (local)**. No key is needed and nothing leaves the machine. `config/ollama.yaml` sets the address (`http://localhost:11434/v1`, Ollama's OpenAI-compatible API) and the model; the same tools, pseudonymisation, rules and approvals apply. If Ollama is not running, the turn falls back to the offline planner and says so.
+
+### Review team: several agents check a decision
+
+Open **Review team** in the sidebar and tick the agents that should check approval requests: the offline rules reviewer (it re-runs the rules engine as if every required person had approved), DeepSeek, Gemini and any local Ollama model listed in `config/review_team.yaml` (add your own). On an approval card, **Ask the review team** asks every ticked agent at once; each answers approve, concerns or reject with one sentence, shown on the card and audited as `team_review`. The team advises and never approves: the executor and the two-person rule do not read its verdicts. If any agent rejects, Approve also needs the tick "I read the review team's objections", audited as `team_objection_overridden`. Remote reviewers see placeholders instead of names, like the chat; local ones see the real text. Changing the team needs sign-in and is audited (`set_review_team`).
 
 ### Environment variables
 
@@ -74,7 +79,7 @@ Choose **Model mode** in the sidebar: **Offline**, **DeepSeek**, or **Gemini**. 
 | `DEEPSEEK_API_KEY` | unset | LLM key (variable name set by `api_key_env` in `config/llm.yaml`) |
 | `GEMINI_API_KEY` | unset | Google Cloud API key for Gemini mode (Vertex AI) |
 | `GOOGLE_CLOUD_PROJECT` | unset | Google Cloud project id or number for Gemini mode |
-| `RUNWAY_LLM` | unset | Startup mode: `offline`, `deepseek`, or `gemini`; the sidebar overrides it per session |
+| `RUNWAY_LLM` | unset | Startup mode: `offline`, `deepseek`, `gemini` or `ollama`; the sidebar overrides it per session |
 | `RUNWAY_LLM_MODEL`, `RUNWAY_LLM_BASE_URL` | from `config/llm.yaml` | Override model and endpoint |
 | `RUNWAY_LLM_THINKING` | unset | `on` enables DeepSeek thinking mode (not recommended) |
 | `RUNWAY_SAMPLE_DIR` | `data/sample` | UI sample-data folder (generated CSVs and demo documents) |
@@ -115,7 +120,7 @@ The check fails if the request was changed after signing, a required role did no
 ## Tests
 
 ```bash
-.venv/bin/pytest                 # 671 tests (1 skips where symlinks are not allowed), no network
+.venv/bin/pytest                 # 681 tests (1 skips where symlinks are not allowed), no network
 .venv/bin/pytest tests/security  # attack scenarios A1 to A10 and the red-team console
 .venv/bin/python scripts/run_tasks.py --mode offline   # judge task pack; --mode deepseek for a live run
 .venv/bin/python scripts/run_demo.py   # replays the whole story and writes docs/execution_logs/

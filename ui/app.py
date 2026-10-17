@@ -29,6 +29,7 @@ from sqlmodel import select  # noqa: E402
 
 from agent import documents as docs_mod  # noqa: E402
 from agent import executor  # noqa: E402
+from agent import review_team  # noqa: E402
 from agent.invoices import find_invoice_refs, invoice_details, invoice_pdf  # noqa: E402
 from agent.orchestrator import Agent  # noqa: E402
 from audit import anchor  # noqa: E402
@@ -262,7 +263,7 @@ def controls() -> None:
     with sb.expander("Session & sign-in", expanded=not auth.signed_in()):
         sign_in_box(st)
     sb.markdown('<div class="panel-label">Agent</div>', unsafe_allow_html=True)
-    modes = list(dict.fromkeys(["offline", load_yaml("llm.yaml")["provider"], "gemini"]))
+    modes = list(dict.fromkeys(["offline", load_yaml("llm.yaml")["provider"], "gemini", "ollama"]))
     if "llm_mode" not in st.session_state:
         default_mode = os.environ.get("RUNWAY_LLM", "").lower()
         if default_mode in modes:
@@ -271,7 +272,7 @@ def controls() -> None:
             adapter = get_adapter()
             st.session_state.llm_mode = adapter.config["provider"] if hasattr(adapter, "config") else "offline"
     sb.selectbox("Model mode", modes, key="llm_mode",
-                 format_func=lambda mode: {"deepseek": "DeepSeek"}.get(mode, mode.capitalize()),
+                 format_func=lambda mode: {"deepseek": "DeepSeek", "ollama": "Ollama (local)"}.get(mode, mode.capitalize()),
                  on_change=on_llm_change, help="Changing modes starts a new conversation in this browser session.")
     try:
         get_adapter(st.session_state.llm_mode)
@@ -279,9 +280,13 @@ def controls() -> None:
     except ValueError as exc:
         st.session_state.llm_ready = False
         sb.warning(str(exc))
-    if st.session_state.llm_mode != "offline" and st.session_state.llm_ready:
+    if st.session_state.llm_mode == "ollama":
+        sb.caption("Local model through Ollama: nothing leaves this machine. Start it with `ollama serve`; "
+                   "if it is not running, the offline planner answers.")
+    elif st.session_state.llm_mode != "offline" and st.session_state.llm_ready:
         sb.caption("Live model: amounts, dates, invoice numbers and ids are sent to the provider. Names, "
                    "e-mail addresses and IBANs are replaced by placeholders first.")
+    team_box(sb)
     sb.toggle("Kill switch", key="kill", on_change=on_kill_toggle,
               help="ON = the agent may only run read-only (T0) tools. Every toggle is audited.")
     agent_on = not st.session_state.kill
@@ -309,6 +314,27 @@ def controls() -> None:
             st.rerun()
     sb.caption("The agent proposes; rules and humans decide.")
     sb.caption("Appearance: choose Light or Dark in the top-right menu.")
+
+def team_box(sb) -> None:
+    """Tick the agents that review approval requests; a shared, audited company setting."""
+    with session_scope() as s:
+        current = review_team.team(s)
+    with sb.expander(f"Review team ({len(current)})"):
+        st.caption("Agents that check each approval request before you decide. They advise; people approve.")
+        chosen = []
+        for r in review_team.reviewers():
+            on, why = r["id"] in current, review_team.unavailable(r)
+            # the key carries the stored state, so a change made in another session shows here
+            if st.checkbox(r["name"], value=on, key=f"team_{r['id']}_{int(on)}", help=why,
+                           disabled=not auth.signed_in() or (bool(why) and not on)):
+                chosen.append(r["id"])
+        if not auth.signed_in():
+            st.caption("Sign in to change the team.")
+        elif chosen != current:
+            with session_scope() as s:
+                review_team.set_team(s, chosen, st.session_state.role)
+            st.rerun()
+
 
 # --------------------------------------------------------------------------- #
 # 1. Onboarding
@@ -880,7 +906,7 @@ def page_approvals() -> None:
                 result=json.loads(r.result_json) if r.result_json else {},
                 # live lookups describe what would happen; once decided, the arguments say what was asked
                 summary=describe_approval(s, r.tool_name, args, pack) if r.id in pending else plain_args(args, pack),
-                invoices=approval_invoices(s, args))
+                invoices=approval_invoices(s, args), votes=review_team.votes(s, r.id))
 
     def group(r) -> str:
         return {"pending": "Waiting", "executing": "Waiting", "executed": "Done"}.get(r["status"], "Not run")
@@ -922,6 +948,30 @@ def page_approvals() -> None:
         st.markdown("**A record of every decision.** Approvals, refusals and actions remain in the audit trail.")
 
 
+VERDICT_BADGES = {"approve": ":green-badge[approve]", "concerns": ":orange-badge[concerns]",
+                  "reject": ":red-badge[reject]", "abstain": ":gray-badge[abstain]",
+                  "unavailable": ":gray-badge[no answer]"}
+
+
+def team_section(r: dict, can_act: bool) -> list[dict]:
+    """The review team's verdicts on a waiting request; returns the objections (verdict reject)."""
+    st.markdown("**Review team**")
+    for v in r["votes"]:
+        st.markdown(f"{VERDICT_BADGES.get(v['verdict'], v['verdict'])} **{safe_text(v['name'])}**: {safe_text(v['reason'])}")
+    with session_scope() as s:
+        members = review_team.team(s)
+    if not members:
+        st.caption("No reviewers ticked. Choose them in the sidebar under Review team.")
+    elif st.button("Ask the review team again" if r["votes"] else "Ask the review team", key=f"team_{r['id']}",
+                   icon=":material/groups:", disabled=not can_act):
+        with st.spinner("The review team is reading the request..."), session_scope() as s:
+            review_team.run_team(s, r["id"], r["summary"], st.session_state.role)
+        st.rerun()
+    elif not r["votes"]:
+        st.caption("Each ticked agent reads this request and gives a verdict. They advise; you decide.")
+    return [v for v in r["votes"] if v["verdict"] == "reject"]
+
+
 def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
     rid = r["id"]
     waiting = r["status"] == "pending"
@@ -931,7 +981,7 @@ def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
     for line in r["summary"]:
         st.markdown(safe_text(line))
     invoice_links(r["invoices"], f"apr_{rid}", remind=False)
-    st.markdown("**Why this is proposed**")
+    st.markdown("**Why it needs approval**")
     st.write(safe_text(r["reason"]))
     approved = {g["role"]: g for g in r["given"]}
     st.markdown("**Who must approve**")
@@ -944,13 +994,20 @@ def approval_card(r: dict, role: str, can_act: bool, pack) -> None:
         st.caption(f"{REQUEST_STATUSES.get(r['status'], r['status'])} {when(r['decided'])}"
                    + (f": {safe_text(outcome)}" if outcome else ""))
         return
+    objected = team_section(r, can_act)
     missing = [n for n in r["required"] if n not in approved]
     if role in approved and missing:  # a second click would add nothing
         st.info(f"You approved this. Waiting for the {' and '.join(missing)}, signed in from a different browser session.")
+    read = not objected or st.checkbox("I read the review team's objections and still want to approve",
+                                       key=f"ack_{rid}", disabled=not can_act)
     a, b = st.columns(2)
-    if not (role in approved and missing) and a.button("Approve", key=f"ap_{rid}", disabled=not can_act,
+    if not (role in approved and missing) and a.button("Approve", key=f"ap_{rid}", disabled=not can_act or not read,
                                                        type="primary", width="stretch"):
         with session_scope() as s:
+            if objected:
+                audit.append(s, role, "team_objection_overridden", {"approval_id": rid,
+                             "objections": [v["id"] for v in objected]}, "HUMAN_ACTION",
+                             "Approved after reading the review team's objections")
             res = executor.approve(s, rid, role, approver_id=auth.approver_id())
         if res.status == "ok":
             st.session_state.update(apr_next=True, apr_done=f"{rid} approved and carried out.")

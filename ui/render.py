@@ -159,6 +159,8 @@ ACTION_TITLES = {
     "load_sample_data": "Sample data loaded", "import_files": "Data imported", "set_payee_iban": "IBAN filled in",
     "unverify_payee": "Payee unverified", "add_payee": "Payee added", "anchor_audit_head": "Audit head published",
     "redteam_run": "Red-team test", "sign_in_failed": "Failed sign-in", "simulate_advance": "Simulated clock advanced",
+    "set_review_team": "Review team changed", "team_review": "Review team verdicts",
+    "team_objection_overridden": "Approved despite review team objections",
 }
 # What each audit decision means, in words an owner reads without the glossary
 OUTCOMES = {"EXECUTED": "Done", "HUMAN_ACTION": "Done by a person", "APPROVED": "Approved", "ALLOW": "Rules allowed it",

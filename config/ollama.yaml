@@ -1,0 +1,10 @@
+# Local models through Ollama (https://ollama.com): data stays on this machine.
+# Start it with `ollama serve` and pull a model that supports tool calls, e.g. `ollama pull llama3.1`.
+provider: ollama
+base_url: http://localhost:11434/v1   # Ollama's OpenAI-compatible API
+model: llama3.1
+api_key: ollama   # Ollama ignores the key; the OpenAI SDK only needs a value
+local: true       # nothing leaves the machine (names are still replaced by placeholders)
+temperature: 0.2
+timeout_seconds: 60   # local models on a laptop CPU are slow; a stopped server still falls back at once
+max_retries: 0

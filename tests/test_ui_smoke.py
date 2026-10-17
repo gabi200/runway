@@ -822,3 +822,36 @@ def test_plain_args_and_entry_lines():
     assert describe_entry("set_kill_switch", {"state": "on", "session": "s"}) == "Kill switch turned on"
     assert plain_reason("approvals so far: [('owner', 'session-a'), ('accountant', 'session-b')]") == \
         "Approved by owner and accountant"  # entries logged before the plain wording
+
+
+def test_review_team_on_an_approval_card(at):
+    import json
+    from sqlmodel import select
+    from agent.executor import run_tool
+    with db.session_scope() as s:
+        pay = s.exec(select(db.Payment).where(db.Payment.status == "scheduled")).first()
+        rid = run_tool(s, "reschedule_payment", {"payment_id": pay.id, "new_date": "2026-12-01"}, actor="agent").approval_id
+    sign_in(at)
+    at.checkbox(key="team_qwen_0").check().run()  # tick a local model in the sidebar
+    with db.session_scope() as s:
+        from agent import review_team
+        assert review_team.team(s) == ["rules", "qwen"]
+        review_team.set_team(s, ["rules"], "owner")
+    goto(at, "Approval queue")
+    at.button(key=f"team_{rid}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Rules reviewer" in m.value and "approve" in m.value for m in at.markdown)
+    with db.session_scope() as s:  # a model on the team objects
+        db.set_setting(s, f"team_review.{rid}", json.dumps([
+            {"id": "llama", "name": "Llama 3.1 (local)", "verdict": "reject", "reason": "Late fees likely"}]))
+    goto(at, "Approval queue")
+    assert at.button(key=f"ap_{rid}").disabled  # not before the objection is read
+    at.checkbox(key=f"ack_{rid}").check().run()
+    at.button(key=f"ap_{rid}").click().run()
+    with db.session_scope() as s:
+        assert s.get(db.ApprovalRequest, rid).status == "executed"
+        assert s.exec(select(db.AuditEntry).where(db.AuditEntry.action == "team_objection_overridden")).one().actor == "owner"
+
+
+def test_ollama_is_a_model_mode(at):
+    assert "Ollama (local)" in at.selectbox(key="llm_mode").options
