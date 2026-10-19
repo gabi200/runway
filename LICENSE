@@ -1,0 +1,38 @@
+Runway License
+
+Copyright (c) 2026 Voicu Delia-Andreea, Georgescu Gabriel and Tomescu Vlad-Costin.
+All rights reserved.
+
+Authors: Voicu Delia-Andreea, Georgescu Gabriel, Tomescu Vlad-Costin.
+
+This license applies to the Runway source code, documentation, configuration,
+generated sample data and other materials in this repository (the "Software"),
+except the third-party libraries listed under "Dependencies" in README.md,
+which remain under their own licenses.
+
+1. No commercial use. You may not use, copy, modify, distribute, sublicense or
+   sell the Software or any part of it, or use it in a product, service or
+   other activity meant for commercial advantage or money, without the prior
+   written permission of the copyright holders.
+
+2. Non-commercial use. You may view, run and modify the Software for personal,
+   educational, research or evaluation purposes, including review for the 2026
+   Shenzhen International FinTech Competition.
+
+3. Keep the notice. Every copy, modified version or derivative work of the
+   Software, in whole or in part, must keep the copyright notice above and this
+   license unchanged, and must state clearly that it was changed from the
+   original.
+
+4. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+   EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE. Runway is a competition prototype using fictional data and is not
+   financial, legal or tax advice.
+
+Any rights not expressly granted in this license are reserved by the copyright
+holders. For permission to use the Software commercially, contact the
+copyright holders.

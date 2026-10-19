@@ -3,6 +3,13 @@ name = "runway"
 version = "0.1.0"
 description = "Runway: an AI finance officer for small suppliers that acts under strict, visible limits."
 requires-python = ">=3.11"
+license = "LicenseRef-Runway"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Voicu Delia-Andreea" },
+    { name = "Georgescu Gabriel" },
+    { name = "Tomescu Vlad-Costin" },
+]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
@@ -26,7 +33,7 @@ dev = ["pytest>=8.0"]
 packages = ["common", "data", "bank", "forecast", "policy", "agent", "llm", "audit", "ui", "redteam"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]

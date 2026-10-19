@@ -174,3 +174,43 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 ## Limits to know about
 
 The demo uses a simulated clock (default 2026-10-19), a single SQLite file, and PIN sign-in (per-role PINs from environment variables, not real authentication; one person holding both PINs can open two browsers and approve both roles). Verifying a payee, clearing a flag, releasing a supplier, turning the kill switch off and advancing the clock need both roles; the mock bank checks both signatures itself only for payee verification. Reset and import archive the old database to var/archive/ and link the new audit log to it. Attack tests run against the offline planner; the judge task pack (21 tasks) passes 19 of 19 offline and passed 21 of 21 on live DeepSeek, outside the test suite (that run also found and led to fixing a placeholder leak; see risk 8). Keyword detection of hostile documents can be evaded. Importing only the four basic CSVs does not reproduce customer lateness or already-scheduled payments, so the forecast looks better than it is: for the sample company the lowest balance becomes -9,494.98 on 25 December instead of -29,303.32 on 26 November. An optional paid-invoices file (not offered in the UI) restores the lateness; scheduled payments cannot be imported, because imported payees are unverified. The full list is in section 7 of the security self-assessment.
+
+## Dependencies
+
+Runway is written in Python 3.11+ and uses the following open-source libraries, declared in `pyproject.toml` (exact versions are pinned in `uv.lock`). Each library is the work of its own authors and is distributed under its own license, shown here; none of them is covered by the Runway license below.
+
+| Library | Locked version | License | Used for |
+|---|---|---|---|
+| [FastAPI](https://github.com/fastapi/fastapi) | 0.143.0 | MIT | Mock bank HTTP API (`bank/app.py`) |
+| [Uvicorn](https://github.com/encode/uvicorn) | 0.54.0 | BSD-3-Clause | ASGI server for the mock bank |
+| [SQLModel](https://github.com/fastapi/sqlmodel) | 0.0.48 | MIT | SQLite schema and data access (`common/db.py`) |
+| [Pydantic](https://github.com/pydantic/pydantic) | 2.14.0 | MIT | Data validation for tools, contracts and the bank API |
+| [PyYAML](https://github.com/yaml/pyyaml) | 6.0.3 | MIT | Rules, country packs, provider and task configuration |
+| [HTTPX](https://github.com/encode/httpx) | 0.28.1 | BSD-3-Clause | Bank client and EVM JSON-RPC calls |
+| [OpenAI Python SDK](https://github.com/openai/openai-python) | 3.28.0 | Apache-2.0 | OpenAI-compatible client for DeepSeek, Gemini (Vertex AI) and Ollama |
+| [Streamlit](https://github.com/streamlit/streamlit) | 1.65.0 | Apache-2.0 | User interface (`ui/app.py`) |
+| [ReportLab](https://www.reportlab.com/opensource/) | 5.0.1 | BSD-3-Clause | Financing application and invoice PDFs, mandate QR codes |
+| [pypdf](https://github.com/py-pdf/pypdf) | 6.20.0 | BSD-3-Clause | Reading uploaded PDF documents and embedded mandates |
+| [pandas](https://github.com/pandas-dev/pandas) | 3.0.6 | BSD-3-Clause | CSV import and tabular display |
+| [eth-account](https://github.com/ethereum/eth-account) | 0.14.0 | MIT | Signing audit-anchor transactions for EVM chains |
+| [cryptography](https://github.com/pyca/cryptography) | 50.0.2 | Apache-2.0 OR BSD-3-Clause | Ed25519 keys and signatures for approvals |
+| [pytest](https://github.com/pytest-dev/pytest) (dev) | 9.1.1 | MIT | Test suite |
+
+The code also imports a few libraries that come in as dependencies of the ones above: [SQLAlchemy](https://github.com/sqlalchemy/sqlalchemy) 2.1.4 (MIT, via SQLModel), [Altair](https://github.com/vega/altair) 6.3.0 (BSD-3-Clause, via Streamlit, for charts), and [eth-utils](https://github.com/ethereum/eth-utils) 6.0.0 and [rlp](https://github.com/ethereum/pyrlp) 5.0.0 (MIT, via eth-account). The other transitive packages are listed in `uv.lock`.
+
+Optional external tools, which are not bundled or redistributed: [uv](https://github.com/astral-sh/uv) for installing, [Ollama](https://ollama.com) for local models, and [Anvil](https://github.com/foundry-rs/foundry) (Foundry) for the local EVM chain. The DeepSeek and Google Vertex AI services are used only when you set your own API keys, under those providers' terms.
+
+## License and copyright
+
+Copyright © 2026 Voicu Delia-Andreea, Georgescu Gabriel and Tomescu Vlad-Costin. All rights reserved.
+
+Authors: Voicu Delia-Andreea, Georgescu Gabriel, Tomescu Vlad-Costin.
+
+This applies to the Runway source code, documentation, configuration, generated sample data and other materials in this repository, except the third-party libraries listed under [Dependencies](#dependencies), which keep their own licenses.
+
+- **No commercial use.** You may not use, copy, modify, distribute, sublicense or sell this software or any part of it, or use it in a product, service or other activity meant for commercial advantage or money, without the copyright holders' prior written permission.
+- **Non-commercial use.** You may view, run and modify the software for personal, educational, research or evaluation purposes, including review for the 2026 Shenzhen International FinTech Competition.
+- **Keep the notice.** Every copy, modified version or derivative work, in whole or in part, must keep the copyright notice above and this license (the [LICENSE](LICENSE) file) unchanged, and must state clearly that it was changed from the original.
+- **No warranty.** The software is provided "as is", without warranty of any kind, express or implied. In no event shall the copyright holders be liable for any claim, damages or other liability arising from the software or its use. Runway is a competition prototype using fictional data and is not financial, legal or tax advice.
+
+Any rights not expressly granted here are reserved. For permission to use Runway commercially, contact the copyright holders. The full text is in [LICENSE](LICENSE).
