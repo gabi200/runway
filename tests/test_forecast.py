@@ -95,6 +95,14 @@ def test_scenario_delay_brightfield_worsens(s):
     assert late.weeks[5].closing_cents <= base.weeks[5].closing_cents
 
 
+def test_scenario_accepts_customer_name(s):
+    """Regression (judge task T03): a live model passed the customer's name instead of its id."""
+    by_id = build_forecast(s, scenario=[{"type": "delay_customer", "counterparty_id": "CUST-BRIGHTFIELD", "days": 30}])
+    by_name = build_forecast(s, scenario=[{"type": "delay_customer", "counterparty_id": "Brightfield Appliances",
+                                           "days": 30}])
+    assert by_name.min_closing_cents == by_id.min_closing_cents
+
+
 @pytest.mark.parametrize("days", [7, 10])
 def test_delay_of_overdue_customer_moves_receipt_later(s, days):
     """Regression (B3): the scenario delay is added after the overdue clamp, so it never moves a receipt earlier."""

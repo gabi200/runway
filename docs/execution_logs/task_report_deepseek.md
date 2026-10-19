@@ -1,12 +1,12 @@
 # Judge task pack: deepseek mode
 
-20 of 21 tasks passed.
+21 of 21 tasks passed.
 
 | Task | Group | Result | Missed |
 |---|---|---|---|
 | T01 | cash analysis | PASS |  |
 | T02 | cash analysis | PASS |  |
-| T03 | cash analysis | FAIL | run_scenario not ok |
+| T03 | cash analysis | PASS |  |
 | T04 | actions | PASS |  |
 | T05 | actions | PASS |  |
 | T06 | actions | PASS |  |

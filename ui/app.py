@@ -772,6 +772,7 @@ def closing_chart(fc, pack, fc2=None, *, compact=False):
     rows = []
     for w in fc.weeks:
         rows.append({"week": w.index, "closing": pack.convert_from_eur_cents(w.closing_cents) / 100,
+                     "low": pack.convert_from_eur_cents(w.min_running_cents) / 100,
                      "series": "Baseline", "short": w.index in fc.shortfall_weeks})
     if fc2 is not None:
         for w in fc2.weeks:
@@ -790,9 +791,15 @@ def closing_chart(fc, pack, fc2=None, *, compact=False):
                     axis=alt.Axis(labelAngle=0, labelExpr="'W' + datum.label", labelOverlap=True)),
             y=alt.Y("closing:Q", title=None if compact else f"Closing balance ({pack.currency})",
                     axis=alt.Axis(labels=not compact)),
-            color=alt.condition("datum.short", alt.value("#c95146"), alt.value("#388365")),
+            color=alt.condition("datum.closing < 0", alt.value("#c95146"), alt.value("#388365")),
             tooltip=[alt.Tooltip("week:O", title="Week"), alt.Tooltip("closing:Q", title="Closing balance", format=",.2f")])
-        base = base + points
+        # A week can close positive yet dip below zero mid-week; mark that dip at its real height.
+        dips = alt.Chart(df).transform_filter("datum.short")
+        drop = dips.mark_rule(color="#c95146", strokeDash=[3, 3]).encode(x="week:O", y="low:Q", y2="closing:Q")
+        lows = dips.mark_point(filled=True, size=65, opacity=1, color="#c95146").encode(
+            x="week:O", y="low:Q",
+            tooltip=[alt.Tooltip("week:O", title="Week"), alt.Tooltip("low:Q", title="Lowest during week", format=",.2f")])
+        base = base + drop + points + lows
     else:
         base = alt.Chart(df).mark_line(point=True).encode(
             x=alt.X("week:O", title="Week"), y=alt.Y("closing:Q", title=f"Closing balance ({pack.currency})"),
@@ -824,7 +831,8 @@ def page_forecast() -> None:
         c.caption(", ".join(f"Week {w}" for w in fc.shortfall_weeks) or "No shortfall")
     with st.container(border=True, key="forecast-chart"):
         st.subheader("How much cash will be available?")
-        st.caption("Projected closing balance at the end of each week. Red points mark balances below zero.")
+        st.caption("Projected closing balance at the end of each week. Red points mark the lowest "
+                   "balance inside weeks that dip below zero.")
         st.altair_chart(closing_chart(fc, pack), width="stretch")
         st.caption(f"Dashed line: {money(pack, 0)} safety minimum. Computed from ledger rows, not by AI.")
     with st.container(key="forecast-detail"):

@@ -194,6 +194,8 @@ def _collect_lines(session: Session, start: date, end: date, scenario: list[dict
         t = ch.get("type")
         if t == "delay_customer":
             cp = session.get(Counterparty, ch["counterparty_id"])
+            if cp is None:  # models often pass the customer's name (unmasked placeholder) instead of its id
+                cp = session.exec(select(Counterparty).where(Counterparty.name == ch["counterparty_id"])).first()
             if cp is None or cp.kind != "customer":
                 raise ValueError(f"unknown customer {ch['counterparty_id']!r}")
             delays[cp.id] += int(ch["days"])

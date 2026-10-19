@@ -1,0 +1,9 @@
+# Served by the PrismML llama.cpp build; no cloud key is needed.
+provider: bonsai
+base_url: http://127.0.0.1:8181/v1
+model: bonsai
+api_key: local
+local: true
+temperature: 0.2
+timeout_seconds: 120
+max_retries: 0
