@@ -238,7 +238,7 @@ Reset also drops the anchor receipts; the first entry of the new log is publishe
 1. Run in offline mode for a repeatable take: `unset DEEPSEEK_API_KEY` (or `export RUNWAY_LLM=offline`).
 2. `rm -rf var/outbox var/applications`, then `.venv/bin/streamlit run ui/app.py`, sign in as `owner` (PIN 1111), then press "Reset demo data" and "Confirm reset" (the reset needs a signed-in role). Keep a second window ready to sign in as `accountant` (PIN 2222). Leave "Display currency" on EUR.
 3. Use a 1920 x 1080 screen capture (OBS or the OS recorder), browser zoom 110 to 125 percent, sidebar visible, no other tabs. Close notifications.
-4. Follow `docs/demo-script.md` for the click path and the words. Do a full dry run first; if a step goes wrong, reset and start the take again, because the audit log is cumulative.
+4. Do a full dry run first; if a step goes wrong, reset and start the take again, because the audit log is cumulative.
 5. Record a backup take early, and keep the output of `python scripts/run_demo.py` as written evidence.
 6. Export as MP4, 5 minutes or less.
 

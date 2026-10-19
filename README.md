@@ -20,7 +20,6 @@ Lumen Packaging (20 employees, cardboard packaging) sells 65 percent of its outp
 8. **Audit trail**: every action, approval and refusal is in a tamper-evident hash-chained log. The head of the chain can be published outside the database (a notary file, or an EVM blockchain transaction), so even someone who owns the database file cannot rewrite history unnoticed.
 9. **Try to break it**: judges paste their own fraudulent invoice, jailbreak the chat, make the agent attempt forbidden actions, or rewrite the audit log, and watch which layer stops each attack. A forged audit history passes the local hash check but fails against the head published on chain.
 
-Full click-by-click script: [docs/demo-script.md](docs/demo-script.md).
 
 ## Quick start
 
@@ -170,7 +169,6 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 | [docs/testing.md](docs/testing.md) | Test inventory and what each suite proves |
 | [docs/glossary.md](docs/glossary.md) | Finance terms and Runway terms |
 | [docs/Runway_FinTechathon_2026_v3.pptx](docs/Runway_FinTechathon_2026_v3.pptx) | Presentation deck (11 slides, 10 minutes or less) |
-| [docs/demo-script.md](docs/demo-script.md) | 5-minute video script and 10-minute presentation outline |
 | [docs/SPEC.md](docs/SPEC.md), [docs/CONTRACTS.md](docs/CONTRACTS.md) | Product spec and module contracts |
 | [docs/execution_logs/](docs/execution_logs/) | Output of `scripts/run_demo.py` (45 audit entries on seed 42; `FIN-0001.pdf` with the signed mandate and `mandate_keys.json` with the public keys to check it against), of `scripts/run_tasks.py` (`task_report_<mode>.md`, `task_traces_<mode>.jsonl`), and `audit_log_ui_export.csv` (the audit log exported from the UI after the recorded demo, 89 entries) |
 
@@ -179,11 +177,11 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 | # | Required item | Where | Status |
 |---|---|---|---|
 | 1 | Technical documentation: system architecture, core algorithm description, security design | System architecture: [docs/architecture.md](docs/architecture.md). Core algorithms: [docs/algorithms.md](docs/algorithms.md). Security design: [docs/security-self-assessment.md](docs/security-self-assessment.md) sections 1 to 4 (threat model, permission tiers, 29 defense layers) and the design rules in [docs/architecture.md](docs/architecture.md) section 6 | Written |
-| 2 | Presentation deck, 10 minutes or less | [docs/Runway_FinTechathon_2026_v3.pptx](docs/Runway_FinTechathon_2026_v3.pptx) (11 slides); speaker timing in [docs/demo-script.md](docs/demo-script.md) section 3 | Done |
-| 3 | Demo video, 5 minutes or less (optional) | Script in [docs/demo-script.md](docs/demo-script.md) section 2 | Script written; video still to be recorded |
+| 2 | Presentation deck, 10 minutes or less | [docs/Runway_FinTechathon_2026_v3.pptx](docs/Runway_FinTechathon_2026_v3.pptx) (11 slides) | Done |
+| 3 | Demo video, 5 minutes or less (optional) | Recorded | Done |
 | 4 | Source code on GitHub with README, deployment instructions and test cases | <https://github.com/gabi200/runway>, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` (703 tests, [docs/testing.md](docs/testing.md)) | Done |
 | 5 | Security self-assessment: permission tiers and known risks | [docs/security-self-assessment.md](docs/security-self-assessment.md) section 3 (permission tiers T0 to T4 and how each is implemented) and section 7 (25 known risks); attacks A1 to A10 in section 5 | Written |
-| 6 | Execution evidence: simulated-account/sandbox operation logs plus the demo video | [docs/execution_logs/](docs/execution_logs/): sandbox run `demo_run.md`, `audit_log.jsonl`, `bank_payments.json`, `outbox.json`, `FIN-0001.pdf` with `mandate_keys.json`; judge task pack `task_report_offline.md`, `task_report_deepseek.md` with traces; audit head on a local Anvil chain `anchor_run.md`, `anchor_receipt.json`; video as item 3 | Logs generated; video pending |
+| 6 | Execution evidence: simulated-account/sandbox operation logs plus the demo video | [docs/execution_logs/](docs/execution_logs/): sandbox run `demo_run.md`, `audit_log.jsonl`, `bank_payments.json`, `outbox.json`, `FIN-0001.pdf` with `mandate_keys.json`; judge task pack `task_report_offline.md`, `task_report_deepseek.md` with traces; audit head on a local Anvil chain `anchor_run.md`, `anchor_receipt.json`; video as item 3 | Done |
 
 Deadline: 20 October 2026, 23:59 Beijing time (19:00 Bucharest, 16:00 UTC).
 
