@@ -6,3 +6,4 @@ var/
 .pytest_cache/
 *.egg-info/
 docs/superpowers/
+*.pptx
