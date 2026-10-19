@@ -171,19 +171,6 @@ docs/        specification, contracts, architecture, algorithms, security, deplo
 | [docs/SPEC.md](docs/SPEC.md), [docs/CONTRACTS.md](docs/CONTRACTS.md) | Product spec and module contracts |
 | [docs/execution_logs/](docs/execution_logs/) | Output of `scripts/run_demo.py` (45 audit entries on seed 42; `FIN-0001.pdf` with the signed mandate and `mandate_keys.json` with the public keys to check it against), of `scripts/run_tasks.py` (`task_report_<mode>.md`, `task_traces_<mode>.jsonl`), and `audit_log_ui_export.csv` (the audit log exported from the UI after the recorded demo, 89 entries) |
 
-## Submission checklist (SPEC section 2)
-
-| # | Required item | Where | Status |
-|---|---|---|---|
-| 1 | Technical documentation: system architecture, core algorithm description, security design | System architecture: [docs/architecture.md](docs/architecture.md). Core algorithms: [docs/algorithms.md](docs/algorithms.md). Security design: [docs/security-self-assessment.md](docs/security-self-assessment.md) sections 1 to 4 (threat model, permission tiers, 29 defense layers) and the design rules in [docs/architecture.md](docs/architecture.md) section 6 | Written |
-| 2 | Presentation deck, 10 minutes or less | Submitted separately | Done |
-| 3 | Demo video, 5 minutes or less (optional) | Recorded | Done |
-| 4 | Source code on GitHub with README, deployment instructions and test cases | <https://github.com/gabi200/runway>, [README.md](README.md), [docs/deployment.md](docs/deployment.md), `tests/` (703 tests, [docs/testing.md](docs/testing.md)) | Done |
-| 5 | Security self-assessment: permission tiers and known risks | [docs/security-self-assessment.md](docs/security-self-assessment.md) section 3 (permission tiers T0 to T4 and how each is implemented) and section 7 (25 known risks); attacks A1 to A10 in section 5 | Written |
-| 6 | Execution evidence: simulated-account/sandbox operation logs plus the demo video | [docs/execution_logs/](docs/execution_logs/): sandbox run `demo_run.md`, `audit_log.jsonl`, `bank_payments.json`, `outbox.json`, `FIN-0001.pdf` with `mandate_keys.json`; judge task pack `task_report_offline.md`, `task_report_deepseek.md` with traces; audit head on a local Anvil chain `anchor_run.md`, `anchor_receipt.json`; video as item 3 | Done |
-
-Deadline: 20 October 2026, 23:59 Beijing time (19:00 Bucharest, 16:00 UTC).
-
 ## Limits to know about
 
 The demo uses a simulated clock (default 2026-10-19), a single SQLite file, and PIN sign-in (per-role PINs from environment variables, not real authentication; one person holding both PINs can open two browsers and approve both roles). Verifying a payee, clearing a flag, releasing a supplier, turning the kill switch off and advancing the clock need both roles; the mock bank checks both signatures itself only for payee verification. Reset and import archive the old database to var/archive/ and link the new audit log to it. Attack tests run against the offline planner; the judge task pack (21 tasks) passes 19 of 19 offline and passed 21 of 21 on live DeepSeek, outside the test suite (that run also found and led to fixing a placeholder leak; see risk 8). Keyword detection of hostile documents can be evaded. Importing only the four basic CSVs does not reproduce customer lateness or already-scheduled payments, so the forecast looks better than it is: for the sample company the lowest balance becomes -9,494.98 on 25 December instead of -29,303.32 on 26 November. An optional paid-invoices file (not offered in the UI) restores the lateness; scheduled payments cannot be imported, because imported payees are unverified. The full list is in section 7 of the security self-assessment.
